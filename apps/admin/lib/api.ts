@@ -28,6 +28,8 @@ import { loginPathFor } from './auth-redirect';
 type ReconList = Schemas['AggregatorReconciliationList'];
 type ReconSummary = Schemas['ReconSummaryOut'];
 type PeriodCharges = Schemas['AggregatorPeriodChargesOut'];
+export type OrderPnl = Schemas['OrderPnlResponse'];
+export type PnlReport = Schemas['PnlReportResponse'];
 type SyncRunList = Schemas['AggregatorSyncRunList'];
 type RunTriggerResult = Schemas['AggregatorRunTriggerOut'];
 type RunTriggerInput = Schemas['AggregatorRunTriggerIn'];
@@ -516,9 +518,12 @@ export const ordersApi = {
   /** Fulfilment detail. 404s for pickup orders and anything placed before this existed. */
   getDelivery: (orderNumber: string) =>
     api.get<OrderDelivery>(`/orders/${orderNumber}/delivery`),
-  /** What the shop kept: courier cost, processing fee, net and the margins. */
+  /** The refund cap (`refundable_remaining`) and the order's fee inputs. */
   getEconomics: (orderNumber: string) =>
     api.get<OrderEconomics>(`/orders/${orderNumber}/economics`),
+  /** The order's P&L, GMV down to PC3, net of VAT — null when it is not in the
+   *  P&L (still in flight, or cancelled without a charge). */
+  pnl: (orderNumber: string) => api.get<OrderPnl | null>(`/orders/${orderNumber}/pnl`),
   /** Admin-only enrichment for the details page: the fulfilling branch, the
    *  marketplace payment type, and one unified status timeline (MM lifecycle +
    *  the marketplace's own trace). Empty sections come back null/[] so the page
@@ -707,6 +712,18 @@ export const deliveryZonesApi = {
 type DateParams = { start_date?: string; end_date?: string; group_by?: string };
 
 // ─── Dashboard (home) ─────────────────────────────────────────────────────────
+
+export const profitLossApi = {
+  /** GMV → PC1 → PC2 → PC3 per sales channel over an inclusive shop-day window. */
+  report: (params: {
+    date_from: string;
+    date_to: string;
+    /** `counter`, `website_delivery`, `website_pickup`, or a marketplace code. */
+    channels?: string[];
+    branch_ids?: string[];
+    legal_entity_ids?: string[];
+  }) => api.get<PnlReport>(`/profit-loss${buildQs(params)}`),
+};
 
 export const dashboardApi = {
   /**

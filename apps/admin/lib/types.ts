@@ -431,22 +431,12 @@ export interface Order {
    * dispatched courier lives on `OrderDelivery.courier` (detail). */
   courier?: CourierBadge | null;
 
-  // ── is this order paying for itself? (list rows only) ──────────────────────
-  //
-  // Computed in SQL by the list endpoint rather than by the per-order economics
-  // route: the list serves pages of up to two thousand, and one service call
-  // per row would be two thousand round-trips for one column.
-
-  /** What is left after the cost of sale, the payment fee and any refund. */
-  net_value?: number | null;
-  /** `net_value` as a share of the goods at menu price, before discount. */
-  cost_cover?: number | null;
   /**
-   * Whether the row cleared the shop's direct-cost bar. **Three-valued** — null
-   * means unknowable (an aggregator whose commission rate is not configured),
-   * and must render as a dash rather than a cross.
+   * The row's profit & loss (list rows only) — PC3 and its share of GMV, net of
+   * VAT, computed in SQL by the same expressions the P&L page sums. Null when
+   * the order is not in the P&L (in flight, or cancelled without a charge).
    */
-  covers_direct_cost?: boolean | null;
+  pnl?: Schemas['OrderPnlBrief'] | null;
 }
 
 export interface PaginatedOrders {

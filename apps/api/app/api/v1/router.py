@@ -96,6 +96,7 @@ from .pos_orders import kitchen_router
 from .pos_orders import router as pos_orders_router
 from .pos_reports import router as pos_reports_router
 from .products import router as products_router
+from .profit_loss import router as profit_loss_router
 from .promo_codes import router as promo_codes_router
 from .redirects import router as redirects_router
 from .staff import roles_router
@@ -146,6 +147,9 @@ api_router.include_router(webhooks_router, prefix="/webhooks", tags=["Webhooks"]
 api_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(
     home_dashboard_router, prefix="/dashboard", tags=["Dashboard"]
+)
+api_router.include_router(
+    profit_loss_router, prefix="/profit-loss", tags=["Profit & Loss"]
 )
 api_router.include_router(users_router, prefix="/users", tags=["Users"])
 api_router.include_router(bulk_router, prefix="/bulk", tags=["Bulk"])

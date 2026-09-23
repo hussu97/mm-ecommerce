@@ -485,6 +485,253 @@
         "title": "AdminLoginOptionsResponse",
         "type": "object"
       },
+      "AdminOrderListResponse": {
+        "description": "A row on the console's orders screen: the shared row plus its P&L.\n\nIts own class so the margin can never reach the customer's own order list,\nwhich returns the parent \u2014 what a courier cost us or a marketplace kept is\nnot the customer's business.",
+        "properties": {
+          "aggregator_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Channel"
+          },
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "check_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Number"
+          },
+          "courier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourierBadge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "customer_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone"
+          },
+          "customer_phone_access_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Access Code"
+          },
+          "customer_phone_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Country"
+          },
+          "customer_phone_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Type"
+          },
+          "delivery_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Fee"
+          },
+          "delivery_method": {
+            "$ref": "#/components/schemas/DeliveryMethodEnum"
+          },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_count": {
+            "default": 0,
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "low_order_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low Order Fee"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "order_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Type"
+          },
+          "payment_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Provider"
+          },
+          "pnl": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderPnlBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pos_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pos Status"
+          },
+          "pricing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Status"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatusEnum"
+          },
+          "total": {
+            "title": "Total",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "order_number",
+          "email",
+          "status",
+          "total",
+          "delivery_method",
+          "payment_provider",
+          "created_at"
+        ],
+        "title": "AdminOrderListResponse",
+        "type": "object"
+      },
       "AdminPasskeyResponse": {
         "properties": {
           "created_at": {
@@ -21748,17 +21995,6 @@
             ],
             "title": "Check Number"
           },
-          "cost_cover": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Cover"
-          },
           "courier": {
             "anyOf": [
               {
@@ -21768,17 +22004,6 @@
                 "type": "null"
               }
             ]
-          },
-          "covers_direct_cost": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Covers Direct Cost"
           },
           "created_at": {
             "format": "date-time",
@@ -21889,17 +22114,6 @@
               }
             ],
             "title": "Low Order Fee"
-          },
-          "net_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Value"
           },
           "order_number": {
             "title": "Order Number",
@@ -22046,6 +22260,224 @@
           "recorded_at"
         ],
         "title": "OrderPaymentResponse",
+        "type": "object"
+      },
+      "OrderPnlBrief": {
+        "description": "The orders list's one-cell summary of `OrderPnlResponse`.",
+        "properties": {
+          "cogs_missing": {
+            "title": "Cogs Missing",
+            "type": "boolean"
+          },
+          "fees_pending": {
+            "title": "Fees Pending",
+            "type": "boolean"
+          },
+          "gmv": {
+            "title": "Gmv",
+            "type": "number"
+          },
+          "is_sale": {
+            "title": "Is Sale",
+            "type": "boolean"
+          },
+          "pc3": {
+            "title": "Pc3",
+            "type": "number"
+          },
+          "pc3_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc3 Pct"
+          }
+        },
+        "required": [
+          "gmv",
+          "pc3",
+          "pc3_pct",
+          "is_sale",
+          "cogs_missing",
+          "fees_pending"
+        ],
+        "title": "OrderPnlBrief",
+        "type": "object"
+      },
+      "OrderPnlResponse": {
+        "description": "One order's P&L, and what is still unknown about it.",
+        "properties": {
+          "aggregator_and_delivery_fees": {
+            "title": "Aggregator And Delivery Fees",
+            "type": "number"
+          },
+          "cancellation_charges": {
+            "title": "Cancellation Charges",
+            "type": "number"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cogs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cogs"
+          },
+          "cogs_missing": {
+            "title": "Cogs Missing",
+            "type": "boolean"
+          },
+          "cogs_provisional": {
+            "title": "Cogs Provisional",
+            "type": "number"
+          },
+          "commission": {
+            "title": "Commission",
+            "type": "number"
+          },
+          "delivery_cost": {
+            "title": "Delivery Cost",
+            "type": "number"
+          },
+          "discounts": {
+            "title": "Discounts",
+            "type": "number"
+          },
+          "fees_pending": {
+            "title": "Fees Pending",
+            "type": "boolean"
+          },
+          "gmv": {
+            "title": "Gmv",
+            "type": "number"
+          },
+          "input_vat": {
+            "title": "Input Vat",
+            "type": "number"
+          },
+          "is_sale": {
+            "title": "Is Sale",
+            "type": "boolean"
+          },
+          "marketplace_fees": {
+            "title": "Marketplace Fees",
+            "type": "number"
+          },
+          "misc_fees": {
+            "title": "Misc Fees",
+            "type": "number"
+          },
+          "net_revenue": {
+            "title": "Net Revenue",
+            "type": "number"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "output_vat": {
+            "title": "Output Vat",
+            "type": "number"
+          },
+          "payment_fees": {
+            "title": "Payment Fees",
+            "type": "number"
+          },
+          "pc1": {
+            "title": "Pc1",
+            "type": "number"
+          },
+          "pc1_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc1 Pct"
+          },
+          "pc2": {
+            "title": "Pc2",
+            "type": "number"
+          },
+          "pc2_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc2 Pct"
+          },
+          "pc3": {
+            "title": "Pc3",
+            "type": "number"
+          },
+          "pc3_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc3 Pct"
+          },
+          "period_charges": {
+            "title": "Period Charges",
+            "type": "number"
+          },
+          "refunds": {
+            "title": "Refunds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "gmv",
+          "refunds",
+          "net_revenue",
+          "cogs",
+          "pc1",
+          "payment_fees",
+          "commission",
+          "marketplace_fees",
+          "delivery_cost",
+          "aggregator_and_delivery_fees",
+          "cancellation_charges",
+          "period_charges",
+          "misc_fees",
+          "pc2",
+          "discounts",
+          "pc3",
+          "output_vat",
+          "input_vat",
+          "pc1_pct",
+          "pc2_pct",
+          "pc3_pct",
+          "order_number",
+          "channel",
+          "is_sale",
+          "cogs_missing",
+          "cogs_provisional",
+          "fees_pending"
+        ],
+        "title": "OrderPnlResponse",
         "type": "object"
       },
       "OrderPreviewPromo": {
@@ -23160,6 +23592,42 @@
           "views"
         ],
         "title": "PageviewPoint",
+        "type": "object"
+      },
+      "PaginatedAdminOrders": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderListResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages"
+        ],
+        "title": "PaginatedAdminOrders",
         "type": "object"
       },
       "PaginatedAuditLogs": {
@@ -24630,6 +25098,310 @@
           "permissions"
         ],
         "title": "PinLoginResponse",
+        "type": "object"
+      },
+      "PnlChannelColumn": {
+        "description": "One channel's (or the total's) P&L over the window.",
+        "properties": {
+          "aggregator_and_delivery_fees": {
+            "title": "Aggregator And Delivery Fees",
+            "type": "number"
+          },
+          "cancellation_charges": {
+            "title": "Cancellation Charges",
+            "type": "number"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "charged_cancellations": {
+            "title": "Charged Cancellations",
+            "type": "integer"
+          },
+          "cogs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cogs"
+          },
+          "cogs_provisional": {
+            "title": "Cogs Provisional",
+            "type": "number"
+          },
+          "commission": {
+            "title": "Commission",
+            "type": "number"
+          },
+          "delivery_cost": {
+            "title": "Delivery Cost",
+            "type": "number"
+          },
+          "discounts": {
+            "title": "Discounts",
+            "type": "number"
+          },
+          "gmv": {
+            "title": "Gmv",
+            "type": "number"
+          },
+          "input_vat": {
+            "title": "Input Vat",
+            "type": "number"
+          },
+          "marketplace_fees": {
+            "title": "Marketplace Fees",
+            "type": "number"
+          },
+          "misc_fees": {
+            "title": "Misc Fees",
+            "type": "number"
+          },
+          "net_revenue": {
+            "title": "Net Revenue",
+            "type": "number"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "orders_fees_pending": {
+            "title": "Orders Fees Pending",
+            "type": "integer"
+          },
+          "orders_with_cogs": {
+            "title": "Orders With Cogs",
+            "type": "integer"
+          },
+          "output_vat": {
+            "title": "Output Vat",
+            "type": "number"
+          },
+          "payment_fees": {
+            "title": "Payment Fees",
+            "type": "number"
+          },
+          "pc1": {
+            "title": "Pc1",
+            "type": "number"
+          },
+          "pc1_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc1 Pct"
+          },
+          "pc2": {
+            "title": "Pc2",
+            "type": "number"
+          },
+          "pc2_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc2 Pct"
+          },
+          "pc3": {
+            "title": "Pc3",
+            "type": "number"
+          },
+          "pc3_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc3 Pct"
+          },
+          "period_charges": {
+            "title": "Period Charges",
+            "type": "number"
+          },
+          "refunds": {
+            "title": "Refunds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "gmv",
+          "refunds",
+          "net_revenue",
+          "cogs",
+          "pc1",
+          "payment_fees",
+          "commission",
+          "marketplace_fees",
+          "delivery_cost",
+          "aggregator_and_delivery_fees",
+          "cancellation_charges",
+          "period_charges",
+          "misc_fees",
+          "pc2",
+          "discounts",
+          "pc3",
+          "output_vat",
+          "input_vat",
+          "pc1_pct",
+          "pc2_pct",
+          "pc3_pct",
+          "channel",
+          "orders",
+          "charged_cancellations",
+          "orders_with_cogs",
+          "orders_fees_pending",
+          "cogs_provisional"
+        ],
+        "title": "PnlChannelColumn",
+        "type": "object"
+      },
+      "PnlPeriodChargeRow": {
+        "description": "One category of non-order marketplace charges in the window.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "number"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "first_date": {
+            "title": "First Date",
+            "type": "string"
+          },
+          "input_vat": {
+            "title": "Input Vat",
+            "type": "number"
+          },
+          "is_true_up": {
+            "title": "Is True Up",
+            "type": "boolean"
+          },
+          "last_date": {
+            "title": "Last Date",
+            "type": "string"
+          },
+          "lines": {
+            "title": "Lines",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "category",
+          "description",
+          "amount",
+          "input_vat",
+          "first_date",
+          "last_date",
+          "lines",
+          "is_true_up"
+        ],
+        "title": "PnlPeriodChargeRow",
+        "type": "object"
+      },
+      "PnlReportResponse": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/PnlChannelColumn"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "date_from": {
+            "title": "Date From",
+            "type": "string"
+          },
+          "date_to": {
+            "title": "Date To",
+            "type": "string"
+          },
+          "period_charges": {
+            "items": {
+              "$ref": "#/components/schemas/PnlPeriodChargeRow"
+            },
+            "title": "Period Charges",
+            "type": "array"
+          },
+          "period_charges_included": {
+            "title": "Period Charges Included",
+            "type": "boolean"
+          },
+          "total": {
+            "$ref": "#/components/schemas/PnlChannelColumn"
+          },
+          "vat": {
+            "$ref": "#/components/schemas/PnlVatSummary"
+          }
+        },
+        "required": [
+          "date_from",
+          "date_to",
+          "channels",
+          "total",
+          "period_charges",
+          "period_charges_included",
+          "vat"
+        ],
+        "title": "PnlReportResponse",
+        "type": "object"
+      },
+      "PnlVatSummary": {
+        "description": "The VAT the P&L's figures are net of.",
+        "properties": {
+          "input_vat_recoverable": {
+            "title": "Input Vat Recoverable",
+            "type": "number"
+          },
+          "net_vat_payable": {
+            "title": "Net Vat Payable",
+            "type": "number"
+          },
+          "output_vat": {
+            "title": "Output Vat",
+            "type": "number"
+          }
+        },
+        "required": [
+          "output_vat",
+          "input_vat_recoverable",
+          "net_vat_payable"
+        ],
+        "title": "PnlVatSummary",
         "type": "object"
       },
       "PolygonPage": {
@@ -60688,7 +61460,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedOrders"
+                  "$ref": "#/components/schemas/PaginatedAdminOrders"
                 }
               }
             },
@@ -61580,6 +62352,62 @@
           }
         ],
         "summary": "Get Order Economics",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_number}/pnl": {
+      "get": {
+        "description": "This order's profit & loss, net of VAT \u2014 GMV down to PC3.\n\nThe same arithmetic the orders list and the P&L page use\n(`order_pnl.line_columns`). Null when the order is not in the P&L: still in\nflight, or cancelled/refunded without a charge.",
+        "operationId": "get_order_pnl_api_v1_orders__order_number__pnl_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrderPnlResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Order Pnl Api V1 Orders  Order Number  Pnl Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Order Pnl",
         "tags": [
           "Orders"
         ]
@@ -67852,6 +68680,129 @@
         "summary": "Unlink Modifier",
         "tags": [
           "Products"
+        ]
+      }
+    },
+    "/api/v1/profit-loss": {
+      "get": {
+        "operationId": "profit_and_loss_api_v1_profit_loss_get",
+        "parameters": [
+          {
+            "description": "Inclusive shop day",
+            "in": "query",
+            "name": "date_from",
+            "required": true,
+            "schema": {
+              "description": "Inclusive shop day",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive shop day",
+            "in": "query",
+            "name": "date_to",
+            "required": true,
+            "schema": {
+              "description": "Inclusive shop day",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`",
+            "in": "query",
+            "name": "channels",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`",
+              "title": "Channels"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Ids"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legal_entity_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Legal Entity Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PnlReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Profit And Loss",
+        "tags": [
+          "Profit & Loss"
         ]
       }
     },

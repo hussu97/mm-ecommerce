@@ -44,7 +44,7 @@ import {
 import { ChangeFulfilmentDialog } from './components/ChangeFulfilmentDialog';
 import { RefundDialog } from './components/RefundDialog';
 import { DeliveryPanel } from './components/DeliveryPanel';
-import { NetPayment } from './components/NetPayment';
+import { OrderPnlPanel } from '@/components/orders/PnlBreakdown';
 import { PROVIDER_LABEL } from './components/courier-labels';
 
 /**
@@ -68,7 +68,8 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<Order | null>(null);
   const [delivery, setDelivery] = useState<OrderDelivery | null>(null);
   // What the shop kept. Admin-only and its own request, so a screen that fails
-  // to load it still shows the order — the economics are context, not the page.
+  // to load it still shows the order. Read now only for the refund cap
+  // (`refundable_remaining`); the order's margin is the P&L panel below.
   const [economics, setEconomics] = useState<OrderEconomics | null>(null);
   // Admin-only enrichment: the fulfilling branch, the marketplace payment type,
   // and the unified status timeline (MM lifecycle + the marketplace's own trace).
@@ -1187,7 +1188,17 @@ export default function OrderDetailPage() {
             </div>
           )}
         </div>
-        {economics && <NetPayment economics={economics} order={order} />}
+        {/* The order's profit & loss — the working behind the orders list's
+            Profit %. Re-read when a refund or a status change moves it. */}
+        <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
+          <p className="mb-1.5 text-[11px] font-body uppercase tracking-widest text-gray-400">
+            Profit &amp; loss
+          </p>
+          <OrderPnlPanel
+            orderNumber={order.order_number}
+            reloadKey={`${order.status}:${order.refunded_amount}`}
+          />
+        </div>
       </div>
 
       {/* Posted movements are accounting truth. The recursive plan below is

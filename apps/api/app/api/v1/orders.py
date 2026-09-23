@@ -46,6 +46,7 @@ from app.models.user import User
 from app.schemas.courier import CourierBadge
 from app.schemas.fulfilment import FulfilmentResponse
 from app.schemas.order import (
+    AdminOrderListResponse,
     OrderAdminDetails,
     OrderBranchSummary,
     OrderCreate,
@@ -59,6 +60,7 @@ from app.schemas.order import (
     OrderTimelineEntry,
 )
 from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
+from app.schemas.pnl import OrderPnlResponse
 from app.services import audit_service, email_service
 from app.services.couriers import (
     courier_service,
@@ -71,7 +73,7 @@ from app.services.delivery import (
     fulfilment_reassignment,
     fulfilment_service,
 )
-from app.services.orders import order_economics, order_service
+from app.services.orders import order_economics, order_pnl, order_service
 from app.services.payments import payment_service
 
 router = APIRouter()
@@ -85,6 +87,10 @@ class PaginatedOrders(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+class PaginatedAdminOrders(PaginatedOrders):
+    items: list[AdminOrderListResponse]
 
 
 class PreviousDriver(BaseModel):
@@ -423,7 +429,7 @@ async def list_my_orders(
     )
 
 
-@router.get("/admin/all", response_model=PaginatedOrders)
+@router.get("/admin/all", response_model=PaginatedAdminOrders)
 async def list_all_orders(
     status: OrderStatusEnum | None = Query(None),
     search: str | None = Query(
@@ -495,7 +501,7 @@ async def list_all_orders(
         date_to=date_to,
     )
     pages = max(1, (total + per_page - 1) // per_page)
-    return PaginatedOrders(
+    return PaginatedAdminOrders(
         items=items, total=total, page=page, per_page=per_page, pages=pages
     )
 
@@ -869,6 +875,37 @@ async def _load_delivery(db: AsyncSession, order_number: str) -> OrderDelivery:
     if delivery is None:
         raise NotFoundError(f"No delivery recorded for order '{order_number}'")
     return delivery
+
+
+@router.get("/{order_number}/pnl", response_model=OrderPnlResponse | None)
+async def get_order_pnl(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("orders.read")),
+):
+    """
+    This order's profit & loss, net of VAT — GMV down to PC3.
+
+    The same arithmetic the orders list and the P&L page use
+    (`order_pnl.line_columns`). Null when the order is not in the P&L: still in
+    flight, or cancelled/refunded without a charge.
+    """
+    order = await _load_order(db, order_number)
+    pnl = await order_pnl.for_order(db, order.id)
+    if pnl is None:
+        return None
+    return OrderPnlResponse(
+        order_number=order.order_number,
+        channel=pnl.channel,
+        is_sale=pnl.is_sale,
+        cogs_missing=pnl.cogs is None,
+        cogs_provisional=float(pnl.cogs_provisional),
+        fees_pending=pnl.fees_pending,
+        **{
+            k: (None if v is None else float(v))
+            for k, v in order_pnl.statement_fields(pnl).items()
+        },
+    )
 
 
 @router.get("/{order_number}/economics", response_model=OrderEconomicsResponse)

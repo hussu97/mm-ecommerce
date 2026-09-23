@@ -74,6 +74,8 @@ export const NAV: Array<NavEntry | NavSection> = [
   { section: 'Reports' },
   { href: '/analytics',     label: 'Analytics',       icon: 'bar_chart',    requires: 'reports.sales' },
   { href: '/pos-reports',   label: 'Counter Reports', icon: 'insights',     requires: 'reports.sales' },
+  // GMV → PC1 → PC2 → PC3 by channel — the shop's margins, so the cost-report slug.
+  { href: '/profit-loss',   label: 'Profit & Loss',   icon: 'account_balance', requires: 'reports.cost' },
   // One front door for marketplace reconciliation. GrubOps, invoices, VAT,
   // sync runs and mappings stay lateral tabs so the sidebar does not repeat
   // the same operational area several times.

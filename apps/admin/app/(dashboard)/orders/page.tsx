@@ -25,6 +25,7 @@ import { Badge, Button, Pagination, LoadError, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { OrderFilterBar } from '@/components/orders/OrderFilterBar';
+import { OrderPnlDialog } from '@/components/orders/PnlBreakdown';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useOrderFilters, toOrdersParams } from '@/lib/order-filters';
@@ -65,55 +66,50 @@ const POS_STATUS_VARIANT: Record<string, 'warning' | 'info' | 'success' | 'dange
 };
 
 /**
- * Whether an order kept enough of its own menu value to be worth taking.
+ * What the order kept, as PC3 over GMV — both net of VAT, from the API.
  *
- * The question a list of orders is actually being scanned for, and the one the
- * screen could not answer: the total says what came in, and nothing said what
- * survived the commission, the van and the card fee. A shop losing money does
- * not lose it evenly — it loses it on particular channels, particular zones and
- * particular discounts — and this column is where that becomes visible without
- * opening thirty orders.
- *
- * **Three states, and the third is the important one.** A dash means *we cannot
- * say*: an aggregator whose commission rate nobody has configured has an
- * unknowable net, and colouring it red would file it beside the orders that are
- * genuinely underwater. That is how an unfilled rate turns into a fortnight of
- * investigating the wrong orders, so the unknown gets its own, quiet, treatment
- * and a tooltip that says what to do about it.
+ * A button, not text: the cell opens the working behind the number (the
+ * order's GMV → PC3 breakdown). It sits inside the row's link, so the click is
+ * stopped before it navigates. A dash is an order not in the P&L — in flight,
+ * or cancelled with nothing charged. A charged cancellation has no GMV, so it
+ * shows what it cost instead of a percentage. Amber means a figure is still to
+ * land (no COGS recorded, or a commission awaiting its statement), so the
+ * number will move.
  */
-function CostCover({ order }: { order: Order }) {
-  const covered = order.covers_direct_cost;
-  const share = order.cost_cover;
-
-  if (covered === null || covered === undefined || share === null || share === undefined) {
+function ProfitCell({ order, onOpen }: { order: Order; onOpen: () => void }) {
+  const pnl = order.pnl;
+  if (!pnl) {
     return (
-      <span
-        className="text-gray-300"
-        title={
-          order.source === 'aggregator'
-            ? 'No commission rate is set for this marketplace, so what the order kept cannot be worked out. Set one under Delivery → Estimates.'
-            : 'Not enough is known about this order to say.'
-        }
-      >
+      <span className="text-gray-300" title="Not in the P&L — still in flight, or cancelled without a charge.">
         —
       </span>
     );
   }
-
+  // A charged cancellation sent no goods, so a missing COGS is not a gap there.
+  const cogsGap = pnl.is_sale && pnl.cogs_missing;
+  const incomplete = cogsGap || pnl.fees_pending;
+  const label =
+    pnl.pc3_pct === null ? formatCurrency(pnl.pc3) : `${pnl.pc3_pct.toFixed(0)}%`;
   return (
-    <span
+    <button
+      type="button"
+      onClick={e => {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpen();
+      }}
       className={cn(
-        'font-body text-xs tabular-nums',
-        covered ? 'text-green-700' : 'text-red-600',
+        'whitespace-nowrap font-body text-xs tabular-nums underline decoration-dotted underline-offset-2',
+        pnl.pc3 < 0 ? 'text-red-600' : 'text-green-700',
+        incomplete && 'decoration-amber-500',
       )}
-      title={`Kept ${formatCurrency(order.net_value ?? 0)} of ${formatCurrency(
-        // The denominator: menu price before discount. Shown in the tooltip so
-        // a surprising percentage can be checked rather than argued with.
-        order.net_value != null && share !== 0 ? (order.net_value / share) * 100 : 0,
-      )} at menu price`}
+      title={`PC3 ${formatCurrency(pnl.pc3)} of ${formatCurrency(pnl.gmv)} GMV, net of VAT${
+        cogsGap ? ' · no COGS recorded' : ''
+      }${pnl.fees_pending ? ' · a fee is still to land' : ''}`}
     >
-      {covered ? '✓' : '✕'} {share.toFixed(0)}%
-    </span>
+      {label}
+      {incomplete && <span className="text-amber-600">*</span>}
+    </button>
   );
 }
 
@@ -133,6 +129,8 @@ export default function OrdersPage() {
   const [legalEntities, setLegalEntities] = useState<LegalEntity[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [exportError, setExportError] = useState('');
+  // The order whose P&L breakdown is open, if any.
+  const [pnlOrder, setPnlOrder] = useState<string | null>(null);
   // The search box is responsive while typing; the committed value lives in the
   // URL (so it persists and is shareable), written after a short debounce.
   const [searchInput, setSearchInput] = useState(filters.search);
@@ -305,9 +303,9 @@ export default function OrdersPage() {
               render: o => formatCurrency(o.total),
             },
             {
-              header: 'Covers cost',
+              header: 'Profit',
               className: 'text-center',
-              render: o => <CostCover order={o} />,
+              render: o => <ProfitCell order={o} onOpen={() => setPnlOrder(o.order_number)} />,
             },
             {
               header: 'Status',
@@ -361,6 +359,8 @@ export default function OrdersPage() {
           ]}
         />
       )}
+
+      {pnlOrder && <OrderPnlDialog orderNumber={pnlOrder} onClose={() => setPnlOrder(null)} />}
 
       <Pagination
         page={page}

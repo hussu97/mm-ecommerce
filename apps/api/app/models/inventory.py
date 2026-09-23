@@ -34,6 +34,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -524,6 +525,13 @@ class InventoryTransaction(Base, UUIDMixin, TimestampMixin):
         CheckConstraint(
             "status <> 'closed' OR (posting_sequence IS NOT NULL AND posted_at IS NOT NULL)",
             name="ck_inventory_closed_posting_metadata",
+        ),
+        # Migration 285: the P&L reads each order's cost of goods by `order_id`,
+        # once per row of an orders page of up to two thousand.
+        Index(
+            "ix_inventory_transactions_order_id",
+            "order_id",
+            postgresql_where=text("order_id IS NOT NULL"),
         ),
     )
 

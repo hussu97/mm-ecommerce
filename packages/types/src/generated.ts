@@ -6042,6 +6042,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orders/{order_number}/pnl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Order Pnl
+         * @description This order's profit & loss, net of VAT — GMV down to PC3.
+         *
+         *     The same arithmetic the orders list and the P&L page use
+         *     (`order_pnl.line_columns`). Null when the order is not in the P&L: still in
+         *     flight, or cancelled/refunded without a charge.
+         */
+        get: operations["get_order_pnl_api_v1_orders__order_number__pnl_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders/{order_number}/refund": {
         parameters: {
             query?: never;
@@ -8001,6 +8025,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/profit-loss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Profit And Loss */
+        get: operations["profit_and_loss_api_v1_profit_loss_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/promo-codes": {
         parameters: {
             query?: never;
@@ -9410,6 +9451,73 @@ export interface components {
             passkey_allowed: boolean;
             /** Password Enabled */
             password_enabled: boolean;
+        };
+        /**
+         * AdminOrderListResponse
+         * @description A row on the console's orders screen: the shared row plus its P&L.
+         *
+         *     Its own class so the margin can never reach the customer's own order list,
+         *     which returns the parent — what a courier cost us or a marketplace kept is
+         *     not the customer's business.
+         */
+        AdminOrderListResponse: {
+            /** Aggregator Channel */
+            aggregator_channel?: string | null;
+            /** Branch Id */
+            branch_id?: string | null;
+            /** Check Number */
+            check_number?: number | null;
+            courier?: components["schemas"]["CourierBadge"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Customer Phone */
+            customer_phone?: string | null;
+            /** Customer Phone Access Code */
+            customer_phone_access_code?: string | null;
+            /** Customer Phone Country */
+            customer_phone_country?: string | null;
+            /** Customer Phone Type */
+            customer_phone_type?: string | null;
+            /** Delivery Fee */
+            delivery_fee?: number | null;
+            delivery_method: components["schemas"]["DeliveryMethodEnum"];
+            /** Display Number */
+            display_number?: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Item Count
+             * @default 0
+             */
+            item_count: number;
+            /** Low Order Fee */
+            low_order_fee?: number | null;
+            /** Order Number */
+            order_number: string;
+            /** Order Type */
+            order_type?: string | null;
+            /** Payment Provider */
+            payment_provider: string | null;
+            pnl?: components["schemas"]["OrderPnlBrief"] | null;
+            /** Pos Status */
+            pos_status?: string | null;
+            /** Pricing Status */
+            pricing_status?: string | null;
+            /** Source */
+            source?: string | null;
+            status: components["schemas"]["OrderStatusEnum"];
+            /** Total */
+            total: number;
         };
         /** AdminPasskeyResponse */
         AdminPasskeyResponse: {
@@ -16882,11 +16990,7 @@ export interface components {
             branch_id?: string | null;
             /** Check Number */
             check_number?: number | null;
-            /** Cost Cover */
-            cost_cover?: number | null;
             courier?: components["schemas"]["CourierBadge"] | null;
-            /** Covers Direct Cost */
-            covers_direct_cost?: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -16921,8 +17025,6 @@ export interface components {
             item_count: number;
             /** Low Order Fee */
             low_order_fee?: number | null;
-            /** Net Value */
-            net_value?: number | null;
             /** Order Number */
             order_number: string;
             /** Order Type */
@@ -16968,6 +17070,84 @@ export interface components {
             tendered: string;
             /** Tips */
             tips: string;
+        };
+        /**
+         * OrderPnlBrief
+         * @description The orders list's one-cell summary of `OrderPnlResponse`.
+         */
+        OrderPnlBrief: {
+            /** Cogs Missing */
+            cogs_missing: boolean;
+            /** Fees Pending */
+            fees_pending: boolean;
+            /** Gmv */
+            gmv: number;
+            /** Is Sale */
+            is_sale: boolean;
+            /** Pc3 */
+            pc3: number;
+            /** Pc3 Pct */
+            pc3_pct: number | null;
+        };
+        /**
+         * OrderPnlResponse
+         * @description One order's P&L, and what is still unknown about it.
+         */
+        OrderPnlResponse: {
+            /** Aggregator And Delivery Fees */
+            aggregator_and_delivery_fees: number;
+            /** Cancellation Charges */
+            cancellation_charges: number;
+            /** Channel */
+            channel: string;
+            /** Cogs */
+            cogs: number | null;
+            /** Cogs Missing */
+            cogs_missing: boolean;
+            /** Cogs Provisional */
+            cogs_provisional: number;
+            /** Commission */
+            commission: number;
+            /** Delivery Cost */
+            delivery_cost: number;
+            /** Discounts */
+            discounts: number;
+            /** Fees Pending */
+            fees_pending: boolean;
+            /** Gmv */
+            gmv: number;
+            /** Input Vat */
+            input_vat: number;
+            /** Is Sale */
+            is_sale: boolean;
+            /** Marketplace Fees */
+            marketplace_fees: number;
+            /** Misc Fees */
+            misc_fees: number;
+            /** Net Revenue */
+            net_revenue: number;
+            /** Order Number */
+            order_number: string;
+            /** Output Vat */
+            output_vat: number;
+            /** Payment Fees */
+            payment_fees: number;
+            /** Pc1 */
+            pc1: number;
+            /** Pc1 Pct */
+            pc1_pct: number | null;
+            /** Pc2 */
+            pc2: number;
+            /** Pc2 Pct */
+            pc2_pct: number | null;
+            /** Pc3 */
+            pc3: number;
+            /** Pc3 Pct */
+            pc3_pct: number | null;
+            /** Period Charges */
+            period_charges: number;
+            /** Refunds */
+            refunds: number;
         };
         /**
          * OrderPreviewPromo
@@ -17371,6 +17551,19 @@ export interface components {
             date: string;
             /** Views */
             views: number;
+        };
+        /** PaginatedAdminOrders */
+        PaginatedAdminOrders: {
+            /** Items */
+            items: components["schemas"]["AdminOrderListResponse"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
         };
         /** PaginatedAuditLogs */
         PaginatedAuditLogs: {
@@ -17886,6 +18079,117 @@ export interface components {
              * @default bearer
              */
             token_type: string;
+        };
+        /**
+         * PnlChannelColumn
+         * @description One channel's (or the total's) P&L over the window.
+         */
+        PnlChannelColumn: {
+            /** Aggregator And Delivery Fees */
+            aggregator_and_delivery_fees: number;
+            /** Cancellation Charges */
+            cancellation_charges: number;
+            /** Channel */
+            channel: string;
+            /** Charged Cancellations */
+            charged_cancellations: number;
+            /** Cogs */
+            cogs: number | null;
+            /** Cogs Provisional */
+            cogs_provisional: number;
+            /** Commission */
+            commission: number;
+            /** Delivery Cost */
+            delivery_cost: number;
+            /** Discounts */
+            discounts: number;
+            /** Gmv */
+            gmv: number;
+            /** Input Vat */
+            input_vat: number;
+            /** Marketplace Fees */
+            marketplace_fees: number;
+            /** Misc Fees */
+            misc_fees: number;
+            /** Net Revenue */
+            net_revenue: number;
+            /** Orders */
+            orders: number;
+            /** Orders Fees Pending */
+            orders_fees_pending: number;
+            /** Orders With Cogs */
+            orders_with_cogs: number;
+            /** Output Vat */
+            output_vat: number;
+            /** Payment Fees */
+            payment_fees: number;
+            /** Pc1 */
+            pc1: number;
+            /** Pc1 Pct */
+            pc1_pct: number | null;
+            /** Pc2 */
+            pc2: number;
+            /** Pc2 Pct */
+            pc2_pct: number | null;
+            /** Pc3 */
+            pc3: number;
+            /** Pc3 Pct */
+            pc3_pct: number | null;
+            /** Period Charges */
+            period_charges: number;
+            /** Refunds */
+            refunds: number;
+        };
+        /**
+         * PnlPeriodChargeRow
+         * @description One category of non-order marketplace charges in the window.
+         */
+        PnlPeriodChargeRow: {
+            /** Amount */
+            amount: number;
+            /** Category */
+            category: string;
+            /** Channel */
+            channel: string;
+            /** Description */
+            description: string | null;
+            /** First Date */
+            first_date: string;
+            /** Input Vat */
+            input_vat: number;
+            /** Is True Up */
+            is_true_up: boolean;
+            /** Last Date */
+            last_date: string;
+            /** Lines */
+            lines: number;
+        };
+        /** PnlReportResponse */
+        PnlReportResponse: {
+            /** Channels */
+            channels: components["schemas"]["PnlChannelColumn"][];
+            /** Date From */
+            date_from: string;
+            /** Date To */
+            date_to: string;
+            /** Period Charges */
+            period_charges: components["schemas"]["PnlPeriodChargeRow"][];
+            /** Period Charges Included */
+            period_charges_included: boolean;
+            total: components["schemas"]["PnlChannelColumn"];
+            vat: components["schemas"]["PnlVatSummary"];
+        };
+        /**
+         * PnlVatSummary
+         * @description The VAT the P&L's figures are net of.
+         */
+        PnlVatSummary: {
+            /** Input Vat Recoverable */
+            input_vat_recoverable: number;
+            /** Net Vat Payable */
+            net_vat_payable: number;
+            /** Output Vat */
+            output_vat: number;
         };
         /**
          * PolygonPage
@@ -34579,7 +34883,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PaginatedOrders"];
+                    "application/json": components["schemas"]["PaginatedAdminOrders"];
                 };
             };
             /** @description Validation Error */
@@ -35107,6 +35411,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrderEconomicsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_order_pnl_api_v1_orders__order_number__pnl_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderPnlResponse"] | null;
                 };
             };
             /** @description Validation Error */
@@ -38383,6 +38718,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProductResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    profit_and_loss_api_v1_profit_loss_get: {
+        parameters: {
+            query: {
+                /** @description Inclusive shop day */
+                date_from: string;
+                /** @description Inclusive shop day */
+                date_to: string;
+                /** @description P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem` */
+                channels?: string[] | null;
+                branch_ids?: string[] | null;
+                legal_entity_ids?: string[] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PnlReportResponse"];
                 };
             };
             /** @description Validation Error */

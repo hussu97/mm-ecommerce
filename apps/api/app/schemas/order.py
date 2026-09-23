@@ -24,6 +24,7 @@ from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 # still in it.
 from app.models.payment_gateway import PaymentMethodEnum  # noqa: F401
 from app.schemas.courier import CourierBadge
+from app.schemas.pnl import OrderPnlBrief
 from app.schemas.pos.legal_entity import OrderLegalEntity
 
 from .address import AddressCreate
@@ -504,24 +505,6 @@ class OrderListResponse(BaseModel):
     #: aggregator order from its channel, so the list renders the courier logo.
     courier: CourierBadge | None = None
 
-    # ── is this order paying for itself? ─────────────────────────────────────
-    #
-    # Computed in SQL by `order_service.get_all_admin` rather than by calling
-    # `order_economics` per row: the list serves pages of up to two thousand,
-    # and a per-row service call is two thousand round-trips for one column.
-    # The arithmetic is the same, and a test pins them together.
-
-    #: What is left after the cost of sale, the payment fee and any refund.
-    #: Null when a cost of sale exists but has not been told to us — an
-    #: aggregator whose commission rate is not configured.
-    net_value: float | None = None
-    #: `net_value` as a share of the goods at menu price, before discount.
-    cost_cover: float | None = None
-    #: Whether the row cleared the shop's direct-cost bar. **Three-valued**: null
-    #: is "cannot say", and the console must render it as a dash rather than a
-    #: cross — an unconfigured rate is not a loss-making order.
-    covers_direct_cost: bool | None = None
-
     @model_validator(mode="after")
     def _fill_courier(self) -> "OrderListResponse":
         if self.courier is None:
@@ -529,6 +512,21 @@ class OrderListResponse(BaseModel):
                 source=self.source, aggregator_channel=self.aggregator_channel
             )
         return self
+
+
+class AdminOrderListResponse(OrderListResponse):
+    """
+    A row on the console's orders screen: the shared row plus its P&L.
+
+    Its own class so the margin can never reach the customer's own order list,
+    which returns the parent — what a courier cost us or a marketplace kept is
+    not the customer's business.
+    """
+
+    #: PC3 and its share of GMV, net of VAT (`services/orders/order_pnl`,
+    #: selected in SQL beside the row). Null when the order is not in the P&L:
+    #: still in flight, or cancelled/refunded without a charge.
+    pnl: OrderPnlBrief | None = None
 
 
 class OrderEconomicsResponse(BaseModel):

@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Integer,
-    case,
     cast,
     func,
     or_,
@@ -47,7 +46,6 @@ from app.models.order import (
     OrderItemStatusEnum,
     OrderStatusEnum,
 )
-from app.models.order_delivery import OrderDelivery
 from app.models.order_receiver import OrderReceiver
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_transaction import PaymentTransactionStatusEnum
@@ -58,6 +56,7 @@ from app.models.user import User
 from app.schemas.delivery import DeliveryQuoteResponse
 from app.schemas.fulfilment import FulfilmentResponse
 from app.schemas.order import (
+    AdminOrderListResponse,
     OrderCreate,
     OrderListResponse,
     OrderResponse,
@@ -70,6 +69,7 @@ from app.schemas.order_preview import (
     OrderPreviewResponse,
     UnavailableItem,
 )
+from app.schemas.pnl import OrderPnlBrief
 from app.services import cart_service, email_service, promo_code_service, push_service
 from app.services.catalog import availability_service
 from app.services.catalog.storefront_visibility import is_website_product_visible
@@ -77,9 +77,9 @@ from app.services.couriers import courier_service, lalamove_service
 from app.services.delivery import delivery_promise, delivery_service, fulfilment_service
 from app.services.delivery.delivery_zone_service import Zone, ZoneBranch
 from app.services.orders import (
-    order_economics,
     order_fees,
     order_lifecycle,
+    order_pnl,
     order_pricing,
     order_query,
     tax_identity_service,
@@ -1815,99 +1815,38 @@ async def _send_confirmation_emails(order: OrderResponse) -> None:
         )
 
 
-def _cost_of_sale_subquery():
-    """
-    What the courier charged for this order, as a scalar the list can subtract.
-
-    `cost_total` is the invoice and `quoted_cost` is the quote; the first is the
-    truth and arrives late, so the second stands in until it does — the same
-    preference `order_economics` applies one order at a time. Null where there
-    is no delivery row at all, which is a counter sale, and null where a
-    third-party zone bills nothing per order.
-    """
-    return (
-        select(func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost))
-        .where(OrderDelivery.order_id == Order.id)
-        .correlate(Order)
-        .limit(1)
-        .scalar_subquery()
+def _pnl_brief(row) -> OrderPnlBrief | None:
+    """The orders list's P&L cell from a row that selected `_pnl_columns()`."""
+    pnl = order_pnl.order_pnl_from_mapping(row._mapping)
+    if pnl is None:
+        return None
+    return OrderPnlBrief(
+        gmv=float(pnl.gmv),
+        pc3=float(pnl.pc3),
+        pc3_pct=_float_or_none(order_pnl.pnl_margin(pnl)),
+        is_sale=pnl.is_sale,
+        cogs_missing=pnl.cogs is None,
+        fees_pending=pnl.fees_pending,
     )
 
 
-def _net_value_expression(cost_of_sale):
+def _float_or_none(value) -> float | None:
+    return None if value is None else float(value)
+
+
+def _pnl_columns() -> list:
     """
-    What the shop keeps on a row, in SQL.
+    The P&L lines of each row, selected in the same pass as the rows.
 
-    Mirrors `OrderEconomics.net` exactly and is tested against it. It lives here
-    rather than being borrowed from that module because the two answer the same
-    question at different scales — one order on a screen, two thousand rows in a
-    page — and a per-row service call would be two thousand round-trips for one
-    column.
-
-    **Null propagates deliberately.** An aggregator order whose commission rate
-    nobody has configured has an unknowable net, and `NULL` is how that reaches
-    the console as a dash. `coalesce`-ing it to zero would show the order
-    keeping every dirham, which is the exact misreading this column exists to
-    prevent — so the coalesce below is applied only to the parts that are
-    genuinely zero when absent (a counter sale's courier, a cash order's
-    processor), never to a fee we were simply never told.
+    The same expressions the P&L page sums and the order breakdown reads
+    (`order_pnl.line_columns`), so the percentage on a row and the order's own
+    breakdown can never disagree. Pages run to two thousand rows, which is why
+    this is SQL and not a per-row service call.
     """
-    known_cost = case(
-        # A marketplace order's cost of sale is its commission; nobody invoices
-        # us for a van. A dispatched order's is the courier. Neither has both.
-        (
-            Order.source == OrderSourceEnum.AGGREGATOR.value,
-            Order.aggregator_fee,
-        ),
-        else_=func.coalesce(cost_of_sale, 0),
-    )
-    return (
-        Order.total
-        - known_cost
-        - func.coalesce(Order.payment_fee, 0)
-        # The two aggregator charges `OrderEconomics.net` also subtracts — a
-        # cancellation/compensation fee and a merchant-funded promotion billed
-        # back. Omitting them here made this column overstate the net on exactly
-        # the orders that carry them, while the docstring promised the two
-        # answers were tested against each other (F-ORD-15). `coalesce`d to zero
-        # because absent means "nothing charged" for both.
-        - func.coalesce(Order.cancellation_fee, 0)
-        - func.coalesce(Order.marketing_fee, 0)
-        - func.coalesce(Order.refunded_amount, 0)
-    )
-
-
-def _economics_columns():
-    """
-    The direct-cost pair — net kept, and net as a share of menu price — as two
-    labelled columns a list query can select in the same pass as its rows.
-
-    Both admin and account order lists need them and once diverged: the account
-    list computed them and the admin one silently did not, so the console — the
-    one screen the shop reads its margins from — showed a dash on every row while
-    its schema documented the column as filled. One helper so a single query
-    cannot forget the column its response model promises.
-    """
-    net_value = _net_value_expression(_cost_of_sale_subquery())
-    cost_cover = net_value / func.nullif(Order.subtotal, 0) * 100
-    return net_value.label("net_value"), cost_cover.label("cost_cover")
-
-
-def _apply_economics(resp: OrderListResponse, net, cover) -> None:
-    """
-    Write the direct-cost trio onto a list row from its computed columns.
-
-    Three-valued on `covers_direct_cost`, and the null is the point: an
-    unconfigured commission rate makes the answer unknowable, and rendering that
-    as a failure is how a seeding gap becomes a fortnight of chasing the wrong
-    orders.
-    """
-    threshold = order_economics.DIRECT_COST_THRESHOLD
-    resp.net_value = float(net) if net is not None else None
-    resp.cost_cover = float(cover) if cover is not None else None
-    resp.covers_direct_cost = (
-        None if cover is None else Decimal(str(cover)) >= threshold
-    )
+    return [
+        order_pnl.in_pnl_clause().label("in_pnl"),
+        *order_pnl.line_columns().values(),
+    ]
 
 
 def _list_row_load_options():
@@ -1975,18 +1914,11 @@ async def get_user_orders(
     )
     total = count_result.scalar() or 0
 
-    # The direct-cost columns, computed in the same pass as the rows. `subtotal`
-    # is the goods at menu price *before* discount — the denominator held still
-    # on purpose, so a coupon shows up as the cost it is instead of shrinking
-    # the base it is measured against.
-    net_value, cost_cover = _economics_columns()
-
+    # No margin columns here: this is the customer's own order history, and what
+    # a courier cost us or a marketplace kept is not theirs to see. The console's
+    # list (`get_all_admin`) carries the P&L instead.
     stmt = (
-        base_stmt.add_columns(
-            _item_count_subquery().label("item_count"),
-            net_value,
-            cost_cover,
-        )
+        base_stmt.add_columns(_item_count_subquery().label("item_count"))
         .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
@@ -1995,10 +1927,9 @@ async def get_user_orders(
     result = await db.execute(stmt)
 
     items = []
-    for order, count, net, cover in result.all():
+    for order, count in result.all():
         resp = OrderListResponse.model_validate(order)
         resp.item_count = int(count or 0)
-        _apply_economics(resp, net, cover)
         items.append(resp)
     return items, total
 
@@ -2233,7 +2164,7 @@ async def get_all_admin(
     couriers: list[str] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-) -> tuple[list[OrderListResponse], int]:
+) -> tuple[list[AdminOrderListResponse], int]:
     """
     Every order, from any channel, newest first.
 
@@ -2336,18 +2267,13 @@ async def get_all_admin(
     )
     total = count_result.scalar() or 0
 
-    # The direct-cost columns, in the same pass as the rows — the console reads
-    # its margins from this list, so a dash on every row (the state before these
-    # were selected here) hid exactly the underwater orders the column exists to
-    # surface. `subtotal` is the goods at menu price before discount, so a coupon
-    # shows up as the cost it is rather than shrinking its own denominator.
-    net_value, cost_cover = _economics_columns()
-
+    # The P&L columns, in the same pass as the rows — the console reads each
+    # order's margin from this list.
+    await order_pnl.without_jit(db)
     stmt = (
         base_stmt.add_columns(
             _item_count_subquery().label("item_count"),
-            net_value,
-            cost_cover,
+            *_pnl_columns(),
         )
         .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
@@ -2357,9 +2283,9 @@ async def get_all_admin(
     result = await db.execute(stmt)
 
     items = []
-    for order, count, net, cover in result.all():
-        resp = OrderListResponse.model_validate(order)
-        resp.item_count = int(count or 0)
-        _apply_economics(resp, net, cover)
+    for row in result.all():
+        resp = AdminOrderListResponse.model_validate(row[0])
+        resp.item_count = int(row.item_count or 0)
+        resp.pnl = _pnl_brief(row)
         items.append(resp)
     return items, total

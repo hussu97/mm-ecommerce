@@ -127,7 +127,6 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("inventory_transaction_items", "lot_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transaction_items", "recipe_version_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transactions", "creator_id"): _AUDIT_ACTOR,
-    ("inventory_transactions", "order_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transactions", "other_branch_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transactions", "other_warehouse_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transactions", "poster_id"): _AUDIT_ACTOR,
