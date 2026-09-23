@@ -1236,29 +1236,29 @@ def _movement_row(movement: dict | None) -> dict | None:
     }
 
 
-async def send_auto_availability_change(
-    *,
-    branch_name: str,
-    branch_reference: str | None,
-    changes: list[dict[str, Any]],
-) -> None:
-    """Tell the owner the system changed what one branch sells — one email per
-    branch per batch, never one per item. Always English; links go to the
-    English-only admin console.
+async def send_auto_availability_change(*, branches: list[dict[str, Any]]) -> None:
+    """Tell the owner what the system changed in one sweep — ONE email for the
+    whole sweep, every branch and every item in it, never one per branch or per
+    item. Always English; links go to the English-only admin console.
 
-    Each ``changes`` entry carries ``direction`` ("OFF"/"ON"), ``kind``,
-    ``name``, ``reason`` (an ``availability_service.REASON_*``) and ``items``:
-    the triggering produced goods, each with ``name``, current branch
-    ``on_hand`` and its latest ``movement`` (a dict from
-    ``auto_availability_service``, or None)."""
-    if not changes:
+    Each ``branches`` entry is ``{branch_name, branch_reference, changes}``;
+    each change carries ``direction`` ("OFF"/"ON"), ``kind``, ``name``,
+    ``reason`` (an ``availability_service.REASON_*``) and ``items``: the
+    triggering produced goods, each with ``name``, current branch ``on_hand``
+    and its latest ``movement`` (a dict from ``auto_availability_service``, or
+    None)."""
+    branches = [b for b in branches if b.get("changes")]
+    if not branches:
         return
-    offs = sum(1 for change in changes if change.get("direction") == "OFF")
-    ons = len(changes) - offs
+    every = [change for b in branches for change in b["changes"]]
+    offs = sum(1 for change in every if change.get("direction") == "OFF")
+    ons = len(every) - offs
     parts = [f"{offs} off sale" if offs else "", f"{ons} back on sale" if ons else ""]
-    subject = f"Auto availability — {branch_name}: " + ", ".join(p for p in parts if p)
-    rows = [
-        {
+    names = ", ".join(b["branch_name"] for b in branches)
+    subject = f"Auto availability — {names}: " + ", ".join(p for p in parts if p)
+
+    def row(change: dict[str, Any]) -> dict[str, Any]:
+        return {
             **change,
             "reason_label": _AUTO_AVAILABILITY_REASONS.get(
                 change.get("reason") or "", change.get("reason") or ""
@@ -1273,7 +1273,14 @@ async def send_auto_availability_change(
                 for item in change.get("items") or []
             ],
         }
-        for change in changes
+
+    sections = [
+        {
+            "branch_name": b["branch_name"],
+            "branch_reference": b.get("branch_reference"),
+            "changes": [row(change) for change in b["changes"]],
+        }
+        for b in branches
     ]
     for recipient in AUTO_AVAILABILITY_RECIPIENTS:
         try:
@@ -1281,15 +1288,14 @@ async def send_auto_availability_change(
                 "auto_availability_change.html",
                 recipient_email=recipient,
                 locale="en",
-                branch_name=branch_name,
-                branch_reference=branch_reference,
-                changes=rows,
+                branches=sections,
+                change_count=len(every),
             )
             result = await _send_async(recipient, subject, html)
         except Exception as exc:
             logger.error(
                 "auto_availability_change render/send failed for %s to %s: %s",
-                branch_name,
+                names,
                 recipient,
                 exc,
                 exc_info=True,
