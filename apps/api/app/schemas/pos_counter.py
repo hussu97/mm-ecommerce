@@ -519,6 +519,14 @@ class CounterPromoteRequest(BaseModel):
     notes: str | None = Field(None, max_length=2000)
     lines: list[CounterPromoteLine] = []
     kitchen_tickets: list[CounterSaleKitchenTicket] = []
+    #: The ticket number the register already printed on a docket (all four
+    #: together, or none): the promoted check keeps it, so the docket and the
+    #: receipt name the same check. Ignored if this device does not own the
+    #: prefix or the number is already taken that day.
+    ticket_prefix: str | None = Field(None, min_length=1, max_length=6)
+    ticket_seq: int | None = Field(None, ge=1, le=999999)
+    display_number: str | None = Field(None, min_length=3, max_length=20)
+    business_date: str | None = Field(None, pattern=_BUSINESS_DATE)
 
 
 # ═══ Shadow mode ═════════════════════════════════════════════════════════════

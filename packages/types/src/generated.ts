@@ -12553,6 +12553,8 @@ export interface components {
              * Format: uuid
              */
             branch_id: string;
+            /** Business Date */
+            business_date?: string | null;
             /** Coupon Promotion Id */
             coupon_promotion_id?: string | null;
             /** Customer Name */
@@ -12561,6 +12563,8 @@ export interface components {
             customer_phone?: string | null;
             /** Device Id */
             device_id?: string | null;
+            /** Display Number */
+            display_number?: string | null;
             /**
              * Id
              * Format: uuid
@@ -12580,6 +12584,10 @@ export interface components {
             notes?: string | null;
             /** Opened At */
             opened_at?: string | null;
+            /** Ticket Prefix */
+            ticket_prefix?: string | null;
+            /** Ticket Seq */
+            ticket_seq?: number | null;
             /** Till Id */
             till_id?: string | null;
         };

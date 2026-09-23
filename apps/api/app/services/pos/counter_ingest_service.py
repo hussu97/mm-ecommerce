@@ -1276,6 +1276,42 @@ async def shadow_compare(db: AsyncSession, *, device: Device, report) -> list[di
 # ─── Promote ──────────────────────────────────────────────────────────────────
 
 
+async def _promoted_ticket(
+    db: AsyncSession, *, branch: Branch, device_id: uuid.UUID | None, request
+) -> tuple[str | None, str | None]:
+    """The printed ticket a promoted check keeps, as `(display_number,
+    business_date)` — or `(None, None)` for ordinary server numbering.
+
+    A check fired to the kitchen before "Move to server" already has
+    `T1-0042` on its docket; the receipt must say the same. Kept only when it
+    is well-formed, this device's own prefix, and not already used that day —
+    anything else falls back rather than refusing a live, untendered check.
+    """
+    prefix, seq = request.ticket_prefix, request.ticket_seq
+    number, day = request.display_number, request.business_date
+    if not (prefix and seq and number and day) or number != f"{prefix}-{seq:04d}":
+        return None, None
+    device = await db.get(Device, device_id) if device_id else None
+    if (
+        device is None
+        or device.branch_id != branch.id
+        or device.ticket_prefix != prefix
+    ):
+        return None, None
+    taken = (
+        await db.execute(
+            select(Order.id).where(
+                Order.branch_id == branch.id,
+                Order.business_date == day,
+                Order.display_number == number,
+            )
+        )
+    ).first()
+    if taken is not None:
+        return None, None
+    return number, day
+
+
 async def promote(
     db: AsyncSession,
     *,
@@ -1298,6 +1334,9 @@ async def promote(
             raise SaleConflict("This id belongs to another order")
         return await pos_order_service.get_order(db, existing.id)
 
+    display_number, business_date = await _promoted_ticket(
+        db, branch=branch, device_id=device_id, request=request
+    )
     order = await pos_order_service.open_order(
         db,
         branch=branch,
@@ -1312,6 +1351,8 @@ async def promote(
         order_id=request.id,
         client_request_id=request.id,
         opened_at=request.opened_at,
+        business_date=business_date,
+        display_number=display_number,
     )
     by_line: dict[uuid.UUID, OrderItem] = {}
     for line in request.lines:

@@ -613,6 +613,55 @@ async def test_promote_moves_an_untendered_local_check_to_the_server(Session):
         assert [(t.origin, t.sequence) for t in tickets] == [("device", 1)]
 
 
+async def test_promote_keeps_the_ticket_number_already_on_the_docket(Session):
+    """A check fired to the kitchen as T1-000n and then moved to the server
+    keeps that number, so the receipt and the docket name the same check; a
+    number this device does not own falls back to server numbering."""
+    from app.schemas.pos_counter import CounterPromoteRequest
+    from app.services.pos import counter_bundle_service
+
+    world = await _world(Session)
+    async with Session() as db:
+        device = await db.get(Device, world.device_id)
+        prefix = await counter_bundle_service.ensure_ticket_prefix(db, device)
+        await db.commit()
+
+    async def promote(prefix_: str, seq: int) -> Order:
+        line = uuid.uuid4()
+        request = CounterPromoteRequest.model_validate(
+            {
+                "id": str(uuid.uuid4()),
+                "branch_id": str(world.branch_id),
+                "till_id": str(world.till_id),
+                "device_id": str(world.device_id),
+                "lines": [
+                    {"id": str(line), "product_id": str(world.cookie_id), "quantity": 1}
+                ],
+                "ticket_prefix": prefix_,
+                "ticket_seq": seq,
+                "display_number": f"{prefix_}-{seq:04d}",
+                "business_date": world.business_date,
+            }
+        )
+        async with Session() as db:
+            order = await counter_ingest_service.promote(
+                db,
+                user=await db.get(User, world.cashier_id),
+                branch=await db.get(Branch, world.branch_id),
+                till=await db.get(Till, world.till_id),
+                device_id=world.device_id,
+                request=request,
+            )
+            await db.commit()
+        return await _order(Session, order.id)
+
+    kept = await promote(prefix, 7)
+    assert kept.display_number == f"{prefix}-0007"
+    assert kept.order_number.endswith(f"-{prefix}-0007")
+    foreign = await promote("T9", 8)
+    assert foreign.display_number is None
+
+
 async def test_a_shadow_report_is_compared_recorded_and_listed(Session, alerts):
     from app.api.v1.pos_counter import counter_sync_overview
     from app.schemas.pos_counter import CounterShadowReport
