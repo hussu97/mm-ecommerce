@@ -210,12 +210,14 @@ async def test_reset_restates_on_hand_to_current_recipe_cost(env):
         # Ingredients get real costs: Flour @ 2.00, Sugar @ 0.50.
         await _receive(db, ids, ids.flour, user, quantity="100", unit_cost="2.00")
         await _receive(db, ids, ids.sugar, user, quantity="100", unit_cost="0.50")
-        # The made good enters stock at zero cost — the leak the reset fixes.
+        # The made good enters stock with no cost of its own. Under FIFO v3 it
+        # is no longer stranded at zero: with no batch to price it, it is
+        # estimated at its current recipe cost here (provisional).
         await _receive(db, ids, ids.made, user, quantity="10", unit_cost="0.00")
         await db.commit()
 
     async with Session() as db:
-        assert await _level_cost(db, ids.made, ids.wh) == Decimal("0")
+        assert await _level_cost(db, ids.made, ids.wh) == Decimal("5.5")
 
     # Recipe cost = 2 Flour × 2.00 + 3 Sugar × 0.50 = 5.50 per unit.
     async with Session() as db:
@@ -232,8 +234,8 @@ async def test_reset_restates_on_hand_to_current_recipe_cost(env):
         assert result["levels_skipped"] == 0
         adj = result["adjustments"][0]
         assert Decimal(str(adj["new_average_cost"])) == Decimal("5.5")
-        # 10 units revalued from 0 to 5.50 = +55.00 on the books.
-        assert Decimal(str(adj["value_change"])) == Decimal("55")
+        # Already estimated at 5.50, so pinning it there moves nothing.
+        assert Decimal(str(adj["value_change"])) == Decimal("0")
 
     async with Session() as db:
         assert await _level_cost(db, ids.made, ids.wh) == Decimal("5.5")
@@ -256,3 +258,45 @@ async def test_reset_refuses_when_ingredients_have_no_cost(env):
             await recipe_service.reset_item_cost_from_recipe(
                 db, item_id=ids.made, user=user
             )
+
+
+async def test_editor_quote_costs_lines_the_way_production_books_them(env):
+    """The recipe editor's figure comes from the server: per line as authored,
+    per unit, and per batch for a batch recipe (flour 2.00, sugar 0.50)."""
+    _engine, Session, ids = env
+    async with Session() as db:
+        user = await db.get(User, ids.user)
+        await _receive(db, ids, ids.flour, user, quantity="100", unit_cost="2.00")
+        await _receive(db, ids, ids.sugar, user, quantity="100", unit_cost="0.50")
+        await db.commit()
+
+    lines = [
+        recipe_service.RecipeLineInput(item_id=ids.flour, quantity=Decimal("2")),
+        recipe_service.RecipeLineInput(item_id=ids.sugar, quantity=Decimal("3")),
+    ]
+    async with Session() as db:
+        unit = await recipe_service.quote_lines(
+            db,
+            owner_kind="inventory_item",
+            owner_id=ids.made,
+            basis="unit",
+            batch_yield=None,
+            lines=lines,
+        )
+        assert unit["unit_cost"] == Decimal("5.5")
+        assert unit["batch_cost"] is None
+        assert [line["line_cost"] for line in unit["lines"]] == [
+            Decimal("4"),
+            Decimal("1.5"),
+        ]
+        batch = await recipe_service.quote_lines(
+            db,
+            owner_kind="inventory_item",
+            owner_id=ids.made,
+            basis="batch",
+            batch_yield=Decimal("2"),
+            lines=lines,
+            branch_id=ids.branch,
+        )
+        assert batch["unit_cost"] == Decimal("2.75")
+        assert batch["batch_cost"] == Decimal("5.5")

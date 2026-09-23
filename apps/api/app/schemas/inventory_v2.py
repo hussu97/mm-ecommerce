@@ -103,6 +103,34 @@ class RecipeExpansionResponse(BaseModel):
     recipe_version_ids: list[UUID]
 
 
+class RecipeQuoteRequest(BaseModel):
+    """Lines as they stand in the editor, saved or not, to be costed."""
+
+    owner_kind: OwnerKind
+    owner_id: UUID | None = None
+    basis: Literal["unit", "batch"] = "unit"
+    batch_yield: Decimal | None = Field(None, gt=0)
+    #: Price at this branch's FIFO ingredient costs; omitted = every branch.
+    branch_id: UUID | None = None
+    lines: list[VersionedRecipeLineInput] = Field(default_factory=list)
+
+
+class RecipeQuoteLine(BaseModel):
+    item_id: UUID
+    #: Cost per the ingredient's recipe unit, waste and sub-recipes included.
+    unit_cost: Decimal
+    #: This line as authored (one unit, or one whole batch).
+    line_cost: Decimal
+
+
+class RecipeQuoteResponse(BaseModel):
+    lines: list[RecipeQuoteLine]
+    #: One owner unit.
+    unit_cost: Decimal
+    #: One whole batch, for a batch-basis recipe.
+    batch_cost: Decimal | None
+
+
 RecipeStatus = Literal["none", "draft", "active"]
 RecipeBasis = Literal["unit", "batch"]
 

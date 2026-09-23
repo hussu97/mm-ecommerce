@@ -44,6 +44,8 @@ from app.schemas.inventory_v2 import (
     RecipeDraftRequest,
     RecipeExpansionRequest,
     RecipeExpansionResponse,
+    RecipeQuoteRequest,
+    RecipeQuoteResponse,
     RecipeReadinessResponse,
     RecipeVersionResponse,
     ReportActionRequest,
@@ -143,6 +145,7 @@ async def list_recipe_owners(
     sort_dir: str = Query("asc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=2000),
+    branch_id: uuid.UUID | None = Query(None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("catalogue.recipes.read")),
 ):
@@ -162,6 +165,7 @@ async def list_recipe_owners(
         sort_dir=sort_dir,
         page=page,
         per_page=per_page,
+        branch_id=branch_id,
     )
     return {
         "items": items,
@@ -288,6 +292,25 @@ async def preview_recipe_version(
         "lines": [expanded[key].as_snapshot() for key in sorted(expanded, key=str)],
         "recipe_version_ids": sorted(version_ids, key=str),
     }
+
+
+@control_router.post("/recipes-v2/quote", response_model=RecipeQuoteResponse)
+async def quote_recipe(
+    data: RecipeQuoteRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.recipes.read")),
+):
+    """What a recipe costs as written — per line and per owner unit — at current
+    FIFO ingredient costs (one branch's, or blended). The editor's live figure."""
+    return await recipe_service.quote_lines(
+        db,
+        owner_kind=data.owner_kind,
+        owner_id=data.owner_id,
+        basis=data.basis,
+        batch_yield=data.batch_yield,
+        lines=data.lines,
+        branch_id=data.branch_id,
+    )
 
 
 @control_router.post(

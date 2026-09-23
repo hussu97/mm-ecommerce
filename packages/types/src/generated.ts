@@ -3940,6 +3940,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/items/{item_id}/cost-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Item Cost History
+         * @description Every movement of the item at a branch, newest first: what each is worth
+         *     now beside what it was booked at, and the running quantity and value.
+         */
+        get: operations["get_item_cost_history_api_v1_inventory_items__item_id__cost_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/items/{item_id}/cost-layers": {
         parameters: {
             query?: never;
@@ -3949,11 +3970,8 @@ export interface paths {
         };
         /**
          * Get Item Cost Layers
-         * @description The surviving FIFO layers for an item — so its valuation is legible.
-         *
-         *     Each layer is a quantity still on the shelf at a known cost, oldest first
-         *     (the order the next issue will consume them). The weighted average is what
-         *     those layers imply, which is exactly ``InventoryLevel.average_cost``.
+         * @description The FIFO layers that make up an item's stock on hand, oldest (next out)
+         *     first, each with where its quantity and its cost came from.
          */
         get: operations["get_item_cost_layers_api_v1_inventory_items__item_id__cost_layers_get"];
         put?: never;
@@ -4374,6 +4392,27 @@ export interface paths {
         get: operations["list_recipe_owners_api_v1_inventory_recipe_owners__owner_kind__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/recipes-v2/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quote Recipe
+         * @description What a recipe costs as written — per line and per owner unit — at current
+         *     FIFO ingredient costs (one branch's, or blended). The editor's live figure.
+         */
+        post: operations["quote_recipe_api_v1_inventory_recipes_v2_quote_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11698,14 +11737,28 @@ export interface components {
         /** CostLayerResponse */
         CostLayerResponse: {
             /**
+             * Cost Is Provisional
+             * @default false
+             */
+            cost_is_provisional: boolean;
+            /** Cost Source Reference */
+            cost_source_reference?: string | null;
+            /**
              * Id
              * Format: uuid
              */
             id: string;
             /** Line Value */
             line_value?: string | null;
+            /**
+             * Next Out
+             * @default false
+             */
+            next_out: boolean;
             /** Original Quantity */
             original_quantity: string;
+            /** Posted At */
+            posted_at?: string | null;
             /** Posting Sequence */
             posting_sequence: number;
             /** Purchase Order Id */
@@ -13790,13 +13843,82 @@ export interface components {
             /** Warehouse Id */
             warehouse_id: string | null;
         };
+        /** ItemCostHistoryResponse */
+        ItemCostHistoryResponse: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Items */
+            items: components["schemas"]["ItemCostHistoryRow"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * ItemCostHistoryRow
+         * @description One ledger line's effect on an item's quantity and value at a branch.
+         */
+        ItemCostHistoryRow: {
+            /** Booked Total Cost */
+            booked_total_cost?: string | null;
+            /** Business Date */
+            business_date: string | null;
+            /** Cost Source Reference */
+            cost_source_reference?: string | null;
+            /** Is Provisional */
+            is_provisional: boolean;
+            /**
+             * Line Id
+             * Format: uuid
+             */
+            line_id: string;
+            /** Posted At */
+            posted_at: string | null;
+            /** Quantity */
+            quantity: string;
+            /** Reference */
+            reference: string;
+            /** Running Average Cost */
+            running_average_cost: string | null;
+            /** Running Quantity */
+            running_quantity: string;
+            /** Running Value */
+            running_value: string;
+            /** Superseded */
+            superseded: boolean;
+            /** Total Cost */
+            total_cost: string;
+            /**
+             * Transaction Id
+             * Format: uuid
+             */
+            transaction_id: string;
+            /** Type */
+            type: string;
+            /** Unit Cost */
+            unit_cost: string;
+        };
         /**
          * ItemCostLayersResponse
-         * @description The surviving FIFO layers for an item, and the valuation they imply.
+         * @description The FIFO layers that make up an item's current stock, and its value.
          */
         ItemCostLayersResponse: {
             /** Average Cost */
             average_cost: string;
+            /** Branch Id */
+            branch_id?: string | null;
             /**
              * Item Id
              * Format: uuid
@@ -13807,6 +13929,16 @@ export interface components {
              * @default []
              */
             layers: components["schemas"]["CostLayerResponse"][];
+            /**
+             * Layers Match Stock
+             * @default true
+             */
+            layers_match_stock: boolean;
+            /**
+             * On Hand Quantity
+             * @default 0
+             */
+            on_hand_quantity: string;
             /** Total Quantity */
             total_quantity: string;
             /** Total Value */
@@ -18550,6 +18682,52 @@ export interface components {
             secondary?: string | null;
             /** Unit Cost */
             unit_cost?: string | null;
+        };
+        /** RecipeQuoteLine */
+        RecipeQuoteLine: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Line Cost */
+            line_cost: string;
+            /** Unit Cost */
+            unit_cost: string;
+        };
+        /**
+         * RecipeQuoteRequest
+         * @description Lines as they stand in the editor, saved or not, to be costed.
+         */
+        RecipeQuoteRequest: {
+            /**
+             * Basis
+             * @default unit
+             * @enum {string}
+             */
+            basis: "unit" | "batch";
+            /** Batch Yield */
+            batch_yield?: number | string | null;
+            /** Branch Id */
+            branch_id?: string | null;
+            /** Lines */
+            lines?: components["schemas"]["VersionedRecipeLineInput"][];
+            /** Owner Id */
+            owner_id?: string | null;
+            /**
+             * Owner Kind
+             * @enum {string}
+             */
+            owner_kind: "product" | "modifier_option" | "inventory_item";
+        };
+        /** RecipeQuoteResponse */
+        RecipeQuoteResponse: {
+            /** Batch Cost */
+            batch_cost: string | null;
+            /** Lines */
+            lines: components["schemas"]["RecipeQuoteLine"][];
+            /** Unit Cost */
+            unit_cost: string;
         };
         /** RecipeReadinessResponse */
         RecipeReadinessResponse: {
@@ -29297,6 +29475,41 @@ export interface operations {
             };
         };
     };
+    get_item_cost_history_api_v1_inventory_items__item_id__cost_history_get: {
+        parameters: {
+            query: {
+                branch_id: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemCostHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_item_cost_layers_api_v1_inventory_items__item_id__cost_layers_get: {
         parameters: {
             query?: {
@@ -30041,6 +30254,7 @@ export interface operations {
                 sort_dir?: string;
                 page?: number;
                 per_page?: number;
+                branch_id?: string | null;
             };
             header?: never;
             path: {
@@ -30057,6 +30271,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedRecipeOwners"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quote_recipe_api_v1_inventory_recipes_v2_quote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeQuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeQuoteResponse"];
                 };
             };
             /** @description Validation Error */

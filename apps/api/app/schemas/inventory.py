@@ -667,16 +667,66 @@ class CostLayerResponse(ORMModel):
     #: remaining_quantity × unit_cost, quantised server-side — the layer's
     #: contribution to the item's on-hand value (the "math" the breakdown shows).
     line_value: Decimal | None = None
+    #: When the stock was posted (the source transaction's posting time).
+    posted_at: datetime | None = None
+    #: The cost is still an estimate — this stock is waiting on its next priced
+    #: receipt, which will re-cost it (and whatever was already used from it).
+    cost_is_provisional: bool = False
+    #: Where the *cost* came from when it is not this layer's own document —
+    #: e.g. a count overage priced by the PO that followed it.
+    cost_source_reference: str | None = None
+    #: The layer the next issue will draw from.
+    next_out: bool = False
 
 
 class ItemCostLayersResponse(BaseModel):
-    """The surviving FIFO layers for an item, and the valuation they imply."""
+    """The FIFO layers that make up an item's current stock, and its value."""
 
     item_id: UUID
+    branch_id: UUID | None = None
+    #: Σ remaining layers — the stock the cost breakdown covers.
     total_quantity: Decimal
     total_value: Decimal
     average_cost: Decimal
+    #: Stock on hand per the ledger (Σ level quantity in scope).
+    on_hand_quantity: Decimal = Decimal("0")
+    #: The layers account for exactly the stock on hand (max(on hand, 0)).
+    layers_match_stock: bool = True
     layers: list[CostLayerResponse] = []
+
+
+class ItemCostHistoryRow(BaseModel):
+    """One ledger line's effect on an item's quantity and value at a branch."""
+
+    line_id: UUID
+    transaction_id: UUID
+    reference: str
+    type: str
+    posted_at: datetime | None
+    business_date: str | None
+    #: Signed storage quantity (+ in, − out).
+    quantity: Decimal
+    #: What the line is worth now, after any later price true-up.
+    unit_cost: Decimal
+    total_cost: Decimal
+    #: What it was booked at when it posted, when that differs.
+    booked_total_cost: Decimal | None = None
+    is_provisional: bool
+    superseded: bool
+    cost_source_reference: str | None = None
+    running_quantity: Decimal
+    running_value: Decimal
+    running_average_cost: Decimal | None
+
+
+class ItemCostHistoryResponse(BaseModel):
+    item_id: UUID
+    branch_id: UUID
+    items: list[ItemCostHistoryRow]
+    total: int
+    page: int
+    per_page: int
+    pages: int
 
 
 class ReceiveLine(BaseModel):

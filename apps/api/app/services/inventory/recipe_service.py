@@ -644,6 +644,99 @@ async def draft_and_activate(
     return await activate(db, version_id=draft.id, user_id=user_id)
 
 
+def _walk_version(
+    catalog: ActiveRecipeCatalog,
+    totals: dict[uuid.UUID, ExpandedLine],
+    used_versions: set[uuid.UUID],
+    *,
+    owner_kind: str,
+    owner_id: uuid.UUID,
+    version_id: uuid.UUID | None,
+    basis: str,
+    batch_yield: Decimal | None,
+    lines: Iterable,
+    gross_scale: Decimal,
+    net_scale: Decimal,
+    path: list[dict[str, str]],
+    ancestry: set[uuid.UUID],
+    order_type: str | None,
+) -> None:
+    """Fold one version's lines into *totals* — the one recipe expansion rule.
+
+    A batch recipe's lines make ``batch_yield`` owner units, so demand is divided
+    by the yield before its lines are drawn; that composes through nested
+    phantom sub-recipes (each dividing by its own yield). A line's
+    ``yield_percentage`` grosses its quantity up for planned waste. Output is in
+    each leaf ingredient's ingredient unit.
+    """
+    if version_id is not None:
+        used_versions.add(version_id)
+    if basis == RecipeBasisEnum.BATCH.value and batch_yield:
+        version_scale = Decimal(str(batch_yield))
+        gross_scale = gross_scale / version_scale
+        net_scale = net_scale / version_scale
+    for recipe_line in sorted(lines, key=lambda value: value.display_order or 0):
+        if order_type and order_type in (recipe_line.inactive_in_order_types or []):
+            continue
+        item = catalog.items.get(recipe_line.item_id)
+        if item is None:
+            raise NotFoundError(f"Inventory item {recipe_line.item_id} not found")
+        recipe_quantity = Decimal(str(recipe_line.quantity))
+        net = net_scale * recipe_quantity
+        gross = (
+            gross_scale
+            * recipe_quantity
+            / Decimal(str(recipe_line.yield_percentage or 1))
+        )
+        step = {
+            "owner_kind": owner_kind,
+            "owner_id": str(owner_id),
+            "recipe_version_id": str(version_id) if version_id else "",
+            "item_id": str(item.id),
+        }
+        next_path = [*path, step]
+        if item.tracking_mode == InventoryTrackingModeEnum.PHANTOM.value:
+            if item.id in ancestry:
+                raise ConflictError("Recipe cycle encountered during expansion")
+            child = catalog.versions.get(
+                (RecipeOwnerKindEnum.INVENTORY_ITEM.value, item.id)
+            )
+            if child is None:
+                raise NotFoundError(f"No active recipe for inventory item {item.id}")
+            _walk_version(
+                catalog,
+                totals,
+                used_versions,
+                owner_kind=RecipeOwnerKindEnum.INVENTORY_ITEM.value,
+                owner_id=item.id,
+                version_id=child.id,
+                basis=child.basis,
+                batch_yield=child.batch_yield,
+                lines=child.lines,
+                gross_scale=gross,
+                net_scale=net,
+                path=next_path,
+                ancestry={*ancestry, item.id},
+                order_type=order_type,
+            )
+            continue
+        aggregate = totals.setdefault(
+            item.id, ExpandedLine(item_id=item.id, quantity=Decimal("0"))
+        )
+        aggregate.quantity += gross
+        aggregate.planned_waste += gross - net
+        if version_id is not None:
+            aggregate.recipe_version_ids.add(version_id)
+        aggregate.paths.append(next_path)
+
+
+def _quantized(totals: dict[uuid.UUID, ExpandedLine]) -> dict[uuid.UUID, ExpandedLine]:
+    for value in totals.values():
+        value.quantity = quantize_quantity(value.quantity)
+        value.planned_waste = quantize_quantity(value.planned_waste)
+    return totals
+
+
 async def expand_owner(
     db: AsyncSession,
     *,
@@ -654,78 +747,97 @@ async def expand_owner(
     catalog: ActiveRecipeCatalog | None = None,
 ) -> tuple[dict[uuid.UUID, ExpandedLine], set[uuid.UUID]]:
     catalog = catalog or await load_active_catalog(db)
+    version = catalog.versions.get((kind, owner_id))
+    if version is None:
+        raise NotFoundError(f"No active recipe for {kind.replace('_', ' ')} {owner_id}")
     totals: dict[uuid.UUID, ExpandedLine] = {}
     used_versions: set[uuid.UUID] = set()
-
-    async def walk(
-        owner_kind: str,
-        current_owner_id: uuid.UUID,
-        gross_scale: Decimal,
-        net_scale: Decimal,
-        path: list[dict[str, str]],
-        ancestry: set[uuid.UUID],
-    ) -> None:
-        version = catalog.versions.get((owner_kind, current_owner_id))
-        if version is None:
-            raise NotFoundError(
-                f"No active recipe for {owner_kind.replace('_', ' ')} {current_owner_id}"
-            )
-        used_versions.add(version.id)
-        # A batch recipe's lines make ``batch_yield`` owner units, so the demand
-        # for this owner is divided by the yield before its lines are drawn. This
-        # composes through nested phantom sub-recipes: each version divides by its
-        # own yield. Output stays in expanded ingredient units — ledger and
-        # reports are unaffected.
-        if version.basis == RecipeBasisEnum.BATCH.value and version.batch_yield:
-            version_scale = Decimal(str(version.batch_yield))
-            gross_scale = gross_scale / version_scale
-            net_scale = net_scale / version_scale
-        for recipe_line in sorted(version.lines, key=lambda value: value.display_order):
-            if order_type and order_type in (recipe_line.inactive_in_order_types or []):
-                continue
-            item = catalog.items.get(recipe_line.item_id)
-            if item is None:
-                raise NotFoundError(f"Inventory item {recipe_line.item_id} not found")
-            recipe_quantity = Decimal(str(recipe_line.quantity))
-            net = net_scale * recipe_quantity
-            gross = (
-                gross_scale
-                * recipe_quantity
-                / Decimal(str(recipe_line.yield_percentage or 1))
-            )
-            step = {
-                "owner_kind": owner_kind,
-                "owner_id": str(current_owner_id),
-                "recipe_version_id": str(version.id),
-                "item_id": str(item.id),
-            }
-            next_path = [*path, step]
-            if item.tracking_mode == InventoryTrackingModeEnum.PHANTOM.value:
-                if item.id in ancestry:
-                    raise ConflictError("Recipe cycle encountered during expansion")
-                await walk(
-                    RecipeOwnerKindEnum.INVENTORY_ITEM.value,
-                    item.id,
-                    gross,
-                    net,
-                    next_path,
-                    {*ancestry, item.id},
-                )
-                continue
-            aggregate = totals.setdefault(
-                item.id, ExpandedLine(item_id=item.id, quantity=Decimal("0"))
-            )
-            aggregate.quantity += gross
-            aggregate.planned_waste += gross - net
-            aggregate.recipe_version_ids.add(version.id)
-            aggregate.paths.append(next_path)
-
     root_scale = Decimal(str(multiplier))
-    await walk(kind, owner_id, root_scale, root_scale, [], set())
-    for value in totals.values():
-        value.quantity = quantize_quantity(value.quantity)
-        value.planned_waste = quantize_quantity(value.planned_waste)
-    return totals, used_versions
+    _walk_version(
+        catalog,
+        totals,
+        used_versions,
+        owner_kind=kind,
+        owner_id=owner_id,
+        version_id=version.id,
+        basis=version.basis,
+        batch_yield=version.batch_yield,
+        lines=version.lines,
+        gross_scale=root_scale,
+        net_scale=root_scale,
+        path=[],
+        ancestry=set(),
+        order_type=order_type,
+    )
+    return _quantized(totals), used_versions
+
+
+def expand_lines(
+    catalog: ActiveRecipeCatalog,
+    *,
+    owner_kind: str,
+    owner_id: uuid.UUID | None,
+    basis: str,
+    batch_yield: Decimal | None,
+    lines: Iterable,
+) -> dict[uuid.UUID, ExpandedLine]:
+    """Expand lines that are not (or not yet) the active version — a draft, or
+    the editor's unsaved lines — to one owner unit, by the same rule."""
+    totals: dict[uuid.UUID, ExpandedLine] = {}
+    _walk_version(
+        catalog,
+        totals,
+        set(),
+        owner_kind=owner_kind,
+        owner_id=owner_id or uuid.UUID(int=0),
+        version_id=None,
+        basis=basis,
+        batch_yield=batch_yield,
+        lines=lines,
+        gross_scale=Decimal("1"),
+        net_scale=Decimal("1"),
+        path=[],
+        ancestry={owner_id} if owner_id else set(),
+        order_type=None,
+    )
+    return _quantized(totals)
+
+
+async def ingredient_storage_costs(
+    db: AsyncSession,
+    item_ids: Iterable[uuid.UUID],
+    *,
+    warehouse_ids: list[uuid.UUID] | None = None,
+) -> dict[uuid.UUID, Decimal]:
+    """Each ingredient's current FIFO cost per storage unit — at the given
+    warehouses (one branch), or blended across the estate when None. Read-only."""
+    from app.services.inventory import cost_layer_service
+
+    ids = list(set(item_ids))
+    if warehouse_ids is None:
+        return await cost_layer_service.item_average_costs(db, ids)
+    return await cost_layer_service.warehouse_average_costs(db, ids, warehouse_ids)
+
+
+def expansion_cost(
+    expanded: dict[uuid.UUID, ExpandedLine],
+    items: dict[uuid.UUID, InventoryItem],
+    storage_costs: dict[uuid.UUID, Decimal],
+) -> Decimal:
+    """Σ gross ingredient quantity × that ingredient's cost per ingredient unit —
+    exactly what ``produce`` books as a batch's input cost."""
+    from app.services.inventory import inventory_service
+
+    total = Decimal("0")
+    for line in expanded.values():
+        ingredient = items.get(line.item_id)
+        if ingredient is None:
+            raise NotFoundError(f"Inventory item {line.item_id} not found")
+        ingredient_cost = inventory_service.canonical_cost_for_unit(
+            ingredient, storage_costs.get(line.item_id, Decimal("0")), "ingredient"
+        )
+        total += Decimal(str(line.quantity)) * ingredient_cost
+    return quantize_cost(total)
 
 
 async def owner_recipe_unit_cost(
@@ -734,25 +846,20 @@ async def owner_recipe_unit_cost(
     kind: str,
     owner_id: uuid.UUID,
     warehouse_id: uuid.UUID | None = None,
+    warehouse_ids: list[uuid.UUID] | None = None,
     catalog: ActiveRecipeCatalog | None = None,
 ) -> Decimal | None:
     """The current cost of **one owner unit** from its active recipe.
 
     The recipe is expanded to its leaf ingredients — through nested phantom
     sub-recipes, batch yield and per-line waste — and each leaf is priced at its
-    FIFO average cost.
-
-    When ``warehouse_id`` is given, each ingredient is priced at **that
-    warehouse's** ``InventoryLevel.average_cost`` — exactly the per-branch basis
-    ``transfer_service.produce`` books, so revaluing a branch's stock lands on
-    what making it *there* actually cost. When it is ``None`` the ingredients are
-    priced estate-wide (the blended figure the recipe console shows) — used for a
-    catalogue-level product cost, not for revaluing a specific branch's stock.
+    FIFO average cost: at one warehouse (``warehouse_id``) or one branch
+    (``warehouse_ids``) when given, the basis ``produce`` books there; blended
+    across the estate otherwise (a catalogue-level figure).
 
     Returns ``None`` when the owner has no active recipe (nothing to cost from).
     """
-    from app.services.inventory import cost_layer_service, inventory_service
-
+    catalog = catalog or await load_active_catalog(db)
     try:
         expanded, _ = await expand_owner(
             db, kind=kind, owner_id=owner_id, catalog=catalog
@@ -761,28 +868,80 @@ async def owner_recipe_unit_cost(
         return None
     if not expanded:
         return Decimal("0")
-    if warehouse_id is None:
-        storage_costs = await cost_layer_service.item_average_costs(
-            db, [line.item_id for line in expanded.values()]
+    if warehouse_id is not None:
+        warehouse_ids = [warehouse_id]
+    costs = await ingredient_storage_costs(
+        db, expanded.keys(), warehouse_ids=warehouse_ids
+    )
+    return expansion_cost(expanded, catalog.items, costs)
+
+
+async def quote_lines(
+    db: AsyncSession,
+    *,
+    owner_kind: str,
+    owner_id: uuid.UUID | None,
+    basis: str,
+    batch_yield: Decimal | None,
+    lines: list,
+    branch_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Cost a recipe's lines exactly as production would book them — the figure
+    the editor shows while a recipe is being written, so the browser never runs
+    a cost formula of its own. Per line (as authored) and per owner unit."""
+    from app.services.inventory import inventory_service
+
+    catalog = await load_active_catalog(db)
+    missing = {line.item_id for line in lines} - set(catalog.items)
+    if missing:
+        for item in (
+            await db.execute(select(InventoryItem).where(InventoryItem.id.in_(missing)))
+        ).scalars():
+            catalog.items[item.id] = item
+    per_line = [
+        expand_lines(
+            catalog,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            basis=RecipeBasisEnum.UNIT.value,
+            batch_yield=None,
+            lines=[line],
         )
-    else:
-        storage_costs = {}
-        for line in expanded.values():
-            level = await inventory_service.level_for(db, line.item_id, warehouse_id)
-            storage_costs[line.item_id] = Decimal(str(level.average_cost or 0))
-    total = Decimal("0")
-    for line in expanded.values():
-        ingredient = await db.get(InventoryItem, line.item_id)
-        if ingredient is None:
-            raise NotFoundError(f"Inventory item {line.item_id} not found")
-        # storage average → per-ingredient-unit cost, × the gross ingredient
-        # quantity for one owner unit (planned waste already folded in), exactly
-        # as produce() accumulates its input_cost.
-        ingredient_cost = inventory_service.canonical_cost_for_unit(
-            ingredient, storage_costs.get(line.item_id, Decimal("0")), "ingredient"
+        for line in lines
+    ]
+    warehouse_ids = (
+        await inventory_service.branch_warehouse_ids(db, branch_id)
+        if branch_id is not None
+        else None
+    )
+    costs = await ingredient_storage_costs(
+        db,
+        {item_id for expanded in per_line for item_id in expanded},
+        warehouse_ids=warehouse_ids,
+    )
+    quoted = []
+    authored_total = Decimal("0")
+    for line, expanded in zip(lines, per_line):
+        line_cost = expansion_cost(expanded, catalog.items, costs)
+        authored_total += line_cost
+        quantity = Decimal(str(line.quantity))
+        quoted.append(
+            {
+                "item_id": line.item_id,
+                "unit_cost": quantize_cost(line_cost / quantity)
+                if quantity
+                else Decimal("0"),
+                "line_cost": line_cost,
+            }
         )
-        total += Decimal(str(line.quantity)) * ingredient_cost
-    return quantize_cost(total)
+    is_batch = basis == RecipeBasisEnum.BATCH.value and batch_yield
+    return {
+        "lines": quoted,
+        "unit_cost": quantize_cost(
+            authored_total / Decimal(str(batch_yield)) if is_batch else authored_total
+        ),
+        "batch_cost": quantize_cost(authored_total) if is_batch else None,
+    }
 
 
 async def recipe_unit_cost(

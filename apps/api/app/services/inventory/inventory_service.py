@@ -80,6 +80,7 @@ __all__ = [
     "allowed_purchase_order_transitions",
     "assert_can_transition_purchase_order",
     "can_transition_purchase_order",
+    "branch_warehouse_ids",
     "default_warehouse",
     "deplete_for_order",
     "level_for",
@@ -233,6 +234,25 @@ async def default_warehouse(db: AsyncSession, branch_id: uuid.UUID) -> Warehouse
     await db.flush()
     await db.refresh(warehouse)
     return warehouse
+
+
+async def branch_warehouse_ids(
+    db: AsyncSession, branch_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """The live stock containers of one branch — the scope of "this branch's cost"."""
+    return list(
+        (
+            await db.execute(
+                select(Warehouse.id).where(
+                    Warehouse.branch_id == branch_id,
+                    Warehouse.deleted_at.is_(None),
+                    Warehouse.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 async def level_for(

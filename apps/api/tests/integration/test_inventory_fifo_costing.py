@@ -34,7 +34,12 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.user import User
-from app.services.inventory import costing_service, inventory_service, ledger_service
+from app.services.inventory import (
+    cost_view_service,
+    costing_service,
+    inventory_service,
+    ledger_service,
+)
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -563,6 +568,32 @@ async def test_a_voided_po_prices_nothing_and_the_next_po_prices_everything(
         sale_cost = await db.get(InventoryLineCost, sale.items[0].id)
         assert D(str(sale_cost.total_cost)) == D("21.7500")  # 375 × 0.058
         assert not sale_cost.is_provisional
+
+        # The popup: layers add up to the shelf, every one at the real price,
+        # the found stock says which PO priced it.
+        user.is_admin = True
+        view = await cost_view_service.cost_layers(
+            db, item_id=item_id, branch_id=branch_id, user=user
+        )
+        assert view.layers_match_stock
+        assert view.on_hand_quantity == D("2004")
+        assert {layer.unit_cost for layer in view.layers} == {D("0.058")}
+        assert view.layers[0].next_out
+        found = next(
+            layer for layer in view.layers if layer.source_kind == "count_overage"
+        )
+        assert found.cost_source_reference is not None
+        history = await cost_view_service.cost_history(
+            db, item_id=item_id, branch_id=branch_id, user=user
+        )
+        assert history.total == 5
+        newest = history.items[0]
+        assert newest.running_quantity == D("2004")
+        assert newest.running_value == D("116.2320")
+        first_sale = history.items[-1]
+        assert first_sale.total_cost == D("21.7500")
+        # Booked at zero when it posted, re-costed when the price landed.
+        assert first_sale.booked_total_cost == D("0")
 
 
 async def test_an_estate_replay_after_live_postings_changes_nothing(engine, env):

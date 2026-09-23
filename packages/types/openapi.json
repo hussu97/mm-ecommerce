@@ -7397,6 +7397,22 @@
       },
       "CostLayerResponse": {
         "properties": {
+          "cost_is_provisional": {
+            "default": false,
+            "title": "Cost Is Provisional",
+            "type": "boolean"
+          },
+          "cost_source_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Source Reference"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -7414,10 +7430,27 @@
             ],
             "title": "Line Value"
           },
+          "next_out": {
+            "default": false,
+            "title": "Next Out",
+            "type": "boolean"
+          },
           "original_quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Original Quantity",
             "type": "string"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
           },
           "posting_sequence": {
             "title": "Posting Sequence",
@@ -13678,13 +13711,205 @@
         "title": "InventoryTransactionResponse",
         "type": "object"
       },
+      "ItemCostHistoryResponse": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemCostHistoryRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item_id",
+          "branch_id",
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages"
+        ],
+        "title": "ItemCostHistoryResponse",
+        "type": "object"
+      },
+      "ItemCostHistoryRow": {
+        "description": "One ledger line's effect on an item's quantity and value at a branch.",
+        "properties": {
+          "booked_total_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booked Total Cost"
+          },
+          "business_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Date"
+          },
+          "cost_source_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Source Reference"
+          },
+          "is_provisional": {
+            "title": "Is Provisional",
+            "type": "boolean"
+          },
+          "line_id": {
+            "format": "uuid",
+            "title": "Line Id",
+            "type": "string"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "running_average_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Average Cost"
+          },
+          "running_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Running Quantity",
+            "type": "string"
+          },
+          "running_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Running Value",
+            "type": "string"
+          },
+          "superseded": {
+            "title": "Superseded",
+            "type": "boolean"
+          },
+          "total_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Cost",
+            "type": "string"
+          },
+          "transaction_id": {
+            "format": "uuid",
+            "title": "Transaction Id",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "unit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Cost",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_id",
+          "transaction_id",
+          "reference",
+          "type",
+          "posted_at",
+          "business_date",
+          "quantity",
+          "unit_cost",
+          "total_cost",
+          "is_provisional",
+          "superseded",
+          "running_quantity",
+          "running_value",
+          "running_average_cost"
+        ],
+        "title": "ItemCostHistoryRow",
+        "type": "object"
+      },
       "ItemCostLayersResponse": {
-        "description": "The surviving FIFO layers for an item, and the valuation they imply.",
+        "description": "The FIFO layers that make up an item's current stock, and its value.",
         "properties": {
           "average_cost": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Average Cost",
             "type": "string"
+          },
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
           },
           "item_id": {
             "format": "uuid",
@@ -13698,6 +13923,17 @@
             },
             "title": "Layers",
             "type": "array"
+          },
+          "layers_match_stock": {
+            "default": true,
+            "title": "Layers Match Stock",
+            "type": "boolean"
+          },
+          "on_hand_quantity": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "On Hand Quantity",
+            "type": "string"
           },
           "total_quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -27693,6 +27929,142 @@
           "recipe_status"
         ],
         "title": "RecipeOwnerRow",
+        "type": "object"
+      },
+      "RecipeQuoteLine": {
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "line_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Line Cost",
+            "type": "string"
+          },
+          "unit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Cost",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "unit_cost",
+          "line_cost"
+        ],
+        "title": "RecipeQuoteLine",
+        "type": "object"
+      },
+      "RecipeQuoteRequest": {
+        "description": "Lines as they stand in the editor, saved or not, to be costed.",
+        "properties": {
+          "basis": {
+            "default": "unit",
+            "enum": [
+              "unit",
+              "batch"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "batch_yield": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Yield"
+          },
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/VersionedRecipeLineInput"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Id"
+          },
+          "owner_kind": {
+            "enum": [
+              "product",
+              "modifier_option",
+              "inventory_item"
+            ],
+            "title": "Owner Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_kind"
+        ],
+        "title": "RecipeQuoteRequest",
+        "type": "object"
+      },
+      "RecipeQuoteResponse": {
+        "properties": {
+          "batch_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Cost"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeQuoteLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "unit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Cost",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lines",
+          "unit_cost",
+          "batch_cost"
+        ],
+        "title": "RecipeQuoteResponse",
         "type": "object"
       },
       "RecipeReadinessResponse": {
@@ -50045,9 +50417,91 @@
         ]
       }
     },
+    "/api/v1/inventory/items/{item_id}/cost-history": {
+      "get": {
+        "description": "Every movement of the item at a branch, newest first: what each is worth\nnow beside what it was booked at, and the running quantity and value.",
+        "operationId": "get_item_cost_history_api_v1_inventory_items__item_id__cost_history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemCostHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Item Cost History",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
     "/api/v1/inventory/items/{item_id}/cost-layers": {
       "get": {
-        "description": "The surviving FIFO layers for an item \u2014 so its valuation is legible.\n\nEach layer is a quantity still on the shelf at a known cost, oldest first\n(the order the next issue will consume them). The weighted average is what\nthose layers imply, which is exactly ``InventoryLevel.average_cost``.",
+        "description": "The FIFO layers that make up an item's stock on hand, oldest (next out)\nfirst, each with where its quantity and its cost came from.",
         "operationId": "get_item_cost_layers_api_v1_inventory_items__item_id__cost_layers_get",
         "parameters": [
           {
@@ -51630,6 +52084,23 @@
               "title": "Per Page",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
           }
         ],
         "responses": {
@@ -51660,6 +52131,53 @@
           }
         ],
         "summary": "List Recipe Owners",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/recipes-v2/quote": {
+      "post": {
+        "description": "What a recipe costs as written \u2014 per line and per owner unit \u2014 at current\nFIFO ingredient costs (one branch's, or blended). The editor's live figure.",
+        "operationId": "quote_recipe_api_v1_inventory_recipes_v2_quote_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeQuoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeQuoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Quote Recipe",
         "tags": [
           "Inventory Control"
         ]

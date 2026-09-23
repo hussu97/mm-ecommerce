@@ -7,7 +7,7 @@ import binascii
 import logging
 import uuid
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response
@@ -23,7 +23,6 @@ from app.core.permissions import require
 from app.models import (
     Branch,
     InventoryCategory,
-    InventoryCostLayer,
     InventoryItem,
     InventoryLevel,
     InventoryTransaction,
@@ -52,7 +51,6 @@ from app.schemas.inventory import (
     CloseCountRequest,
     CostAdjustmentRequest,
     CostAdjustmentResponse,
-    CostLayerResponse,
     InventoryCategoryCreate,
     InventoryCategoryResponse,
     InventoryCategoryUpdate,
@@ -62,6 +60,7 @@ from app.schemas.inventory import (
     InventoryLevelResponse,
     InventoryTransactionCreate,
     InventoryTransactionResponse,
+    ItemCostHistoryResponse,
     ItemCostLayersResponse,
     ItemSupplierRef,
     OpenCountRequest,
@@ -94,6 +93,7 @@ from app.services import audit_service, crud_service, email_service
 from app.services.inventory import (
     access_service,
     cost_layer_service,
+    cost_view_service,
     export_service,
     inventory_service,
     ledger_service,
@@ -477,102 +477,31 @@ async def get_item_cost_layers(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.read")),
 ):
-    """The surviving FIFO layers for an item — so its valuation is legible.
-
-    Each layer is a quantity still on the shelf at a known cost, oldest first
-    (the order the next issue will consume them). The weighted average is what
-    those layers imply, which is exactly ``InventoryLevel.average_cost``.
-    """
-    await crud_service.get_or_404(db, InventoryItem, item_id, include_deleted=True)
-    stmt = (
-        select(InventoryCostLayer, Warehouse.name)
-        .join(Warehouse, Warehouse.id == InventoryCostLayer.warehouse_id)
-        .where(
-            InventoryCostLayer.item_id == item_id,
-            InventoryCostLayer.remaining_quantity > 0,
-        )
-        .order_by(InventoryCostLayer.posting_sequence, InventoryCostLayer.layer_index)
+    """The FIFO layers that make up an item's stock on hand, oldest (next out)
+    first, each with where its quantity and its cost came from."""
+    return await cost_view_service.cost_layers(
+        db, item_id=item_id, branch_id=branch_id, user=user
     )
-    if branch_id:
-        await access_service.assert_branch_access(db, user, branch_id)
-        stmt = stmt.where(InventoryCostLayer.branch_id == branch_id)
-    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        # No branch filter: a branch-restricted user must not read every branch's
-        # purchase costs, so scope to the branches they can see (mirrors
-        # list_levels). Admins/super-admins see all.
-        stmt = stmt.where(
-            InventoryCostLayer.branch_id.in_(access_service.branch_ids_for(user))
-        )
-    rows = list((await db.execute(stmt)).all())
 
-    # Resolve each layer's source to a human reference: the PO number for a
-    # purchase, else the reference of the transaction that created the layer
-    # (ADJ-… for a reversal/quantity adjustment, CAD-… for a cost adjustment, a
-    # count/opening/transfer reference otherwise). Two batched lookups, no N+1.
-    po_ids = {layer.purchase_order_id for layer, _ in rows if layer.purchase_order_id}
-    line_ids = {
-        layer.source_line_id for layer, _ in rows if not layer.purchase_order_id
-    }
-    po_refs: dict[uuid.UUID, str] = {}
-    if po_ids:
-        po_refs = dict(
-            (
-                await db.execute(
-                    select(PurchaseOrder.id, PurchaseOrder.reference).where(
-                        PurchaseOrder.id.in_(po_ids)
-                    )
-                )
-            ).all()
-        )
-    line_refs: dict[uuid.UUID, str] = {}
-    if line_ids:
-        line_refs = dict(
-            (
-                await db.execute(
-                    select(InventoryTransactionItem.id, InventoryTransaction.reference)
-                    .join(
-                        InventoryTransaction,
-                        InventoryTransaction.id
-                        == InventoryTransactionItem.transaction_id,
-                    )
-                    .where(InventoryTransactionItem.id.in_(line_ids))
-                )
-            ).all()
-        )
 
-    _FOUR_DP = Decimal("0.0001")
-    layers: list[CostLayerResponse] = []
-    total_qty = Decimal("0")
-    total_value = Decimal("0")
-    for layer, warehouse_name in rows:
-        remaining = Decimal(str(layer.remaining_quantity))
-        # Per-layer value, quantised for a legible breakdown; the total is the sum
-        # of these so the displayed math (Σ qty×cost) adds up exactly.
-        line_value = (remaining * Decimal(str(layer.unit_cost))).quantize(
-            _FOUR_DP, rounding=ROUND_HALF_UP
-        )
-        total_qty += remaining
-        total_value += line_value
-        response = CostLayerResponse.model_validate(layer)
-        response.warehouse_name = warehouse_name
-        response.line_value = line_value
-        response.source_reference = (
-            po_refs.get(layer.purchase_order_id)
-            if layer.purchase_order_id
-            else line_refs.get(layer.source_line_id)
-        )
-        layers.append(response)
-    average = (
-        (total_value / total_qty).quantize(Decimal("0.000001"))
-        if total_qty > 0
-        else Decimal("0")
-    )
-    return ItemCostLayersResponse(
+@items_router.get("/{item_id}/cost-history", response_model=ItemCostHistoryResponse)
+async def get_item_cost_history(
+    item_id: uuid.UUID,
+    branch_id: uuid.UUID = Query(...),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.read")),
+):
+    """Every movement of the item at a branch, newest first: what each is worth
+    now beside what it was booked at, and the running quantity and value."""
+    return await cost_view_service.cost_history(
+        db,
         item_id=item_id,
-        total_quantity=total_qty,
-        total_value=total_value,
-        average_cost=average,
-        layers=layers,
+        branch_id=branch_id,
+        user=user,
+        page=page,
+        per_page=per_page,
     )
 
 
