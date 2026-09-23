@@ -64,6 +64,15 @@ _RAW_MIGRATION_INDEX = (
 # column now has a real index) as the thing to celebrate, not an entry to
 # re-justify.
 ALLOW_LIST: dict[tuple[str, str], str] = {
+    # FIFO costing v3 projection pointers: which ledger line priced a cost, shown
+    # beside the row that carries it. Read by that row, never searched by it,
+    # and the lines they point at are immutable, so the FK never cascades.
+    ("inventory_cost_layers", "priced_by_line_id"): _COST_LAYER_NOT_QUERIED,
+    ("inventory_cost_layer_consumptions", "priced_by_line_id"): (
+        _COST_LAYER_NOT_QUERIED
+    ),
+    ("inventory_line_costs", "priced_by_line_id"): _COST_LAYER_NOT_QUERIED,
+    ("inventory_line_costs", "branch_id"): _INVENTORY_LOWER_TRAFFIC,
     # F-OPS-23 / migration 210: indexed via a bare op.create_index, so the
     # index is real but invisible to Base.metadata (see _RAW_MIGRATION_INDEX).
     ("aggregator_order", "mm_order_id"): _RAW_MIGRATION_INDEX,

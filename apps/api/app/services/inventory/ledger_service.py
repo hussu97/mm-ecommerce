@@ -23,10 +23,15 @@ from app.models.inventory import (
     PurchaseOrder,
     PurchaseOrderStatusEnum,
     TransactionStatusEnum,
+    Warehouse,
 )
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.user import User
-from app.services.inventory import inventory_service, source_event_service
+from app.services.inventory import (
+    costing_service,
+    inventory_service,
+    source_event_service,
+)
 from app.services.pos import business_day_service
 
 
@@ -56,36 +61,31 @@ async def reconcile_levels(
     db: AsyncSession, *, branch_id: uuid.UUID, apply: bool = False
 ) -> list[ProjectionDrift]:
     """
-    Rebuild the FIFO cost layers from the ledger and report/repair level drift.
+    Replay the FIFO costing engine over the whole ledger and report/repair drift.
 
-    Costing is FIFO, so both the layers and each level's derived average come
-    from replaying the immutable closed lines in ``posting_sequence`` order
-    through the live costing primitives (`inventory_service.rebuild_cost_layers`).
-    A dry run does the same rebuild inside a savepoint it rolls back, so the
-    preview and the apply can never use different arithmetic.
+    Costing is a projection of the immutable ledger (`costing_engine`), and a
+    price learned in one branch can re-cost stock transferred to another, so the
+    replay is always estate-wide, under every branch's lock. The drift reported
+    is this branch's: every level whose stored quantity or average differs from
+    what the ledger implies. A dry run computes the same replay and writes
+    nothing, so the preview and the apply can never use different arithmetic.
     """
     branch = await db.get(Branch, branch_id)
     if branch is None:
         raise NotFoundError("Branch not found")
-    await source_event_service.lock_branch_inventory(db, branch_id)
     warehouse = await inventory_service.default_warehouse(db, branch_id)
-
-    max_sequence = (
-        await db.execute(
-            select(func.max(InventoryTransaction.posting_sequence)).where(
-                InventoryTransaction.branch_id == branch_id,
-                InventoryTransaction.warehouse_id == warehouse.id,
-                InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
-            )
-        )
-    ).scalar()
+    warehouse_ids = set(
+        (await db.execute(select(Warehouse.id).where(Warehouse.branch_id == branch_id)))
+        .scalars()
+        .all()
+    ) or {warehouse.id}
 
     levels = {
-        level.item_id: level
+        (level.item_id, level.warehouse_id): level
         for level in (
             await db.execute(
                 select(InventoryLevel).where(
-                    InventoryLevel.warehouse_id == warehouse.id
+                    InventoryLevel.warehouse_id.in_(warehouse_ids)
                 )
             )
         )
@@ -93,68 +93,40 @@ async def reconcile_levels(
         .all()
     }
     cached = {
-        item_id: (
+        key: (
             Decimal(str(level.quantity or 0)),
             Decimal(str(level.average_cost or 0)),
         )
-        for item_id, level in levels.items()
+        for key, level in levels.items()
     }
 
-    if apply:
-        ledger = await inventory_service.rebuild_cost_layers(
-            db, branch_id=branch_id, warehouse_id=warehouse.id
-        )
-    else:
-        # Preview: rebuild in a savepoint so the layers are real enough to price
-        # from, then discard every change.
-        savepoint = await db.begin_nested()
-        try:
-            ledger = await inventory_service.rebuild_cost_layers(
-                db, branch_id=branch_id, warehouse_id=warehouse.id
-            )
-        finally:
-            await savepoint.rollback()
+    result = await costing_service.replay_estate(db, wait=True, write=apply)
+    projected = {
+        key: out
+        for key, out in result.projection.levels.items()
+        if key[1] in warehouse_ids
+    }
 
-    item_ids = set(levels) | set(ledger)
     drifts: list[ProjectionDrift] = []
-    for item_id in sorted(item_ids, key=str):
-        cached_quantity, cached_average = cached.get(
-            item_id, (Decimal("0"), Decimal("0"))
-        )
-        ledger_quantity, ledger_average = ledger.get(
-            item_id, (Decimal("0"), Decimal("0"))
-        )
-        ledger_quantity = quantity(ledger_quantity)
-        ledger_average = unit_cost(ledger_average)
+    for key in sorted(
+        set(cached) | set(projected), key=lambda k: (str(k[1]), str(k[0]))
+    ):
+        cached_quantity, cached_average = cached.get(key, (Decimal("0"), Decimal("0")))
+        out = projected.get(key)
+        ledger_quantity = quantity(out.quantity if out else 0)
+        ledger_average = unit_cost(out.average_cost if out else 0)
         if cached_quantity != ledger_quantity or cached_average != ledger_average:
             drifts.append(
                 ProjectionDrift(
-                    item_id=item_id,
-                    warehouse_id=warehouse.id,
+                    item_id=key[0],
+                    warehouse_id=key[1],
                     cached_quantity=cached_quantity,
                     ledger_quantity=ledger_quantity,
                     cached_average_cost=cached_average,
                     ledger_average_cost=ledger_average,
-                    through_sequence=max_sequence,
+                    through_sequence=out.through_sequence if out else None,
                 )
             )
-        if apply:
-            level = levels.get(item_id)
-            if level is None:
-                level = InventoryLevel(
-                    item_id=item_id,
-                    warehouse_id=warehouse.id,
-                    quantity=ledger_quantity,
-                    average_cost=ledger_average,
-                )
-                db.add(level)
-            else:
-                level.quantity = ledger_quantity
-                level.average_cost = ledger_average
-            level.projected_through_sequence = max_sequence
-            level.reconciled_at = utcnow()
-    if apply:
-        await db.flush()
     return drifts
 
 

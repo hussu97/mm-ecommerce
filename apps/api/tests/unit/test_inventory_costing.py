@@ -15,7 +15,6 @@ from app.models.inventory import (
 from app.models.inventory_v2 import RecipeLine, RecipeVersion
 from app.services.inventory.inventory_service import (
     apply_movement,
-    apply_reversal_movement,
     canonical_cost_for_unit,
     inventory_item_cost_for_unit,
 )
@@ -156,21 +155,6 @@ def test_value_is_conserved_across_a_receipt():
     assert (row.quantity * row.average_cost).quantize(D("0.01")) == expected.quantize(
         D("0.01")
     )
-
-
-def test_reversing_an_old_receipt_removes_its_original_value():
-    row = level("200", "3.00")  # 100 @ 2.00 followed by 100 @ 4.00
-    apply_reversal_movement(row, D("-100"), D("2.00"))
-    assert row.quantity == D("100.0000")
-    assert row.average_cost == D("4.000000")
-
-
-def test_reversing_an_issue_blends_its_historical_value_back_in():
-    row = level("100", "4.00")
-    apply_reversal_movement(row, D("50"), D("2.00"))
-    assert row.quantity == D("150.0000")
-    # (100×4 + 50×2) / 150 = 3.333…, carried at the per-unit cost's ten places.
-    assert row.average_cost == D("3.3333333333")
 
 
 def test_a_realistic_flour_lifecycle():

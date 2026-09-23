@@ -52,7 +52,6 @@ from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.inventory import (
     TRANSACTION_SIGN,
-    CostLayerSourceKindEnum,
     InventoryItem,
     InventoryLevel,
     InventoryTransaction,
@@ -72,7 +71,7 @@ from app.models.inventory_v2 import (
 )
 from app.models.order import Order
 from app.models.user import User
-from app.services.inventory import cost_layer_service, supplier_service
+from app.services.inventory import costing_service, supplier_service
 from app.services.pos import business_day_service
 
 __all__ = [
@@ -92,7 +91,6 @@ __all__ = [
     "post_transaction",
     "build_po_lines",
     "create_pos_purchase_order",
-    "rebuild_cost_layers",
     "receive_purchase_order",
     "transition_purchase_order",
 ]
@@ -291,312 +289,6 @@ def apply_movement(
     level.average_cost = average
 
 
-def apply_reversal_movement(
-    level: InventoryLevel, quantity_delta: Decimal, original_unit_cost: Decimal
-) -> None:
-    """Reverse a historical movement without leaving its value in stock.
-
-    Positive reversals (undoing an issue) blend the original issued value back
-    in. Negative reversals (undoing a receipt) remove that receipt's value from
-    the current pool. If the correction drives stock non-positive there is no
-    defensible denominator, so the last valid cost is retained and the negative
-    validation balance remains visible.
-    """
-    on_hand = _q(level.quantity)
-    average = _c(level.average_cost)
-    delta = _q(quantity_delta)
-    historical_cost = _c(original_unit_cost)
-    if delta >= 0:
-        apply_movement(level, delta, historical_cost)
-        return
-
-    new_quantity = _q(on_hand + delta)
-    if on_hand > 0 and new_quantity > 0:
-        remaining_value = on_hand * average + delta * historical_cost
-        if remaining_value >= 0:
-            average = _c(remaining_value / new_quantity)
-    level.quantity = new_quantity
-    level.average_cost = average
-
-
-async def _forward_line_costing(
-    db: AsyncSession,
-    *,
-    transaction: InventoryTransaction,
-    line: InventoryTransactionItem,
-    line_index: int,
-    item: InventoryItem,
-    warehouse_id: uuid.UUID,
-    delta: Decimal,
-    unit_cost_canonical: Decimal,
-    on_hand_before: Decimal,
-    posting_sequence: int,
-    fallback_cost: Decimal,
-) -> Decimal:
-    """FIFO cost of one forward (non-reversal) movement line.
-
-    Inbound receipts lay down a layer (after seeding a backfill layer for any
-    pre-existing uncosted stock); positive counts/adjustments lay down a layer
-    priced at the oldest surviving one; issues consume layers oldest-first.
-    """
-    if delta > 0:
-        kind = cost_layer_service.receipt_layer_kind(transaction.type)
-        if kind is not None:
-            # An opening balance is often posted before a cost is known (the level
-            # sits at 0). Value it at the item's catalogue cost rather than 0, so
-            # a rebuild reproduces the same layer the cutover backfill seeded and
-            # the two never disagree. A real receipt keeps its entered cost.
-            if (
-                kind is CostLayerSourceKindEnum.OPENING_BALANCE
-                and unit_cost_canonical == 0
-            ):
-                unit_cost_canonical = inventory_item_cost_for_unit(item, "storage")
-            # First real cost for an item whose stock on hand is still valued at
-            # zero (opening balances, count overages, receipts keyed before it was
-            # ever priced): lift that older stock to this cost before laying the
-            # new layer, so a raw ingredient's shelf stock is not stranded at zero
-            # and consumed at zero COGS. No-op once any real value exists.
-            await cost_layer_service.seed_cost_on_uncosted_layers(
-                db,
-                item=item,
-                warehouse_id=warehouse_id,
-                unit_cost=unit_cost_canonical,
-            )
-            await cost_layer_service.backfill_uncosted_stock(
-                db,
-                transaction=transaction,
-                line=line,
-                item=item,
-                warehouse_id=warehouse_id,
-                on_hand_before=on_hand_before,
-                unit_cost=unit_cost_canonical,
-                layer_index=line_index * 2,
-            )
-            # Receiving onto a negative balance (stock was issued before the
-            # delivery was keyed) first cancels the outstanding shortfall: only
-            # the quantity that survives above zero becomes a layer, so
-            # Σ(remaining layers) keeps tracking the level's quantity instead of
-            # laying a phantom layer over a still-negative balance.
-            layer_qty = delta
-            if on_hand_before < 0:
-                layer_qty = max(Decimal("0"), _q(Decimal(str(on_hand_before)) + delta))
-            if layer_qty > 0:
-                await cost_layer_service.create_layer(
-                    db,
-                    transaction=transaction,
-                    line=line,
-                    item=item,
-                    warehouse_id=warehouse_id,
-                    quantity=layer_qty,
-                    unit_cost=unit_cost_canonical,
-                    source_kind=kind,
-                    layer_index=line_index * 2 + 1,
-                )
-            return _money(delta * unit_cost_canonical)
-
-        # A positive count/adjustment tops stock up at the earliest surviving
-        # cost — the oldest layer's — falling back to the last average, then the
-        # item's catalogue cost.
-        price = await cost_layer_service.oldest_active_layer_cost(
-            db, item.id, warehouse_id
-        )
-        if price is None:
-            price = (
-                fallback_cost
-                if fallback_cost > 0
-                else inventory_item_cost_for_unit(item, "storage")
-            )
-        overage_kind = (
-            CostLayerSourceKindEnum.COUNT_OVERAGE
-            if transaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value
-            else CostLayerSourceKindEnum.POSITIVE_ADJUSTMENT
-        )
-        await cost_layer_service.create_layer(
-            db,
-            transaction=transaction,
-            line=line,
-            item=item,
-            warehouse_id=warehouse_id,
-            quantity=delta,
-            unit_cost=price,
-            source_kind=overage_kind,
-            layer_index=line_index * 2 + 1,
-        )
-        return _money(delta * price)
-
-    if delta < 0:
-        return await cost_layer_service.consume_fifo(
-            db,
-            line=line,
-            item=item,
-            warehouse_id=warehouse_id,
-            quantity=-delta,
-            posting_sequence=posting_sequence,
-            fallback_cost=fallback_cost,
-        )
-    return Decimal("0.00")
-
-
-async def _reverse_line_costing(
-    db: AsyncSession,
-    *,
-    transaction: InventoryTransaction,
-    line: InventoryTransactionItem,
-    item: InventoryItem,
-    warehouse_id: uuid.UUID,
-    delta: Decimal,
-    unit_cost_canonical: Decimal,
-    posting_sequence: int,
-    fallback_cost: Decimal,
-) -> Decimal:
-    """FIFO cost of one reversal line.
-
-    Undoing an issue restores the exact layers it drew from; undoing a receipt
-    removes stock from the layers it created.
-
-    A reversal predating this feature has no ``reverses_line_id``, so the exact
-    layers cannot be found. Rather than touch nothing (which would let a rebuild's
-    Σ remaining drift from the running quantity), treat it as a plain movement in
-    the reversal's own direction: a positive reversal lays a fresh layer at the
-    prior cost, a negative one consumes FIFO. Quantity and valuation stay
-    consistent even though the original provenance is lost.
-    """
-    if line.reverses_line_id is None:
-        if delta > 0:
-            price = fallback_cost if fallback_cost > 0 else _c(0)
-            await cost_layer_service.create_layer(
-                db,
-                transaction=transaction,
-                line=line,
-                item=item,
-                warehouse_id=warehouse_id,
-                quantity=delta,
-                unit_cost=price,
-                source_kind=CostLayerSourceKindEnum.POSITIVE_ADJUSTMENT,
-                layer_index=0,
-            )
-            return _money(delta * price)
-        if delta < 0:
-            return await cost_layer_service.consume_fifo(
-                db,
-                line=line,
-                item=item,
-                warehouse_id=warehouse_id,
-                quantity=-delta,
-                posting_sequence=posting_sequence,
-                fallback_cost=fallback_cost,
-            )
-        return Decimal("0.00")
-    if delta > 0:
-        return await cost_layer_service.restore_consumed_line(
-            db,
-            original_line_id=line.reverses_line_id,
-            item=item,
-            warehouse_id=warehouse_id,
-        )
-    if delta < 0:
-        return await cost_layer_service.reverse_receipt_line(
-            db,
-            original_line_id=line.reverses_line_id,
-            reversal_line=line,
-            item=item,
-            warehouse_id=warehouse_id,
-            quantity=-delta,
-            posting_sequence=posting_sequence,
-            fallback_cost=fallback_cost,
-        )
-    return Decimal("0.00")
-
-
-async def rebuild_cost_layers(
-    db: AsyncSession, *, branch_id: uuid.UUID, warehouse_id: uuid.UUID
-) -> dict[uuid.UUID, tuple[Decimal, Decimal]]:
-    """
-    Regenerate every FIFO layer and consumption for a warehouse from the ledger.
-
-    The layers are a projection: replaying the immutable closed lines in
-    ``posting_sequence`` order through the *same* costing primitives the live
-    posting path uses guarantees the rebuild and the engine can never diverge.
-    Returns each item's rebuilt ``(quantity, average_cost)`` so the caller can
-    detect drift and restate levels. Deletes and rewrites layers, so callers
-    that only want a preview run it inside a savepoint they roll back.
-    """
-    await cost_layer_service.delete_branch_layers(db, branch_id, warehouse_id)
-    rows = (
-        await db.execute(
-            select(InventoryTransaction, InventoryTransactionItem)
-            .join(
-                InventoryTransactionItem,
-                InventoryTransactionItem.transaction_id == InventoryTransaction.id,
-            )
-            .where(
-                InventoryTransaction.branch_id == branch_id,
-                InventoryTransaction.warehouse_id == warehouse_id,
-                InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
-            )
-            .order_by(
-                InventoryTransaction.posting_sequence,
-                InventoryTransactionItem.id,
-            )
-        )
-    ).all()
-
-    running_qty: dict[uuid.UUID, Decimal] = {}
-    line_index: dict[uuid.UUID, int] = {}
-    items: dict[uuid.UUID, InventoryItem] = {}
-    for transaction, line in rows:
-        item = items.get(line.item_id)
-        if item is None:
-            item = await db.get(InventoryItem, line.item_id)
-            items[line.item_id] = item
-        delta = _q(line.signed_quantity or 0)
-        on_hand_before = running_qty.get(line.item_id, Decimal("0"))
-        unit_cost_canonical = line_cost_in_storage_unit(line)
-        fallback = _c(line.previous_unit_cost or 0)
-        if transaction.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value:
-            await cost_layer_service.rescale_layers_to_average(
-                db,
-                item=item,
-                warehouse_id=warehouse_id,
-                new_average=unit_cost_canonical,
-            )
-        elif transaction.reverses_transaction_id is not None:
-            await _reverse_line_costing(
-                db,
-                transaction=transaction,
-                line=line,
-                item=item,
-                warehouse_id=warehouse_id,
-                delta=delta,
-                unit_cost_canonical=unit_cost_canonical,
-                posting_sequence=transaction.posting_sequence,
-                fallback_cost=fallback,
-            )
-        else:
-            idx = line_index.get(line.item_id, 0)
-            line_index[line.item_id] = idx + 1
-            await _forward_line_costing(
-                db,
-                transaction=transaction,
-                line=line,
-                line_index=idx,
-                item=item,
-                warehouse_id=warehouse_id,
-                delta=delta,
-                unit_cost_canonical=unit_cost_canonical,
-                on_hand_before=on_hand_before,
-                posting_sequence=transaction.posting_sequence,
-                fallback_cost=fallback,
-            )
-        running_qty[line.item_id] = _q(on_hand_before + delta)
-
-    ledger: dict[uuid.UUID, tuple[Decimal, Decimal]] = {}
-    for item_id, item in items.items():
-        average = await cost_layer_service.derive_average_cost(db, item, warehouse_id)
-        ledger[item_id] = (running_qty.get(item_id, Decimal("0")), average)
-    return ledger
-
-
 async def post_transaction(
     db: AsyncSession, *, transaction: InventoryTransaction, user: User | None
 ) -> InventoryTransaction:
@@ -672,8 +364,13 @@ async def post_transaction(
             db, transaction.other_warehouse_id, transaction.other_branch_id
         )
 
+    # Lines need their ids before the costing engine can key layers on them.
+    await db.flush()
+    posted_at = utcnow()
     total = Decimal("0")
-    for line_index, line in enumerate(transaction.items):
+    costed: list[tuple[InventoryTransactionItem, InventoryLevel]] = []
+    engine_lines: list = []
+    for line in transaction.items:
         item = await db.get(InventoryItem, line.item_id)
         if item is None:
             raise BadRequestError(f"Inventory item {line.item_id} not found")
@@ -732,88 +429,49 @@ async def post_transaction(
         unit_cost_canonical = line_cost_in_storage_unit(line)
         line.previous_unit_cost = _c(level.average_cost)
         if transaction.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value:
-            # Restate what stock is worth without moving any of it: rescale the
-            # surviving FIFO layers so their weighted average becomes the entered
-            # cost, then derive the level's average back from them.
+            # Restate what stock is worth without moving any of it: the engine
+            # rescales the surviving FIFO layers to the entered average.
             line.quantity = _q(level.quantity)
             line.quantity_in_storage_unit = _q(level.quantity)
             line.quantity_in_ingredient_unit = _q(Decimal(str(level.quantity)) * factor)
-            line.signed_quantity = Decimal("0")
-            value_change = await cost_layer_service.rescale_layers_to_average(
-                db,
-                item=item,
-                warehouse_id=warehouse_id,
-                new_average=unit_cost_canonical,
-            )
-            await cost_layer_service.refresh_level_average(db, level, item)
-            # With no surviving layers there is nothing to rescale, so the entered
-            # cost would otherwise be lost. Record it on the level directly so the
-            # revaluation is not silently discarded (a receipt onto empty resets
-            # the average from its own layer, so this only holds until then).
-            layer_qty, _ = await cost_layer_service.remaining_totals(
-                db, item.id, warehouse_id
-            )
-            if layer_qty <= 0:
-                level.average_cost = unit_cost_canonical
-            line.total_cost = value_change
-            line.balance_after_quantity = _q(level.quantity)
-            line.balance_after_value = _money(
-                Decimal(str(level.quantity)) * Decimal(str(level.average_cost))
-            )
-            level.projected_through_sequence = posting_sequence
-            total += Decimal(str(line.total_cost))
-            continue
-
-        if prevent_negative and delta < 0 and _q(level.quantity) + delta < 0:
+            delta = Decimal("0")
+        elif prevent_negative and delta < 0 and _q(level.quantity) + delta < 0:
             raise ConflictError(
                 f"{item.name}: only {_q(level.quantity)} {item.storage_unit} "
                 f"available, cannot issue {abs(delta)}"
             )
 
-        # Quantity is maintained by apply_movement; valuation is FIFO and lives
-        # in the cost layers, so the average is *derived* from what remains
-        # rather than blended here.
-        on_hand_before = _q(level.quantity)
-        if transaction.reverses_transaction_id is not None:
-            apply_reversal_movement(level, delta, unit_cost_canonical)
-            line.total_cost = await _reverse_line_costing(
-                db,
-                transaction=transaction,
-                line=line,
-                item=item,
-                warehouse_id=warehouse_id,
-                delta=delta,
-                unit_cost_canonical=unit_cost_canonical,
-                posting_sequence=posting_sequence,
-                fallback_cost=_c(line.previous_unit_cost or 0),
-            )
-        else:
-            apply_movement(level, delta, None)
-            line.total_cost = await _forward_line_costing(
-                db,
-                transaction=transaction,
-                line=line,
-                line_index=line_index,
-                item=item,
-                warehouse_id=warehouse_id,
-                delta=delta,
-                unit_cost_canonical=unit_cost_canonical,
-                on_hand_before=on_hand_before,
-                posting_sequence=posting_sequence,
-                fallback_cost=_c(line.previous_unit_cost or 0),
-            )
-
-        await cost_layer_service.refresh_level_average(db, level, item)
+        # Quantity moves here; what it is worth is the costing engine's job,
+        # run once for the whole posting below.
+        apply_movement(level, delta, None)
         line.signed_quantity = _q(delta)
-        total += Decimal(str(line.total_cost))
-        line.balance_after_quantity = _q(level.quantity)
-        line.balance_after_value = _money(
-            Decimal(str(level.quantity)) * Decimal(str(level.average_cost))
+        costed.append((line, level))
+        engine_lines.append(
+            costing_service.ledger_line_for(
+                transaction,
+                line,
+                warehouse_id=warehouse_id,
+                storage_cost=unit_cost_canonical,
+                posted_at=posted_at,
+            )
         )
-        level.projected_through_sequence = posting_sequence
-
         if transaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value:
             level.last_counted_at = utcnow()
+
+    line_costs = await costing_service.cost_posting(
+        db,
+        lines=engine_lines,
+        levels={(level.item_id, level.warehouse_id): level for _, level in costed},
+    )
+    for line, level in costed:
+        cost = line_costs[line.id]
+        # Booked at posting time and immutable from here; the projection
+        # (inventory_line_costs) carries what the line is worth as prices land.
+        line.total_cost = _money(cost.total_cost)
+        line.balance_after_quantity = _q(level.quantity)
+        line.balance_after_value = _money(cost.running_value)
+        level.projected_through_sequence = posting_sequence
+        total += Decimal(str(line.total_cost))
 
     transaction.total_cost = _money(
         total + Decimal(str(transaction.additional_cost or 0))
@@ -821,7 +479,7 @@ async def post_transaction(
     transaction.warehouse_id = warehouse_id
     transaction.status = TransactionStatusEnum.CLOSED.value
     transaction.poster_id = user.id if user else None
-    transaction.posted_at = utcnow()
+    transaction.posted_at = posted_at
     transaction.occurred_at = transaction.occurred_at or transaction.created_at
 
     # The database trigger rejects ad-hoc draft→closed updates. This

@@ -25,6 +25,7 @@ from app.models.inventory import (
     InventoryCostLayerConsumption,
     InventoryItem,
     InventoryLevel,
+    InventoryLineCost,
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
@@ -33,7 +34,7 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.user import User
-from app.services.inventory import inventory_service, ledger_service
+from app.services.inventory import costing_service, inventory_service, ledger_service
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -112,6 +113,11 @@ async def env(engine):
         await db.execute(
             InventoryCostLayer.__table__.delete().where(
                 InventoryCostLayer.branch_id == branch_id
+            )
+        )
+        await db.execute(
+            InventoryLineCost.__table__.delete().where(
+                InventoryLineCost.branch_id == branch_id
             )
         )
         await db.execute(
@@ -436,12 +442,14 @@ async def test_receipt_onto_negative_stock_keeps_layers_matching_quantity(engine
         assert sum((q for q, _ in layers), D("0")) == D("4.000000")
 
 
-async def test_first_purchase_backfills_uncosted_opening_stock(engine, env):
+async def test_a_level_with_no_ledger_behind_it_is_restated_to_the_ledger(engine, env):
+    """v3: the ledger is the only source of stock. A level edited by hand (the
+    old "legacy on-hand with no cost history") is drift, and the first posting
+    that needs a replay restates it to what the ledger says."""
     branch_id, warehouse_id, user_id, item_id = env
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
         user = await db.get(User, user_id)
-        # Simulate legacy on-hand with no cost history: a level, no layers.
         level = await _level(db, item_id, warehouse_id)
         level.quantity = D("40.0000")
         level.average_cost = D("0")
@@ -457,13 +465,140 @@ async def test_first_purchase_backfills_uncosted_opening_stock(engine, env):
             quantity="60",
             unit_cost="2",
         )
-        # The 40 uncosted units are backfilled at the incoming price (2), plus the
-        # 60 received: 100 units all at 2.
         level = await _level(db, item_id, warehouse_id)
-        assert level.quantity == D("100.0000")
-        assert level.average_cost == D("2.000000")
+        assert level.quantity == D("60.0000")
+        assert level.average_cost == D("2")
         total_remaining, _ = await _sum_layers(db, item_id, warehouse_id)
-        assert total_remaining == D("100.000000")
+        assert total_remaining == D("60.000000")
+
+
+async def test_count_overage_onto_negative_stock_leaves_no_phantom_layer(engine, env):
+    """The Cream Cheese bug: production ran the level to −1000, the close count
+    found 0 on the shelf (+1000), and the old engine laid a 1000 g layer anyway."""
+    branch_id, warehouse_id, user_id, item_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS,
+            quantity="1000",
+        )
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.INVENTORY_COUNT,
+            quantity="20",
+        )
+        level = await _level(db, item_id, warehouse_id)
+        assert level.quantity == D("20.0000")
+        total_remaining, _ = await _sum_layers(db, item_id, warehouse_id)
+        assert total_remaining == D("20.000000")
+
+
+async def test_a_voided_po_prices_nothing_and_the_next_po_prices_everything(
+    engine, env
+):
+    """PO-003938 at Sharjah: keyed in packs (4 @ 29), voided, re-keyed as 2000 g
+    @ 0.058. The void must take its price with it — the found stock and the
+    shortfall consumed before any PO take the real one, 0.058."""
+    branch_id, warehouse_id, user_id, item_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        sale = await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS,
+            quantity="375",
+        )
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.INVENTORY_COUNT,
+            quantity="4",
+        )
+        bad = await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.PURCHASING,
+            quantity="4",
+            unit_cost="29",
+        )
+        await ledger_service.reverse_transaction(
+            db, transaction_id=bad.id, user=user, reason="keyed in packs"
+        )
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.PURCHASING,
+            quantity="2000",
+            unit_cost="0.058",
+        )
+        level = await _level(db, item_id, warehouse_id)
+        assert level.quantity == D("2004.0000")
+        assert level.average_cost == D("0.058")
+        assert {
+            cost for _, cost in await _remaining_layers(db, item_id, warehouse_id)
+        } == {D("0.058")}
+        sale_cost = await db.get(InventoryLineCost, sale.items[0].id)
+        assert D(str(sale_cost.total_cost)) == D("21.7500")  # 375 × 0.058
+        assert not sale_cost.is_provisional
+
+
+async def test_an_estate_replay_after_live_postings_changes_nothing(engine, env):
+    """The fast path, a warehouse replay and an estate replay are one engine: once
+    postings have landed, replaying the whole estate must find nothing to fix."""
+    branch_id, warehouse_id, user_id, item_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        steps = [
+            (InventoryTransactionTypeEnum.PURCHASING, "100", "2"),
+            (InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS, "30", "0"),
+            (InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS, "90", "0"),
+            (InventoryTransactionTypeEnum.INVENTORY_COUNT, "5", "0"),
+            (InventoryTransactionTypeEnum.PURCHASING, "50", "3"),
+            (InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS, "10", "0"),
+        ]
+        for kind, qty, cost in steps:
+            await _post(
+                db,
+                branch_id=branch_id,
+                warehouse_id=warehouse_id,
+                item_id=item_id,
+                user=user,
+                kind=kind,
+                quantity=qty,
+                unit_cost=cost,
+            )
+        await db.commit()
+    async with Session() as db:
+        await costing_service.replay_estate(db, wait=True)
+        await db.commit()
+    async with Session() as db:
+        again = await costing_service.replay_estate(db, wait=True)
+        assert again.changes == 0
+        await db.rollback()
 
 
 async def _sum_layers(db, item_id, warehouse_id):

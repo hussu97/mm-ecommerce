@@ -254,15 +254,15 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         spawn_tracked(settled_order_service.run_forever(), name="settled_order_sweeper")
     )
 
-    # The zero-cost recost sweeper. Same lifespan reasons as its neighbours — no
-    # cron here, an advisory lock so a second copy is harmless. Restates made
-    # stock that entered the ledger at zero cost to its current recipe cost once
-    # the recipe has one, the trigger point the forward path never had (audit G3).
+    # The estate costing sweep. Same lifespan reasons as its neighbours — no
+    # cron here, an advisory lock so a second copy is harmless. Replays the FIFO
+    # costing engine estate-wide when a warehouse replay may need to cascade
+    # through transfers into other branches, and nightly as the drift check.
     from app.services.inventory import cost_maintenance_service
 
     background.append(
         spawn_tracked(
-            cost_maintenance_service.run_forever(), name="cost_recost_sweeper"
+            cost_maintenance_service.run_forever(), name="costing_estate_sweeper"
         )
     )
 

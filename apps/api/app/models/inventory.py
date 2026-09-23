@@ -27,6 +27,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -1089,6 +1090,18 @@ class InventoryCostLayer(Base, UUIDMixin, TimestampMixin):
     exhausted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: The cost is an estimate: this stock (or the stock it was priced from) is
+    #: still waiting on its next priced receipt, which will re-cost it.
+    cost_is_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    #: The ledger line whose price this layer carries — its own receipt, or the
+    #: later purchase order that priced stock found by a count.
+    priced_by_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transaction_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     def __repr__(self) -> str:
         return (
@@ -1110,6 +1123,13 @@ class InventoryCostLayerConsumption(Base, UUIDMixin):
     __tablename__ = "inventory_cost_layer_consumptions"
     __table_args__ = (
         CheckConstraint("quantity >= 0", name="ck_inventory_cost_consumption_quantity"),
+        # The replay's per-warehouse diff and the fast path's "anything still
+        # waiting on a price here?" probe both filter on (item, warehouse).
+        Index(
+            "ix_inventory_cost_layer_consumptions_item_warehouse",
+            "item_id",
+            "warehouse_id",
+        ),
     )
 
     consuming_line_id: Mapped[uuid.UUID] = mapped_column(
@@ -1146,6 +1166,14 @@ class InventoryCostLayerConsumption(Base, UUIDMixin):
     is_shortfall: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
+    cost_is_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    priced_by_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transaction_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -1155,6 +1183,122 @@ class InventoryCostLayerConsumption(Base, UUIDMixin):
             f"<InventoryCostLayerConsumption layer={self.layer_id} "
             f"qty={self.quantity}@{self.unit_cost}>"
         )
+
+
+class InventoryLineCost(Base):
+    """
+    What one closed ledger line is worth *now*, per the v3 costing engine.
+
+    ``inventory_transaction_items.total_cost`` is what the line was booked at
+    the moment it posted and is immutable; this is its current, projected cost —
+    re-costed when stock it touched later learns its price (a count overage
+    priced by a later PO, a sale that ran ahead of its delivery). Both are kept
+    so a screen can say "booked at X". Rebuilt by the engine; never edited.
+    """
+
+    __tablename__ = "inventory_line_costs"
+    __table_args__ = (
+        Index(
+            "ix_inventory_line_costs_item_history",
+            "item_id",
+            "warehouse_id",
+            "posting_sequence",
+        ),
+        Index("ix_inventory_line_costs_warehouse_id", "warehouse_id"),
+    )
+
+    line_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transaction_items.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    transaction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transactions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    posting_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: Signed storage quantity, as on the ledger line.
+    quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    unit_cost: Mapped[Any] = mapped_column(Numeric(20, 10), nullable=False)
+    total_cost: Mapped[Any] = mapped_column(Numeric(20, 4), nullable=False)
+    booked_unit_cost: Mapped[Any] = mapped_column(Numeric(20, 10), nullable=False)
+    is_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    priced_by_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transaction_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    running_quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    running_value: Mapped[Any] = mapped_column(Numeric(20, 4), nullable=False)
+    #: A pre-v3 cost adjustment the engine deliberately ignores.
+    superseded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+
+
+class InventoryCostingState(Base):
+    """
+    Singleton bookkeeping for the costing engine.
+
+    ``cutover_sequence`` is the last posting before v3 went live: cost
+    adjustments at or below it were workarounds for the old engine's bugs and
+    are skipped by the replay. The rest records the last estate replay.
+    """
+
+    __tablename__ = "inventory_costing_state"
+    __table_args__ = (
+        CheckConstraint("id", name="ck_inventory_costing_state_singleton"),
+    )
+
+    id: Mapped[bool] = mapped_column(Boolean, primary_key=True, server_default="true")
+    cutover_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_estate_replay_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_estate_replay_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_estate_changes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class InventoryCostingDirty(Base):
+    """
+    A warehouse that was restated on its own and wants an estate replay.
+
+    A warehouse replay runs inside the posting that needed it, under that
+    branch's lock only, so it can re-cost this warehouse but not the branches
+    its transfers fed. This row asks the scheduler to finish the job estate-wide.
+    One row per warehouse (not a shared flag) so two branches posting at once
+    never queue on the same row lock.
+    """
+
+    __tablename__ = "inventory_costing_dirty"
+
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    dirty_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
 
 
 # ─── Recipes ──────────────────────────────────────────────────────────────────

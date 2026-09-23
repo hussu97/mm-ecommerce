@@ -41,6 +41,7 @@ from app.models.operations import (
 from app.models.user import User
 from app.services.inventory import inventory_service, recipe_service, transfer_service
 from app.services.inventory.recipe_service import RecipeLineInput
+from tests.integration._stock import seed_stock
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 pytestmark = [
@@ -128,10 +129,13 @@ async def env(engine):
             user_id=user.id,
         )
         source_wh = await inventory_service.default_warehouse(db, source.id)
-        inventory_service.apply_movement(
-            await inventory_service.level_for(db, flour.id, source_wh.id),
-            Decimal("1000"),
-            Decimal("0.01"),
+        await seed_stock(
+            db,
+            branch_id=source.id,
+            warehouse_id=source_wh.id,
+            item_id=flour.id,
+            quantity="1000",
+            unit_cost="0.01",
         )
         await db.commit()
         ids = SimpleNamespace(

@@ -35,6 +35,7 @@ from app.models.inventory_v2 import BranchInventorySettings
 from app.models.operations import TransferOrder, TransferOrderStatusEnum
 from app.models.user import User
 from app.services.inventory import inventory_service, transfer_service
+from tests.integration._stock import seed_stock
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -92,13 +93,13 @@ async def env():
         )
         db.add(item)
         await db.flush()
-        db.add(
-            InventoryLevel(
-                item_id=item.id,
-                warehouse_id=source_wh.id,
-                quantity=Decimal("100"),
-                average_cost=Decimal("3"),
-            )
+        await seed_stock(
+            db,
+            branch_id=source.id,
+            warehouse_id=source_wh.id,
+            item_id=item.id,
+            quantity="100",
+            unit_cost="3",
         )
         db.add(
             InventoryLevel(

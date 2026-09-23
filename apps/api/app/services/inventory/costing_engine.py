@@ -387,6 +387,7 @@ class ItemState:
     last_cost: Cost | None = None
     #: Seeded state that is still waiting on a price (fast path only).
     seeded_provisional: bool = False
+    seeded_inconsistent: bool = False
     last_sequence: int | None = None
     #: Running value of the surviving layers, as lazy terms.
     value_terms: list[tuple[Decimal, Cost]] = field(default_factory=list)
@@ -575,6 +576,10 @@ class CostingEngine:
             state.layers.append(layer)
             self.layers_by_line[row.line_id].append(layer)
             state.value_terms.append((layer.remaining, layer.cost))
+        layered = sum((layer.remaining for layer in state.layers), ZERO)
+        # The stored projection no longer agrees with the level (drift from
+        # before v3, or a level edited by hand): only a replay can say which.
+        state.seeded_inconsistent = layered != max(state.quantity, ZERO)
         self.states[(seed.item_id, seed.warehouse_id)] = state
 
     def _state(self, line: LedgerLine) -> ItemState:
@@ -700,6 +705,8 @@ class CostingEngine:
         self.records[line.line_id] = record
         self.order.append(line.line_id)
         state = self._state(line)
+        if self.fast and state.seeded_inconsistent:
+            raise NeedsReplay("stored layers disagree with the level")
         delta = Decimal(line.delta)
 
         if line.type == COST_ADJUSTMENT:
@@ -824,6 +831,8 @@ class CostingEngine:
         external = self.external_group_inputs.get(group)
         if not draws and not external:
             return None
+        if self.fast and any(provisional for _, _, provisional in external or []):
+            raise NeedsReplay("batch made from stock still waiting on a price")
         batch = self.batches.get(group)
         if batch is None:
             batch = Derived(line.line_id)

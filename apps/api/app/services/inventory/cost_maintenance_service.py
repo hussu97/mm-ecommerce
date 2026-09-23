@@ -1,177 +1,84 @@
-"""Self-healing recost of zero-cost made stock.
+"""The estate costing sweep: finish what a warehouse replay started.
 
-Costing is FIFO: a made item is worth its recipe (the FIFO cost of its
-ingredients), but stock can still enter the ledger at **zero** cost — an opening
-balance keyed with no price, a shift-report receipt, a count overage before the
-item has ever been costed, a transfer drawn from a zero-cost source. Nothing in
-the forward path later revalues those layers once a real cost exists; only a
-manual rebuild or the admin "reset cost from recipe" action did (costing audit
-G3/G5).
+A posting that the costing engine cannot cost on its fast path replays its own
+warehouse, under that branch's lock only (`costing_service.cost_posting`). That
+is enough for the warehouse itself, but a price learned there can also re-cost
+stock that has since been **transferred to another branch** — and that branch's
+lock is not the poster's to take. So the poster marks its warehouse
+(``inventory_costing_dirty``) and this sweep, once a minute, replays the whole
+estate under every branch lock, clearing the marks. A nightly unconditional
+replay is the safety net: the stored projection should already match, and the
+change count it logs is the drift monitor (expected 0).
 
-This is the missing trigger point: a background sweep that finds made items
-holding stock valued at zero and, when their recipe now has a cost, restates that
-stock to it — through the ordinary ``adjust_cost`` path (a COST_ADJUSTMENT that
-rescales the FIFO layers), attributed to the system. It is idempotent: once a
-level is revalued its average is non-zero, so the next tick passes it by, and an
-item whose ingredients are themselves still uncosted (recipe cost 0) is left
-untouched until there is a real figure to anchor to.
+This replaced the zero-cost *recost* sweep, which posted cost adjustments to
+revalue made stock left at zero. Under v3 made stock is costed from the actual
+FIFO cost of its ingredients and re-costed when they learn their price, so there
+is nothing left for it to patch.
 
 Same lifespan shape as its neighbours: no cron in this stack, an advisory lock so
-a second copy across blue/green is harmless, storefront app only.
+a second copy across blue/green is harmless, storefront app only. The branch
+locks are *tried*, never waited on — a busy branch just defers the replay a tick.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
-from decimal import Decimal
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import timedelta
 
 from app.core import advisory_lock, heartbeat
-from app.core.exceptions import AppError
-from app.core.money import unit_cost as _c
-from app.models.branch import Branch
-from app.models.inventory import InventoryItem, InventoryLevel, Warehouse
-from app.models.inventory_v2 import (
-    Recipe,
-    RecipeOwnerKindEnum,
-    RecipeVersion,
-    RecipeVersionStatusEnum,
-)
-from app.services.inventory import inventory_service, recipe_service
+from app.models.base import utcnow
+from app.models.inventory import InventoryCostingState
+from app.services.inventory import costing_service
 
 logger = logging.getLogger(__name__)
 
-#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 0D, the
-#: next free value after the settled-order sweeper (0C).
+#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 0D — the
+#: slot the retired recost sweeper held, so blue/green never runs both.
 _ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_480D
 
-#: Every six hours. Recipe costs move at the pace of purchase prices, not orders,
-#: and the sweep only ever touches stock still sitting at zero, so a slow cadence
-#: heals it well within a trading day without churning cost adjustments.
-_TICK_SECONDS = 6 * 60 * 60
+_TICK_SECONDS = 60
+_NIGHTLY = timedelta(hours=24)
+
+__all__ = ["run_forever", "sweep_once"]
 
 
-async def sweep_zero_cost_recipe_stock(
-    db: AsyncSession, *, now: datetime | None = None
-) -> list[dict]:
-    """Revalue every zero-cost on-hand level of a made item to its recipe cost.
-
-    A candidate is an ``InventoryLevel`` with quantity on hand and an average cost
-    of zero, whose item owns an **active** recipe. Each item's current recipe cost
-    is computed once (estate-wide FIFO of its ingredients) and applied per level
-    via ``adjust_cost``; an item whose recipe still prices to zero — its own
-    ingredients uncosted — is skipped. The caller commits. Returns one record per
-    level revalued.
-    """
-    _ = now  # candidates are chosen by stored cost, not by time
-    active_recipe_item_ids = (
-        select(Recipe.inventory_item_id)
-        .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
-        .where(
-            Recipe.owner_kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value,
-            Recipe.inventory_item_id.is_not(None),
-            RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
-        )
+async def sweep_once(db) -> costing_service.ReplayResult | None:
+    """One tick: replay the estate if a warehouse asked, or a day has passed."""
+    state = await db.get(InventoryCostingState, True)
+    due = (
+        state is None
+        or state.last_estate_replay_at is None
+        or utcnow() - state.last_estate_replay_at >= _NIGHTLY
     )
-    rows = (
-        await db.execute(
-            select(InventoryLevel, Warehouse, Branch, InventoryItem)
-            .join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id)
-            .join(Branch, Branch.id == Warehouse.branch_id)
-            .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
-            .where(
-                InventoryLevel.quantity > 0,
-                InventoryLevel.average_cost == 0,
-                # Skip warehouses that can no longer be posted to — adjust_cost
-                # rejects them, and one such level must not poison the sweep.
-                Warehouse.deleted_at.is_(None),
-                Warehouse.is_active.is_(True),
-                InventoryLevel.item_id.in_(active_recipe_item_ids),
-            )
-        )
-    ).all()
-    if not rows:
-        return []
-
-    # One recipe graph for the whole sweep (expansion is reused); the cost itself
-    # is computed per level against that branch's own ingredient levels, so a
-    # branch is never revalued using another branch's ingredient prices.
-    catalog = await recipe_service.load_active_catalog(db)
-
-    fixed: list[dict] = []
-    for level, warehouse, branch, item in rows:
-        per_ingredient = await recipe_service.recipe_unit_cost(
-            db, item_id=item.id, warehouse_id=warehouse.id, catalog=catalog
-        )
-        if not per_ingredient or per_ingredient <= 0:
-            # Ingredients still uncosted at this branch — nothing to anchor to yet.
-            continue
-        factor = Decimal(str(item.storage_to_ingredient_factor or 1))
-        storage_cost = _c(per_ingredient * factor)
-        # Savepoint each level so one that cannot be posted (a race, a guard) is
-        # skipped without rolling back the levels already healed this tick.
-        try:
-            async with db.begin_nested():
-                result = await inventory_service.adjust_cost(
-                    db,
-                    branch=branch,
-                    item_id=item.id,
-                    warehouse_id=warehouse.id,
-                    new_average_cost=storage_cost,
-                    user=None,
-                    notes="Auto-recost from recipe (zero-cost stock)",
-                )
-            fixed.append(
-                {
-                    "item_id": str(item.id),
-                    "item_name": item.name,
-                    "branch": branch.name,
-                    "new_average_cost": storage_cost,
-                    "value_change": result["value_change"],
-                }
-            )
-        except AppError as exc:
-            logger.info(
-                "Recost sweep: skipped %s @ %s — %s", item.name, branch.name, exc
-            )
-    return fixed
+    if due:
+        return await costing_service.replay_estate(db, wait=False)
+    return await costing_service.replay_marked_estate(db)
 
 
 async def run_forever() -> None:
-    """Heal zero-cost made stock on a leader-elected loop.
-
-    Leader-elected on an advisory lock and beating its heartbeat, the same shape
-    as the other lifespan loops — no cron in this stack, one worker inside a sweep
-    at a time.
-    """
-    logger.info("Zero-cost recost sweeper started (every %ss)", _TICK_SECONDS)
+    logger.info("Estate costing sweeper started (every %ss)", _TICK_SECONDS)
     while True:
         try:
-            # Sleeps first: boot is busy and nothing here is urgent.
             await asyncio.sleep(_TICK_SECONDS)
-            await heartbeat.beat("cost_recost_sweeper")
+            await heartbeat.beat("costing_estate_sweeper")
             async with advisory_lock.held_session(
-                _ADVISORY_LOCK_KEY, name="cost recost sweeper"
+                _ADVISORY_LOCK_KEY, name="costing estate sweeper"
             ) as db:
                 if db is None:
                     continue
-                fixed = await sweep_zero_cost_recipe_stock(db)
+                result = await sweep_once(db)
                 await db.commit()
-                if fixed:
-                    logger.info(
-                        "Recost sweeper revalued %s zero-cost level(s): %s",
-                        len(fixed),
-                        [
-                            f"{f['item_name']}@{f['branch']}={f['new_average_cost']}"
-                            for f in fixed
-                        ],
+                if result is not None:
+                    log = logger.warning if result.changes else logger.info
+                    log(
+                        "Estate costing replay: %s lines, %s projection changes, %sms",
+                        result.lines,
+                        result.changes,
+                        result.elapsed_ms,
                     )
         except asyncio.CancelledError:
-            logger.info("Recost sweeper stopping")
+            logger.info("Estate costing sweeper stopping")
             raise
         except Exception:  # noqa: BLE001 — a bad tick must not kill the loop
-            logger.exception("Recost sweeper tick failed")
+            logger.exception("Estate costing sweeper tick failed")
