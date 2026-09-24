@@ -413,6 +413,9 @@ class RecipeLine(Base, UUIDMixin, TimestampMixin):
     ingredient_unit: AssociationProxy[str] = association_proxy(
         "item", "ingredient_unit"
     )
+    #: The ingredient's name, read live like its unit — recipe lines are listed
+    #: by it everywhere they are shown.
+    item_name: AssociationProxy[str] = association_proxy("item", "name")
 
 
 class InventorySourceEvent(Base, UUIDMixin, TimestampMixin):

@@ -23350,6 +23350,8 @@ export interface components {
              * Format: uuid
              */
             item_id: string;
+            /** Item Name */
+            item_name: string;
             /** Quantity */
             quantity: string;
             /** Source Metadata */

@@ -40368,6 +40368,10 @@
             "title": "Item Id",
             "type": "string"
           },
+          "item_name": {
+            "title": "Item Name",
+            "type": "string"
+          },
           "quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Quantity",
@@ -40387,6 +40391,7 @@
         "required": [
           "id",
           "item_id",
+          "item_name",
           "quantity",
           "ingredient_unit",
           "yield_percentage",
