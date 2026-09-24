@@ -29,6 +29,8 @@ from app.models.inventory import (
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
+    PurchaseOrder,
+    Supplier,
     TransactionStatusEnum,
     Warehouse,
 )
@@ -169,6 +171,7 @@ async def _post(
     kind: InventoryTransactionTypeEnum,
     quantity,
     unit_cost="0",
+    purchase_order_id=None,
 ):
     """Build and post one single-line transaction; returns the posted row."""
     transaction = InventoryTransaction(
@@ -177,6 +180,7 @@ async def _post(
         status=TransactionStatusEnum.DRAFT.value,
         branch_id=branch_id,
         warehouse_id=warehouse_id,
+        purchase_order_id=purchase_order_id,
         business_date="2026-09-18",
         creator_id=user.id,
         items=[
@@ -822,4 +826,73 @@ async def test_rebuild_reproduces_layers_and_reports_no_drift(engine, env):
         await ledger_service.reconcile_levels(db, branch_id=branch_id, apply=True)
         after = await _remaining_layers(db, item_id, warehouse_id)
         assert before == after
+        await db.rollback()
+
+
+async def test_the_cost_popup_names_the_purchase_order_behind_each_cost(engine, env):
+    """The popup links to the PO a layer came from and the PO that priced found
+    stock, on both the current-stock and the history view."""
+    branch_id, warehouse_id, user_id, item_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        user.is_admin = True
+        supplier = Supplier(name=f"{MARKER} supplier")
+        db.add(supplier)
+        await db.flush()
+        po = PurchaseOrder(
+            reference=f"PO-{MARKER}-{uuid.uuid4().hex[:8]}",
+            status="closed",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            business_date="2026-09-18",
+        )
+        db.add(po)
+        await db.flush()
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.INVENTORY_COUNT,
+            quantity="5",
+        )
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.PURCHASING,
+            quantity="100",
+            unit_cost="0.05",
+            purchase_order_id=po.id,
+        )
+
+        view = await cost_view_service.cost_layers(
+            db, item_id=item_id, branch_id=branch_id, user=user
+        )
+        found = next(
+            layer for layer in view.layers if layer.source_kind == "count_overage"
+        )
+        bought = next(
+            layer for layer in view.layers if layer.source_kind == "purchasing"
+        )
+        assert found.purchase_order_id is None
+        assert found.cost_source_reference == po.reference
+        assert found.cost_source_purchase_order_id == po.id
+        assert bought.source_reference == po.reference
+        assert bought.purchase_order_id == po.id
+        assert bought.cost_source_purchase_order_id is None
+
+        history = await cost_view_service.cost_history(
+            db, item_id=item_id, branch_id=branch_id, user=user
+        )
+        receipt, count = history.items
+        assert receipt.purchase_order_id == po.id
+        assert receipt.purchase_order_reference == po.reference
+        assert count.purchase_order_id is None
+        assert count.cost_source_purchase_order_id == po.id
         await db.rollback()

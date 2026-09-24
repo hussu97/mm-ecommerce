@@ -11,6 +11,7 @@
 // API; nothing here re-derives a cost.
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import type { Schemas } from '@mm/types';
 
 import { Badge, Pagination, Select, Spinner, TabBar } from '@/components/ui';
@@ -47,6 +48,22 @@ function EstimateBadge() {
     <span title="Estimate — this stock is waiting on its next priced receipt, which will re-cost it.">
       <Badge variant="warning">est.</Badge>
     </span>
+  );
+}
+
+/** A purchase order reference that opens the PO's detail page in a new tab, so
+ *  the popup (and the costing it explains) stays open behind it. */
+function PurchaseOrderLink({ id, reference }: { id: string; reference: string }) {
+  return (
+    <Link
+      href={`/purchase-orders/${id}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Open ${reference}`}
+      className="text-primary underline decoration-dotted underline-offset-2 hover:decoration-solid"
+    >
+      {reference}
+    </Link>
   );
 }
 
@@ -225,7 +242,13 @@ function StockTab({
               {layers.map((layer) => (
                 <tr key={layer.id} className="border-b border-gray-100 align-top">
                   <td className="py-2">
-                    <span className="font-medium text-gray-800">{layer.source_reference ?? '—'}</span>
+                    <span className="font-medium text-gray-800">
+                      {layer.purchase_order_id && layer.source_reference ? (
+                        <PurchaseOrderLink id={layer.purchase_order_id} reference={layer.source_reference} />
+                      ) : (
+                        layer.source_reference ?? '—'
+                      )}
+                    </span>
                     {layer.next_out && <span className="ml-2"><Badge variant="info">next out</Badge></span>}
                     <br />
                     <span className="text-[10px] uppercase tracking-wide text-gray-400 font-body">
@@ -240,7 +263,15 @@ function StockTab({
                     {formatCost(layer.unit_cost)} {layer.cost_is_provisional && <EstimateBadge />}
                     {layer.cost_source_reference && (
                       <span className="block text-[10px] text-gray-400 font-body">
-                        priced from {layer.cost_source_reference}
+                        priced from{' '}
+                        {layer.cost_source_purchase_order_id ? (
+                          <PurchaseOrderLink
+                            id={layer.cost_source_purchase_order_id}
+                            reference={layer.cost_source_reference}
+                          />
+                        ) : (
+                          layer.cost_source_reference
+                        )}
                       </span>
                     )}
                   </td>
@@ -343,10 +374,17 @@ function HistoryTab({
                   <tr key={row.line_id} className="border-b border-gray-100 align-top">
                     <td className="py-2 text-gray-500 whitespace-nowrap">{(row.posted_at ?? row.business_date ?? '').slice(0, 10)}</td>
                     <td className="py-2">
-                      <span className="font-medium text-gray-800">{row.reference}</span>
+                      <span className="font-medium text-gray-800">
+                        {row.purchase_order_id && row.purchase_order_reference ? (
+                          <PurchaseOrderLink id={row.purchase_order_id} reference={row.purchase_order_reference} />
+                        ) : (
+                          row.reference
+                        )}
+                      </span>
                       <br />
                       <span className="text-[10px] uppercase tracking-wide text-gray-400 font-body">
                         {MOVEMENT_LABELS[row.type] ?? row.type.replaceAll('_', ' ')}
+                        {row.purchase_order_id && row.purchase_order_reference && ` · ${row.reference}`}
                       </span>
                     </td>
                     <td className={`py-2 text-right tabular-nums ${qty < 0 ? 'text-red-700' : qty > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
@@ -359,7 +397,17 @@ function HistoryTab({
                         <>
                           {formatCost(row.unit_cost)} {row.is_provisional && <EstimateBadge />}
                           {row.cost_source_reference && (
-                            <span className="block text-[10px] text-gray-400 font-body">priced from {row.cost_source_reference}</span>
+                            <span className="block text-[10px] text-gray-400 font-body">
+                              priced from{' '}
+                              {row.cost_source_purchase_order_id ? (
+                                <PurchaseOrderLink
+                                  id={row.cost_source_purchase_order_id}
+                                  reference={row.cost_source_reference}
+                                />
+                              ) : (
+                                row.cost_source_reference
+                              )}
+                            </span>
                           )}
                         </>
                       )}

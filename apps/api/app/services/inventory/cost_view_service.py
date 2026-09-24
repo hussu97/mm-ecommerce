@@ -51,9 +51,10 @@ def _is_unrestricted(user: User) -> bool:
 
 async def _references(
     db: AsyncSession, line_ids: set[uuid.UUID]
-) -> dict[uuid.UUID, str]:
-    """Human reference per ledger line: its PO number when it has one, else the
-    transaction reference (PUR-, CNT-, PRD-, TRR-…)."""
+) -> dict[uuid.UUID, tuple[str, uuid.UUID | None]]:
+    """Human reference per ledger line — its PO number when it has one, else the
+    transaction reference (PUR-, CNT-, PRD-, TRR-…) — with the PO id, so the
+    popup can open the purchase order it names."""
     if not line_ids:
         return {}
     rows = await db.execute(
@@ -61,6 +62,7 @@ async def _references(
             InventoryTransactionItem.id,
             InventoryTransaction.reference,
             PurchaseOrder.reference,
+            PurchaseOrder.id,
         )
         .join(
             InventoryTransaction,
@@ -71,7 +73,9 @@ async def _references(
         )
         .where(InventoryTransactionItem.id.in_(line_ids))
     )
-    return {line_id: po_ref or ref for line_id, ref, po_ref in rows.all()}
+    return {
+        line_id: (po_ref or ref, po_id) for line_id, ref, po_ref, po_id in rows.all()
+    }
 
 
 async def cost_layers(
@@ -141,9 +145,15 @@ async def cost_layers(
         response.warehouse_name = warehouse_name
         response.line_value = line_value
         response.posted_at = posted_at
-        response.source_reference = references.get(layer.source_line_id)
+        response.source_reference, source_po_id = references.get(
+            layer.source_line_id, (None, None)
+        )
+        response.purchase_order_id = layer.purchase_order_id or source_po_id
         if layer.priced_by_line_id and layer.priced_by_line_id != layer.source_line_id:
-            response.cost_source_reference = references.get(layer.priced_by_line_id)
+            (
+                response.cost_source_reference,
+                response.cost_source_purchase_order_id,
+            ) = references.get(layer.priced_by_line_id, (None, None))
         response.next_out = layer.warehouse_id not in seen_warehouses
         seen_warehouses.add(layer.warehouse_id)
         layers.append(response)
@@ -182,9 +192,19 @@ async def cost_history(
     )
     rows = (
         await db.execute(
-            select(lc, t.reference, t.type, t.posted_at, t.business_date, i.total_cost)
+            select(
+                lc,
+                t.reference,
+                t.type,
+                t.posted_at,
+                t.business_date,
+                i.total_cost,
+                PurchaseOrder.id,
+                PurchaseOrder.reference,
+            )
             .join(t, t.id == lc.transaction_id)
             .join(i, i.id == lc.line_id)
+            .outerjoin(PurchaseOrder, PurchaseOrder.id == t.purchase_order_id)
             .where(*scope)
             .order_by(lc.posting_sequence.desc(), lc.line_id.desc())
             .offset((page - 1) * per_page)
@@ -195,11 +215,25 @@ async def cost_history(
         db, {row[0].priced_by_line_id for row in rows if row[0].priced_by_line_id}
     )
     items: list[ItemCostHistoryRow] = []
-    for cost, reference, type_, posted_at, business_date, booked in rows:
+    for (
+        cost,
+        reference,
+        type_,
+        posted_at,
+        business_date,
+        booked,
+        po_id,
+        po_reference,
+    ) in rows:
         running_qty = Decimal(str(cost.running_quantity))
         running_value = Decimal(str(cost.running_value))
         total_cost = Decimal(str(cost.total_cost))
         booked_total = Decimal(str(booked or 0))
+        cost_source_reference, cost_source_po_id = (
+            references.get(cost.priced_by_line_id, (None, None))
+            if cost.priced_by_line_id and cost.priced_by_line_id != cost.line_id
+            else (None, None)
+        )
         items.append(
             ItemCostHistoryRow(
                 line_id=cost.line_id,
@@ -214,11 +248,10 @@ async def cost_history(
                 booked_total_cost=booked_total if booked_total != total_cost else None,
                 is_provisional=cost.is_provisional,
                 superseded=cost.superseded,
-                cost_source_reference=(
-                    references.get(cost.priced_by_line_id)
-                    if cost.priced_by_line_id and cost.priced_by_line_id != cost.line_id
-                    else None
-                ),
+                purchase_order_id=po_id,
+                purchase_order_reference=po_reference,
+                cost_source_reference=cost_source_reference,
+                cost_source_purchase_order_id=cost_source_po_id,
                 running_quantity=running_qty,
                 running_value=running_value,
                 running_average_cost=(

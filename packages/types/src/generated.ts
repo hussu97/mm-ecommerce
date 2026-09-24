@@ -12436,6 +12436,8 @@ export interface components {
              * @default false
              */
             cost_is_provisional: boolean;
+            /** Cost Source Purchase Order Id */
+            cost_source_purchase_order_id?: string | null;
             /** Cost Source Reference */
             cost_source_reference?: string | null;
             /**
@@ -15267,6 +15269,8 @@ export interface components {
             booked_total_cost?: string | null;
             /** Business Date */
             business_date: string | null;
+            /** Cost Source Purchase Order Id */
+            cost_source_purchase_order_id?: string | null;
             /** Cost Source Reference */
             cost_source_reference?: string | null;
             /** Is Provisional */
@@ -15278,6 +15282,10 @@ export interface components {
             line_id: string;
             /** Posted At */
             posted_at: string | null;
+            /** Purchase Order Id */
+            purchase_order_id?: string | null;
+            /** Purchase Order Reference */
+            purchase_order_reference?: string | null;
             /** Quantity */
             quantity: string;
             /** Reference */
