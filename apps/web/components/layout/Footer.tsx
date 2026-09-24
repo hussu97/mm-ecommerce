@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { ContactLink } from '@/components/analytics/ContactLink';
 import Image from 'next/image';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { withFallback } from '@/lib/i18n/fallback';
+import { LEGAL_ENTITY } from '@/lib/schema';
 
 const SERVICE_AREA_KEY = 'footer.service_area';
 
@@ -11,6 +13,13 @@ export function Footer() {
   const { locale, t } = useTranslation();
   const currentYear = new Date().getFullYear();
   const serviceArea = t(SERVICE_AREA_KEY);
+  // Falls back until the API's boot seed adds the row (the web can deploy first).
+  const legalLine = withFallback(
+    t,
+    'footer.legal_entity',
+    'a trading name of {legal_name} · TRN {trn}',
+    { legal_name: LEGAL_ENTITY.name, trn: LEGAL_ENTITY.trn },
+  );
 
   return (
     <footer className="bg-[#f9f5f0] border-t-2 border-secondary">
@@ -75,7 +84,9 @@ export function Footer() {
         {/* Bottom links */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs text-gray-400 font-body">
-            &copy; {currentYear} Melting Moments Cakes. {t('footer.copyright')}
+            {/* The registered entity behind the brand, on every page — domain
+                ownership checks look for the legal name and TRN on the site. */}
+            &copy; {currentYear} Melting Moments Cakes, {legalLine}. {t('footer.copyright')}
           </p>
           <nav className="flex items-center gap-5">
             {[

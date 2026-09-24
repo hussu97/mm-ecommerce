@@ -113,6 +113,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
         "Khaimah, Fujairah and Umm Al Quwain.",
     ),
     ("footer", "copyright", "All rights reserved"),
+    ("footer", "legal_entity", "a trading name of {legal_name} · TRN {trn}"),
     # common
     ("common", "qty", "Qty"),
     ("common", "previous", "Previous"),
@@ -908,6 +909,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
         "إلى دبي والشارقة وعجمان وأبوظبي والعين ورأس الخيمة والفجيرة وأم القيوين.",
     ),
     ("footer", "copyright", "جميع الحقوق محفوظة"),
+    ("footer", "legal_entity", "اسم تجاري مملوك لـ {legal_name} · الرقم الضريبي {trn}"),
     # common
     ("common", "qty", "الكمية"),
     ("common", "previous", "السابق"),

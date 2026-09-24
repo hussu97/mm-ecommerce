@@ -29,10 +29,23 @@ export const OG_IMAGE = {
   alt: 'Melting Moments Cakes — brownies, cookies and desserts delivered across the UAE',
 };
 
+/**
+ * The registered business behind the brand, as it appears on the trade licence
+ * and every tax invoice (`legal_entities.legal_name` / `tax_number`). Shown in
+ * the footer and published as `legalName`/`vatID`, so anyone verifying the
+ * domain (Meta, Apple, a payment gateway) finds the entity on the site itself.
+ */
+export const LEGAL_ENTITY = {
+  name: 'Fatema Cake Sweets',
+  trn: '104711479600003',
+} as const;
+
 export const BRAND = {
   '@type': 'Organization' as const,
   '@id': BUSINESS_ID,
   name: 'Melting Moments Cakes',
+  legalName: LEGAL_ENTITY.name,
+  vatID: LEGAL_ENTITY.trn,
   url: SITE_URL,
   logo: `${SITE_URL}/images/logos/color_logo.jpeg`,
 };
@@ -129,6 +142,8 @@ export const BAKERY_BASE = {
   '@id': BUSINESS_ID,
   name: 'Melting Moments Cakes',
   alternateName: 'Melting Moments',
+  legalName: LEGAL_ENTITY.name,
+  vatID: LEGAL_ENTITY.trn,
   url: SITE_URL,
   telephone: '+971503687757',
   image: `${SITE_URL}/images/logos/color_logo.jpeg`,
