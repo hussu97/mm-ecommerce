@@ -8,10 +8,11 @@ import uuid
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.exceptions import (
     BadRequestError,
@@ -722,12 +723,11 @@ async def list_shift_reports(
     if report_status:
         stmt = stmt.where(ShiftInventoryReport.status == report_status)
     if q and q.strip():
-        like = f"%{q.strip().lower()}%"
         stmt = stmt.where(
             or_(
-                func.lower(ShiftInventoryReport.business_date).like(like),
-                func.lower(ShiftInventoryReport.report_type).like(like),
-                func.lower(ShiftInventoryReport.status).like(like),
+                search_text.contains(ShiftInventoryReport.business_date, q),
+                search_text.contains(ShiftInventoryReport.report_type, q),
+                search_text.contains(ShiftInventoryReport.status, q),
             )
         )
     reports = list(

@@ -27,6 +27,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import search as search_text
 from app.models.aggregator import (
     CHANNEL_CAREEM,
     AggregatorBranchMap,
@@ -60,14 +61,13 @@ DEFAULT_AREA_TO_BRANCH_HINT: dict[str, str] = {
 
 async def _resolve_branch(db: AsyncSession, hint: str):
     """The first active branch whose name, city or reference contains *hint*."""
-    like = f"%{hint.lower()}%"
     return await db.scalar(
         select(Branch.id)
         .where(
             or_(
-                func.lower(Branch.name).like(like),
-                func.lower(func.coalesce(Branch.city, "")).like(like),
-                func.lower(Branch.reference).like(like),
+                search_text.contains(Branch.name, hint),
+                search_text.contains(func.coalesce(Branch.city, ""), hint),
+                search_text.contains(Branch.reference, hint),
             )
         )
         .order_by(Branch.display_order, Branch.reference)

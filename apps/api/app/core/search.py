@@ -34,5 +34,9 @@ def contains(column, value: str):
     The pair that has to travel together — the escaped pattern and the `escape`
     argument that tells PostgreSQL how to read it — expressed once so a call
     site cannot get one without the other.
+
+    Every search box in admin and on the till goes through here, so the rule
+    is one rule: surrounding whitespace is ignored, case never matters (ILIKE),
+    and the text may appear anywhere in the value, not only at its start.
     """
-    return column.ilike(f"%{escape_like(value)}%", escape="\\")
+    return column.ilike(f"%{escape_like(value.strip())}%", escape="\\")

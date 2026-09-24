@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.permissions import require
 from app.models.audit_log import AuditLog
@@ -89,9 +90,9 @@ async def list_audit_logs(
     if admin_id:
         stmt = stmt.where(AuditLog.admin_id == admin_id)
     if search:
-        pattern = f"%{search}%"
         stmt = stmt.where(
-            AuditLog.entity_label.ilike(pattern) | AuditLog.admin_email.ilike(pattern)
+            search_text.contains(AuditLog.entity_label, search)
+            | search_text.contains(AuditLog.admin_email, search)
         )
     if date_from:
         stmt = stmt.where(AuditLog.created_at >= date_from)

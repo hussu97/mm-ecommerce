@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.permissions import require
 from app.models.email_log import EmailLog
@@ -74,9 +75,9 @@ async def list_email_logs(
     if template:
         stmt = stmt.where(EmailLog.template == template)
     if recipient:
-        stmt = stmt.where(EmailLog.recipient.ilike(f"%{recipient}%"))
+        stmt = stmt.where(search_text.contains(EmailLog.recipient, recipient))
     if order_number:
-        stmt = stmt.where(EmailLog.order_number.ilike(f"%{order_number}%"))
+        stmt = stmt.where(search_text.contains(EmailLog.order_number, order_number))
     if date_from:
         stmt = stmt.where(EmailLog.sent_at >= date_from)
     if date_to:

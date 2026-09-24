@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.exceptions import NotFoundError
 from app.core.permissions import require
@@ -101,9 +102,9 @@ async def list_webhook_logs(
     if event_type:
         stmt = stmt.where(WebhookLog.event_type == event_type)
     if order_number:
-        stmt = stmt.where(WebhookLog.order_number.ilike(f"%{order_number}%"))
+        stmt = stmt.where(search_text.contains(WebhookLog.order_number, order_number))
     if external_id:
-        stmt = stmt.where(WebhookLog.external_id.ilike(f"%{external_id}%"))
+        stmt = stmt.where(search_text.contains(WebhookLog.external_id, external_id))
     if matched is not None:
         stmt = stmt.where(WebhookLog.matched.is_(matched))
     if errors_only:

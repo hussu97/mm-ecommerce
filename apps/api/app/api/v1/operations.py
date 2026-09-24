@@ -19,6 +19,7 @@ from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.money import money
@@ -787,15 +788,14 @@ def _transfer_search_clause(q: str):
     """A transfer matches a search on its reference or any of its items' name/SKU
     — the identifiers a picker or manager arrives holding. Server-side so it runs
     over the whole list, not the loaded page."""
-    like = f"%{q.strip().lower()}%"
     return or_(
-        func.lower(Transfer.reference).like(like),
+        search_text.contains(Transfer.reference, q),
         exists().where(
             TransferLine.transfer_id == Transfer.id,
             TransferLine.item_id == InventoryItem.id,
             or_(
-                func.lower(InventoryItem.name).like(like),
-                func.lower(InventoryItem.sku).like(like),
+                search_text.contains(InventoryItem.name, q),
+                search_text.contains(InventoryItem.sku, q),
             ),
         ),
     )
@@ -1383,16 +1383,15 @@ async def pos_pending_production(
         .limit(limit)
     )
     if q and q.strip():
-        like = f"%{q.strip().lower()}%"
         stmt = stmt.where(
             or_(
-                func.lower(ProductionOrder.reference).like(like),
+                search_text.contains(ProductionOrder.reference, q),
                 exists().where(
                     ProductionLine.production_order_id == ProductionOrder.id,
                     ProductionLine.item_id == InventoryItem.id,
                     or_(
-                        func.lower(InventoryItem.name).like(like),
-                        func.lower(InventoryItem.sku).like(like),
+                        search_text.contains(InventoryItem.name, q),
+                        search_text.contains(InventoryItem.sku, q),
                     ),
                 ),
             )
@@ -1428,16 +1427,15 @@ async def pos_completed_production(
         .limit(limit)
     )
     if q and q.strip():
-        like = f"%{q.strip().lower()}%"
         stmt = stmt.where(
             or_(
-                func.lower(ProductionOrder.reference).like(like),
+                search_text.contains(ProductionOrder.reference, q),
                 exists().where(
                     ProductionLine.production_order_id == ProductionOrder.id,
                     ProductionLine.item_id == InventoryItem.id,
                     or_(
-                        func.lower(InventoryItem.name).like(like),
-                        func.lower(InventoryItem.sku).like(like),
+                        search_text.contains(InventoryItem.name, q),
+                        search_text.contains(InventoryItem.sku, q),
                     ),
                 ),
             )
