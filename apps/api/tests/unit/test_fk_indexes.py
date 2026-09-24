@@ -64,6 +64,21 @@ _RAW_MIGRATION_INDEX = (
 # column now has a real index) as the thing to celebrate, not an entry to
 # re-justify.
 ALLOW_LIST: dict[tuple[str, str], str] = {
+    # Migration 287: the replenishment forecast's shadow history and settings.
+    # History is read by date (indexed) and item (indexed); the branch columns
+    # are only displayed, and branches are soft-deleted, so the ON DELETE
+    # CASCADE / SET NULL never has to scan for them in practice.
+    ("replenishment_forecasts", "branch_id"): (
+        "Shadow-history FK, read by business_date/item_id; branches are "
+        "soft-deleted so the cascade never scans."
+    ),
+    ("replenishment_forecasts", "source_branch_id"): (
+        "Shadow-history FK, read by business_date/item_id; branches are "
+        "soft-deleted so the cascade never scans."
+    ),
+    ("replenishment_settings", "production_branch_id"): (
+        "One-row settings table; nothing is ever filtered by this column."
+    ),
     # Migration 282: the till coupon selected on a counter check. Read off the
     # order it sits on, never searched by; NULL on almost every order, and the
     # referenced promotions are soft-deleted, so ON DELETE SET NULL never has

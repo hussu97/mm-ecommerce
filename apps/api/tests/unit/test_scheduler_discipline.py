@@ -68,6 +68,10 @@ _LOOP_BEATS = {
         "run_forever",
         "auto_availability",
     ),
+    "app.services.inventory.replenishment.history": (
+        "run_forever",
+        "replenishment",
+    ),
 }
 
 

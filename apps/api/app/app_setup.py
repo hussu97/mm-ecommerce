@@ -277,6 +277,17 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         spawn_tracked(auto_availability_service.run_forever(), name="auto_availability")
     )
 
+    # The replenishment forecast's shadow history. Same lifespan reasons as its
+    # neighbours — no cron here, an advisory lock so a second copy is harmless.
+    # Builds the daily demand facts, snapshots the day's forecast and scores past
+    # snapshots against what was actually transferred and produced. Writes only
+    # its own tables; nothing it does moves stock.
+    from app.services.inventory.replenishment import history as replenishment_history
+
+    background.append(
+        spawn_tracked(replenishment_history.run_forever(), name="replenishment")
+    )
+
     # The VAT ledger refresh. Same lifespan reasons as its neighbours —
     # no cron here, an advisory lock so a second copy across blue/green is
     # harmless, storefront only. Own flag so the derived VAT cache can be

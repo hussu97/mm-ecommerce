@@ -99,6 +99,7 @@ __all__ = [
     "mark_branch_dirty",
     "mark_dirty",
     "mark_items_at_enabled_branches",
+    "owners_sold_at",
     "publish",
     "release_disabled_branches",
     "run_forever",
@@ -626,6 +627,23 @@ async def _sold_at(
         for oid, (name, owners) in labels.items()
     }
     return products, options
+
+
+async def owners_sold_at(
+    db: AsyncSession, branch_id: uuid.UUID
+) -> set[tuple[str, uuid.UUID]]:
+    """Every recipe owner the branch sells on any channel, as `(kind, id)`:
+    products that draw stock through their own recipe, and every option.
+
+    The replenishment forecast reads this with `requirements_by_owner` for its
+    availability floor — the most one sale of anything sold here draws.
+    """
+    products, options = await _sold_at(db, branch_id)
+    return {
+        (_PRODUCT, product_id)
+        for product_id, (_, consumes) in products.items()
+        if consumes
+    } | {(_OPTION, option_id) for option_id in options}
 
 
 async def _option_labels(

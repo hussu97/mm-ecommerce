@@ -99,6 +99,7 @@ from .products import router as products_router
 from .profit_loss import router as profit_loss_router
 from .promo_codes import router as promo_codes_router
 from .redirects import router as redirects_router
+from .replenishment import router as replenishment_router
 from .staff import roles_router
 from .staff import router as staff_router
 from .tills import router as tills_router
@@ -266,6 +267,9 @@ api_router.include_router(
 # ─── Operations ───────────────────────────────────────────────────────────────
 api_router.include_router(
     transfer_orders_router, prefix="/inventory/transfer-orders", tags=["Inventory"]
+)
+api_router.include_router(
+    replenishment_router, prefix="/inventory/replenishment", tags=["Inventory"]
 )
 api_router.include_router(
     transfer_templates_router,

@@ -241,6 +241,11 @@ from .product import Product  # noqa: F401
 from .promo_code import DiscountTypeEnum, PromoCode  # noqa: F401
 from .reason import Reason, ReasonTypeEnum  # noqa: F401
 from .refresh_token import RefreshToken  # noqa: F401
+from .replenishment import (  # noqa: F401
+    ReplenishmentDailyFact,
+    ReplenishmentForecast,
+    ReplenishmentSettings,
+)
 from .role import (  # noqa: F401
     ALL_PERMISSIONS,
     PERMISSION_DESCRIPTIONS,

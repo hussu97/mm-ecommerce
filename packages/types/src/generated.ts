@@ -4548,6 +4548,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/replenishment/forecast": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Forecast
+         * @description Forecast transfer quantity per destination and production quantity per
+         *     produced good, for the source branch's current business day, as of now.
+         */
+        get: operations["get_forecast_api_v1_inventory_replenishment_forecast_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/replenishment/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get History
+         * @description Daily forecast snapshots against what was actually transferred and
+         *     produced, with accuracy scores over the filtered rows.
+         */
+        get: operations["get_history_api_v1_inventory_replenishment_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/replenishment/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_api_v1_inventory_replenishment_settings_get"];
+        /** Update Settings */
+        put: operations["update_settings_api_v1_inventory_replenishment_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/report-templates": {
         parameters: {
             query?: never;
@@ -14497,6 +14557,235 @@ export interface components {
             recipe_version_ids: string[];
         };
         /**
+         * ForecastAccuracy
+         * @description Scores over the evaluated rows in the filter.
+         */
+        ForecastAccuracy: {
+            /** Baseline Wape */
+            baseline_wape: number | null;
+            /** Bias */
+            bias: number | null;
+            /** Est Lost Sales */
+            est_lost_sales: number;
+            /** Forecast Less And Surplus */
+            forecast_less_and_surplus: number;
+            /** Forecast More And Ran Out */
+            forecast_more_and_ran_out: number;
+            /** Rows */
+            rows: number;
+            /** Stockout Rows */
+            stockout_rows: number;
+            /** Wape */
+            wape: number | null;
+        };
+        /**
+         * ForecastBranchLine
+         * @description One branch's side of an item: what a destination should be sent
+         *     (`kind='transfer'`), or what the source keeps from the morning pool
+         *     (`kind='retain'`).
+         */
+        ForecastBranchLine: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Branch Name */
+            branch_name: string;
+            /** Day Demand Mean */
+            day_demand_mean: number;
+            /** Floor */
+            floor: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "transfer" | "retain";
+            /** Need */
+            need: number;
+            /** On Hand */
+            on_hand: number;
+            /** Qty */
+            qty: number;
+            /** Shortfall */
+            shortfall: number;
+            /** Target */
+            target: number;
+            /** Tier */
+            tier: number | null;
+            /** Window Demand Mean */
+            window_demand_mean: number;
+            /** Window Demand Quantile */
+            window_demand_quantile: number;
+            /** Window End */
+            window_end: string | null;
+            /** Window Start */
+            window_start: string | null;
+        };
+        /** ForecastHistoryResponse */
+        ForecastHistoryResponse: {
+            production: components["schemas"]["ForecastAccuracy"];
+            /** Rows */
+            rows: components["schemas"]["ForecastHistoryRow"][];
+            transfer: components["schemas"]["ForecastAccuracy"];
+        };
+        /** ForecastHistoryRow */
+        ForecastHistoryRow: {
+            /** Actual Planned Qty */
+            actual_planned_qty: number | null;
+            /** Actual Produced Qty */
+            actual_produced_qty: number | null;
+            /** Actual Requested Qty */
+            actual_requested_qty: number | null;
+            /** Actual Sent Qty */
+            actual_sent_qty: number | null;
+            /** Algo Version */
+            algo_version: string;
+            /** Allocation Tier */
+            allocation_tier: number | null;
+            /** Baseline Demand */
+            baseline_demand: number | null;
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /**
+             * Branch Name
+             * @default
+             */
+            branch_name: string;
+            /**
+             * Business Date
+             * Format: date
+             */
+            business_date: string;
+            /** Closing On Hand */
+            closing_on_hand: number | null;
+            /** Day Demand Mean */
+            day_demand_mean: number;
+            /** Est Demand */
+            est_demand: number | null;
+            /** Evaluated At */
+            evaluated_at: string | null;
+            /** Floor Qty */
+            floor_qty: number;
+            /** Forecast Qty */
+            forecast_qty: number;
+            /** In Stock Share */
+            in_stock_share: number | null;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /**
+             * Item Name
+             * @default
+             */
+            item_name: string;
+            /** Kind */
+            kind: string;
+            /** Mode */
+            mode: string;
+            /** On Hand At Snapshot */
+            on_hand_at_snapshot: number;
+            /** Pool At Snapshot */
+            pool_at_snapshot: number;
+            /** Realized Sales */
+            realized_sales: number | null;
+            /** Shortfall Qty */
+            shortfall_qty: number;
+            /**
+             * Snapshot At
+             * Format: date-time
+             */
+            snapshot_at: string;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+            /** Stockout Minutes */
+            stockout_minutes: number | null;
+            /** Window Demand Mean */
+            window_demand_mean: number;
+            /** Window Demand Quantile */
+            window_demand_quantile: number;
+        };
+        /** ForecastItem */
+        ForecastItem: {
+            /** Explain */
+            explain: {
+                [key: string]: unknown;
+            };
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Item Name */
+            item_name: string;
+            /** Lines */
+            lines: components["schemas"]["ForecastBranchLine"][];
+            production: components["schemas"]["ForecastProduction"] | null;
+            /** Source On Hand */
+            source_on_hand: number;
+            /** Storage Unit */
+            storage_unit: string;
+        };
+        /** ForecastProduction */
+        ForecastProduction: {
+            /** Batches */
+            batches: number | null;
+            /** Capped By Shelf Life */
+            capped_by_shelf_life: boolean;
+            /** Floors */
+            floors: number;
+            /** Protection Demand Mean */
+            protection_demand_mean: number;
+            /** Protection Demand Quantile */
+            protection_demand_quantile: number;
+            /** Raw Units */
+            raw_units: number;
+            /** Units */
+            units: number;
+            /** Usable Stock */
+            usable_stock: number;
+            /** Window End */
+            window_end: string | null;
+            /** Window Start */
+            window_start: string | null;
+        };
+        /** ForecastResponse */
+        ForecastResponse: {
+            /** Algo Version */
+            algo_version: string;
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Bucket Hours */
+            bucket_hours: number;
+            /**
+             * Business Date
+             * Format: date
+             */
+            business_date: string;
+            /** History Days */
+            history_days: number;
+            /** Items */
+            items: components["schemas"]["ForecastItem"][];
+            /** Service Level */
+            service_level: number;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+        };
+        /**
          * FulfilmentOptionsResponse
          * @description Where this order may go, and what stands in the way. **Admin only.**
          */
@@ -20646,6 +20935,54 @@ export interface components {
         RefreshRequest: {
             /** Refresh Token */
             refresh_token?: string | null;
+        };
+        /** ReplenishmentSettingsResponse */
+        ReplenishmentSettingsResponse: {
+            /** Bucket Hours */
+            bucket_hours: number;
+            /** Half Life Days */
+            half_life_days: number;
+            /** Next Day Category Ids */
+            next_day_category_ids: string[];
+            /** Production Branch Id */
+            production_branch_id: string | null;
+            /** Production Branch Weight */
+            production_branch_weight: number;
+            /**
+             * Same Day Ready Time
+             * Format: time
+             */
+            same_day_ready_time: string;
+            /** Service Level */
+            service_level: number;
+            /**
+             * Snapshot Time
+             * Format: time
+             */
+            snapshot_time: string;
+            /** Window Days */
+            window_days: number;
+        };
+        /** ReplenishmentSettingsUpdate */
+        ReplenishmentSettingsUpdate: {
+            /** Bucket Hours */
+            bucket_hours?: (1 | 2 | 3 | 4 | 6) | null;
+            /** Half Life Days */
+            half_life_days?: number | null;
+            /** Next Day Category Ids */
+            next_day_category_ids?: string[] | null;
+            /** Production Branch Id */
+            production_branch_id?: string | null;
+            /** Production Branch Weight */
+            production_branch_weight?: number | null;
+            /** Same Day Ready Time */
+            same_day_ready_time?: string | null;
+            /** Service Level */
+            service_level?: number | null;
+            /** Snapshot Time */
+            snapshot_time?: string | null;
+            /** Window Days */
+            window_days?: number | null;
         };
         /** ReportActionRequest */
         ReportActionRequest: {
@@ -32282,6 +32619,127 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecipeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_forecast_api_v1_inventory_replenishment_forecast_get: {
+        parameters: {
+            query?: {
+                source_branch_id?: string | null;
+                bucket_hours?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForecastResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_history_api_v1_inventory_replenishment_history_get: {
+        parameters: {
+            query?: {
+                date_from?: string | null;
+                date_to?: string | null;
+                branch_id?: string | null;
+                item_id?: string | null;
+                kind?: string | null;
+                mode?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForecastHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_api_v1_inventory_replenishment_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplenishmentSettingsResponse"];
+                };
+            };
+        };
+    };
+    update_settings_api_v1_inventory_replenishment_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplenishmentSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplenishmentSettingsResponse"];
                 };
             };
             /** @description Validation Error */

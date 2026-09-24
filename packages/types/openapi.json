@@ -14629,6 +14629,649 @@
         "title": "ExpandedInventoryLine",
         "type": "object"
       },
+      "ForecastAccuracy": {
+        "description": "Scores over the evaluated rows in the filter.",
+        "properties": {
+          "baseline_wape": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Wape"
+          },
+          "bias": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bias"
+          },
+          "est_lost_sales": {
+            "title": "Est Lost Sales",
+            "type": "number"
+          },
+          "forecast_less_and_surplus": {
+            "title": "Forecast Less And Surplus",
+            "type": "integer"
+          },
+          "forecast_more_and_ran_out": {
+            "title": "Forecast More And Ran Out",
+            "type": "integer"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "stockout_rows": {
+            "title": "Stockout Rows",
+            "type": "integer"
+          },
+          "wape": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wape"
+          }
+        },
+        "required": [
+          "rows",
+          "wape",
+          "bias",
+          "baseline_wape",
+          "stockout_rows",
+          "forecast_more_and_ran_out",
+          "forecast_less_and_surplus",
+          "est_lost_sales"
+        ],
+        "title": "ForecastAccuracy",
+        "type": "object"
+      },
+      "ForecastBranchLine": {
+        "description": "One branch's side of an item: what a destination should be sent\n(`kind='transfer'`), or what the source keeps from the morning pool\n(`kind='retain'`).",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "title": "Branch Name",
+            "type": "string"
+          },
+          "day_demand_mean": {
+            "title": "Day Demand Mean",
+            "type": "number"
+          },
+          "floor": {
+            "title": "Floor",
+            "type": "number"
+          },
+          "kind": {
+            "enum": [
+              "transfer",
+              "retain"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "need": {
+            "title": "Need",
+            "type": "integer"
+          },
+          "on_hand": {
+            "title": "On Hand",
+            "type": "number"
+          },
+          "qty": {
+            "title": "Qty",
+            "type": "integer"
+          },
+          "shortfall": {
+            "title": "Shortfall",
+            "type": "integer"
+          },
+          "target": {
+            "title": "Target",
+            "type": "integer"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          },
+          "window_demand_mean": {
+            "title": "Window Demand Mean",
+            "type": "number"
+          },
+          "window_demand_quantile": {
+            "title": "Window Demand Quantile",
+            "type": "integer"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          }
+        },
+        "required": [
+          "branch_id",
+          "branch_name",
+          "kind",
+          "qty",
+          "day_demand_mean",
+          "window_start",
+          "window_end",
+          "window_demand_mean",
+          "window_demand_quantile",
+          "floor",
+          "on_hand",
+          "target",
+          "need",
+          "shortfall",
+          "tier"
+        ],
+        "title": "ForecastBranchLine",
+        "type": "object"
+      },
+      "ForecastHistoryResponse": {
+        "properties": {
+          "production": {
+            "$ref": "#/components/schemas/ForecastAccuracy"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ForecastHistoryRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "transfer": {
+            "$ref": "#/components/schemas/ForecastAccuracy"
+          }
+        },
+        "required": [
+          "rows",
+          "transfer",
+          "production"
+        ],
+        "title": "ForecastHistoryResponse",
+        "type": "object"
+      },
+      "ForecastHistoryRow": {
+        "properties": {
+          "actual_planned_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Planned Qty"
+          },
+          "actual_produced_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Produced Qty"
+          },
+          "actual_requested_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Requested Qty"
+          },
+          "actual_sent_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Sent Qty"
+          },
+          "algo_version": {
+            "title": "Algo Version",
+            "type": "string"
+          },
+          "allocation_tier": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocation Tier"
+          },
+          "baseline_demand": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Demand"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "default": "",
+            "title": "Branch Name",
+            "type": "string"
+          },
+          "business_date": {
+            "format": "date",
+            "title": "Business Date",
+            "type": "string"
+          },
+          "closing_on_hand": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closing On Hand"
+          },
+          "day_demand_mean": {
+            "title": "Day Demand Mean",
+            "type": "number"
+          },
+          "est_demand": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Est Demand"
+          },
+          "evaluated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluated At"
+          },
+          "floor_qty": {
+            "title": "Floor Qty",
+            "type": "number"
+          },
+          "forecast_qty": {
+            "title": "Forecast Qty",
+            "type": "number"
+          },
+          "in_stock_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Stock Share"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "default": "",
+            "title": "Item Name",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "on_hand_at_snapshot": {
+            "title": "On Hand At Snapshot",
+            "type": "number"
+          },
+          "pool_at_snapshot": {
+            "title": "Pool At Snapshot",
+            "type": "number"
+          },
+          "realized_sales": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Sales"
+          },
+          "shortfall_qty": {
+            "title": "Shortfall Qty",
+            "type": "number"
+          },
+          "snapshot_at": {
+            "format": "date-time",
+            "title": "Snapshot At",
+            "type": "string"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          },
+          "stockout_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stockout Minutes"
+          },
+          "window_demand_mean": {
+            "title": "Window Demand Mean",
+            "type": "number"
+          },
+          "window_demand_quantile": {
+            "title": "Window Demand Quantile",
+            "type": "number"
+          }
+        },
+        "required": [
+          "business_date",
+          "source_branch_id",
+          "branch_id",
+          "item_id",
+          "kind",
+          "mode",
+          "snapshot_at",
+          "algo_version",
+          "forecast_qty",
+          "day_demand_mean",
+          "window_demand_mean",
+          "window_demand_quantile",
+          "floor_qty",
+          "on_hand_at_snapshot",
+          "pool_at_snapshot",
+          "shortfall_qty",
+          "allocation_tier",
+          "actual_requested_qty",
+          "actual_sent_qty",
+          "actual_planned_qty",
+          "actual_produced_qty",
+          "realized_sales",
+          "est_demand",
+          "in_stock_share",
+          "stockout_minutes",
+          "closing_on_hand",
+          "baseline_demand",
+          "evaluated_at"
+        ],
+        "title": "ForecastHistoryRow",
+        "type": "object"
+      },
+      "ForecastItem": {
+        "properties": {
+          "explain": {
+            "additionalProperties": true,
+            "title": "Explain",
+            "type": "object"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "title": "Item Name",
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ForecastBranchLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "production": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ForecastProduction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_on_hand": {
+            "title": "Source On Hand",
+            "type": "number"
+          },
+          "storage_unit": {
+            "title": "Storage Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "item_name",
+          "storage_unit",
+          "source_on_hand",
+          "lines",
+          "production",
+          "explain"
+        ],
+        "title": "ForecastItem",
+        "type": "object"
+      },
+      "ForecastProduction": {
+        "properties": {
+          "batches": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batches"
+          },
+          "capped_by_shelf_life": {
+            "title": "Capped By Shelf Life",
+            "type": "boolean"
+          },
+          "floors": {
+            "title": "Floors",
+            "type": "number"
+          },
+          "protection_demand_mean": {
+            "title": "Protection Demand Mean",
+            "type": "number"
+          },
+          "protection_demand_quantile": {
+            "title": "Protection Demand Quantile",
+            "type": "integer"
+          },
+          "raw_units": {
+            "title": "Raw Units",
+            "type": "number"
+          },
+          "units": {
+            "title": "Units",
+            "type": "number"
+          },
+          "usable_stock": {
+            "title": "Usable Stock",
+            "type": "number"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          }
+        },
+        "required": [
+          "units",
+          "batches",
+          "raw_units",
+          "protection_demand_mean",
+          "protection_demand_quantile",
+          "floors",
+          "usable_stock",
+          "capped_by_shelf_life",
+          "window_start",
+          "window_end"
+        ],
+        "title": "ForecastProduction",
+        "type": "object"
+      },
+      "ForecastResponse": {
+        "properties": {
+          "algo_version": {
+            "title": "Algo Version",
+            "type": "string"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "bucket_hours": {
+            "title": "Bucket Hours",
+            "type": "integer"
+          },
+          "business_date": {
+            "format": "date",
+            "title": "Business Date",
+            "type": "string"
+          },
+          "history_days": {
+            "title": "History Days",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ForecastItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "service_level": {
+            "title": "Service Level",
+            "type": "number"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_date",
+          "as_of",
+          "source_branch_id",
+          "bucket_hours",
+          "service_level",
+          "algo_version",
+          "history_days",
+          "items"
+        ],
+        "title": "ForecastResponse",
+        "type": "object"
+      },
       "FulfilmentOptionsResponse": {
         "description": "Where this order may go, and what stands in the way. **Admin only.**",
         "properties": {
@@ -32742,6 +33385,200 @@
           }
         },
         "title": "RefreshRequest",
+        "type": "object"
+      },
+      "ReplenishmentSettingsResponse": {
+        "properties": {
+          "bucket_hours": {
+            "title": "Bucket Hours",
+            "type": "integer"
+          },
+          "half_life_days": {
+            "title": "Half Life Days",
+            "type": "integer"
+          },
+          "next_day_category_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Next Day Category Ids",
+            "type": "array"
+          },
+          "production_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Branch Id"
+          },
+          "production_branch_weight": {
+            "title": "Production Branch Weight",
+            "type": "number"
+          },
+          "same_day_ready_time": {
+            "format": "time",
+            "title": "Same Day Ready Time",
+            "type": "string"
+          },
+          "service_level": {
+            "title": "Service Level",
+            "type": "number"
+          },
+          "snapshot_time": {
+            "format": "time",
+            "title": "Snapshot Time",
+            "type": "string"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket_hours",
+          "service_level",
+          "production_branch_weight",
+          "production_branch_id",
+          "same_day_ready_time",
+          "next_day_category_ids",
+          "snapshot_time",
+          "half_life_days",
+          "window_days"
+        ],
+        "title": "ReplenishmentSettingsResponse",
+        "type": "object"
+      },
+      "ReplenishmentSettingsUpdate": {
+        "properties": {
+          "bucket_hours": {
+            "anyOf": [
+              {
+                "enum": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  6
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bucket Hours"
+          },
+          "half_life_days": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Half Life Days"
+          },
+          "next_day_category_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Day Category Ids"
+          },
+          "production_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Branch Id"
+          },
+          "production_branch_weight": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Branch Weight"
+          },
+          "same_day_ready_time": {
+            "anyOf": [
+              {
+                "format": "time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Same Day Ready Time"
+          },
+          "service_level": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 1.0,
+                "exclusiveMinimum": 0.5,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Level"
+          },
+          "snapshot_time": {
+            "anyOf": [
+              {
+                "format": "time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Time"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 14.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Days"
+          }
+        },
+        "title": "ReplenishmentSettingsUpdate",
         "type": "object"
       },
       "ReportActionRequest": {
@@ -56853,6 +57690,291 @@
           }
         ],
         "summary": "Set Product Recipe",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/replenishment/forecast": {
+      "get": {
+        "description": "Forecast transfer quantity per destination and production quantity per\nproduced good, for the source branch's current business day, as of now.",
+        "operationId": "get_forecast_api_v1_inventory_replenishment_forecast_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source_branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bucket_hours",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 6,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bucket Hours"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Forecast",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/replenishment/history": {
+      "get": {
+        "description": "Daily forecast snapshots against what was actually transferred and\nproduced, with accuracy scores over the filtered rows.",
+        "operationId": "get_history_api_v1_inventory_replenishment_history_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "item_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Item Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(transfer|retain|production)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(scheduled|backtest)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get History",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/replenishment/settings": {
+      "get": {
+        "operationId": "get_settings_api_v1_inventory_replenishment_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplenishmentSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Settings",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "put": {
+        "operationId": "update_settings_api_v1_inventory_replenishment_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplenishmentSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplenishmentSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Settings",
         "tags": [
           "Inventory"
         ]

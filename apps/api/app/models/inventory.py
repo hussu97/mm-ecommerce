@@ -260,6 +260,11 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
     par_level: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
+    #: Days a unit stays sellable once made. Caps the replenishment forecast's
+    #: production so it never plans more than the item can sell before it expires.
+    shelf_life_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="14"
+    )
 
     # There is no per-item cost column: cost is FIFO, held in the item's cost
     # layers and summarised on ``InventoryLevel.average_cost`` per warehouse. The
