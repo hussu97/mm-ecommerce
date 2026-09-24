@@ -8482,6 +8482,18 @@
             "title": "Cost Is Provisional",
             "type": "boolean"
           },
+          "cost_source_purchase_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Source Purchase Order Id"
+          },
           "cost_source_reference": {
             "anyOf": [
               {
@@ -17023,6 +17035,18 @@
             ],
             "title": "Business Date"
           },
+          "cost_source_purchase_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Source Purchase Order Id"
+          },
           "cost_source_reference": {
             "anyOf": [
               {
@@ -17054,6 +17078,29 @@
               }
             ],
             "title": "Posted At"
+          },
+          "purchase_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchase Order Id"
+          },
+          "purchase_order_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchase Order Reference"
           },
           "quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",

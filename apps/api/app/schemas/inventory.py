@@ -675,6 +675,8 @@ class CostLayerResponse(ORMModel):
     #: Where the *cost* came from when it is not this layer's own document —
     #: e.g. a count overage priced by the PO that followed it.
     cost_source_reference: str | None = None
+    #: The purchase order behind ``cost_source_reference``, when it is one.
+    cost_source_purchase_order_id: UUID | None = None
     #: The layer the next issue will draw from.
     next_out: bool = False
 
@@ -713,7 +715,12 @@ class ItemCostHistoryRow(BaseModel):
     booked_total_cost: Decimal | None = None
     is_provisional: bool
     superseded: bool
+    #: The purchase order this line was received against, when it was.
+    purchase_order_id: UUID | None = None
+    purchase_order_reference: str | None = None
     cost_source_reference: str | None = None
+    #: The purchase order behind ``cost_source_reference``, when it is one.
+    cost_source_purchase_order_id: UUID | None = None
     running_quantity: Decimal
     running_value: Decimal
     running_average_cost: Decimal | None
