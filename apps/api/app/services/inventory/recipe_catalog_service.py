@@ -479,6 +479,7 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
             await db.execute(
                 select(
                     RecipeLine.recipe_version_id,
+                    RecipeLine.item_id,
                     InventoryItem.name,
                     RecipeLine.quantity,
                     InventoryItem.ingredient_unit,
@@ -495,9 +496,10 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                 )
             )
         ).all()
-        for vid, name, quantity, unit, yield_pct in line_rows:
+        for vid, item_id, name, quantity, unit, yield_pct in line_rows:
             lines_by_version.setdefault(vid, []).append(
                 {
+                    "item_id": item_id,
                     "name": name,
                     "quantity": quantity,
                     "unit": unit,

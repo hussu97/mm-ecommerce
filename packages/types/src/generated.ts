@@ -18512,6 +18512,11 @@ export interface components {
          * @description One ingredient of a POS recipe card, as the shop floor reads it.
          */
         PosRecipeLine: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
             /** Name */
             name: string;
             /** Quantity */
