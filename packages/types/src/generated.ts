@@ -14452,6 +14452,8 @@ export interface components {
             order_number?: string | null;
             /** Recipient */
             recipient: string;
+            /** Reference */
+            reference?: string | null;
             /** Resend Id */
             resend_id?: string | null;
             /**
@@ -29857,7 +29859,7 @@ export interface operations {
                 template?: string | null;
                 /** @description Search by recipient email */
                 recipient?: string | null;
-                /** @description Search by order number */
+                /** @description Search by order number or reference */
                 order_number?: string | null;
                 /** @description Filter logs from this datetime (UTC) */
                 date_from?: string | null;

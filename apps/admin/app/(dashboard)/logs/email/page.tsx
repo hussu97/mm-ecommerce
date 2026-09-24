@@ -159,7 +159,7 @@ export default function EmailLogsPage() {
         </div>
         <div className="w-36">
           <Input
-            placeholder="Search order #…"
+            placeholder="Search order # or ref…"
             value={orderSearch}
             onChange={e => setOrderSearch(e.target.value)}
           />
@@ -256,7 +256,7 @@ export default function EmailLogsPage() {
               render: log => TEMPLATE_LABELS[log.template] ?? log.template,
             },
             {
-              header: 'Order #',
+              header: 'Order / Ref',
               render: log =>
                 log.order_number ? (
                   <Link
@@ -265,6 +265,9 @@ export default function EmailLogsPage() {
                   >
                     {log.order_number}
                   </Link>
+                ) : log.reference ? (
+                  // An inventory report, transfer or PO — not an order, so no link.
+                  <span className="text-xs font-body text-gray-600 break-all">{log.reference}</span>
                 ) : (
                   <span className="text-gray-300">—</span>
                 ),

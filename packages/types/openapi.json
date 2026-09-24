@@ -14510,6 +14510,17 @@
             "title": "Recipient",
             "type": "string"
           },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
           "resend_id": {
             "anyOf": [
               {
@@ -52431,7 +52442,7 @@
             }
           },
           {
-            "description": "Search by order number",
+            "description": "Search by order number or reference",
             "in": "query",
             "name": "order_number",
             "required": false,
@@ -52444,7 +52455,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Search by order number",
+              "description": "Search by order number or reference",
               "title": "Order Number"
             }
           },
