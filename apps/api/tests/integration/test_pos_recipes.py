@@ -214,6 +214,8 @@ async def test_card_carries_version_activator_and_lines(engine, seeded):
     assert card["activated_at"] is not None
     assert card["line_count"] == 1
     (line,) = card["ingredients"]
+    # The line names its item, so the till can nest a sub-recipe under it.
+    assert line["item_id"] == seeded["ingredient"]
     assert line["name"] == f"{MARKER} Flour"
     assert line["quantity"] == Decimal("2")
     assert line["unit"] == "g"

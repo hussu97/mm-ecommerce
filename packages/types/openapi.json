@@ -26495,6 +26495,11 @@
       "PosRecipeLine": {
         "description": "One ingredient of a POS recipe card, as the shop floor reads it.",
         "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -26515,6 +26520,7 @@
           }
         },
         "required": [
+          "item_id",
           "name",
           "quantity",
           "unit",

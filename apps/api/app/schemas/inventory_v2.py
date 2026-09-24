@@ -523,6 +523,10 @@ class RecipeReadinessResponse(BaseModel):
 class PosRecipeLine(BaseModel):
     """One ingredient of a POS recipe card, as the shop floor reads it."""
 
+    #: The ingredient's inventory item. When that item is itself made (it has
+    #: a card of its own), the till nests that card under this line — a
+    #: sub-recipe, recursively, to any depth.
+    item_id: UUID
     name: str
     quantity: Decimal
     unit: str
