@@ -7,7 +7,14 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.services.inventory.report_columns import columns_for
 
@@ -50,6 +57,7 @@ class RecipeDraftRequest(BaseModel):
 class VersionedRecipeLineResponse(ORMModel):
     id: UUID
     item_id: UUID
+    item_name: str
     quantity: Decimal
     ingredient_unit: str
     yield_percentage: Decimal
@@ -74,6 +82,17 @@ class RecipeVersionResponse(ORMModel):
     created_at: datetime
     updated_at: datetime
     lines: list[VersionedRecipeLineResponse] = []
+
+    @field_validator("lines", mode="after")
+    @classmethod
+    def _by_ingredient_name(
+        cls, lines: list[VersionedRecipeLineResponse]
+    ) -> list[VersionedRecipeLineResponse]:
+        # Recipe lines are always listed by ingredient name (display_order breaks
+        # a tie), so the editor and every glance at a recipe read the same way.
+        return sorted(
+            lines, key=lambda line: (line.item_name.casefold(), line.display_order)
+        )
 
 
 class VersionedRecipeResponse(ORMModel):

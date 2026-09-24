@@ -1051,7 +1051,10 @@ async def get_order_inventory_consumption(
                         else None,
                         "recipe_path": line.recipe_path or [],
                     }
-                    for line in row.items
+                    for line in sorted(
+                        row.items,
+                        key=lambda line: inventory_items[line.item_id].name.casefold(),
+                    )
                 ],
             }
             for row in transactions

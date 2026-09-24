@@ -33,14 +33,11 @@ const RECIPE_FILTER_OPTIONS = [
   { value: 'without', label: 'No recipe' },
 ];
 
-/** Read-only glance at a recipe's lines: each inventory item with its quantity. */
+/** Read-only glance at a recipe's lines: every inventory item with its quantity. */
 function IngredientSummary({ row }: { row: RecipeOwnerRow }) {
   if (row.ingredients.length === 0) {
     return <span className="text-gray-300">—</span>;
   }
-  const MAX = 6;
-  const shown = row.ingredients.slice(0, MAX);
-  const extra = row.ingredients.length - shown.length;
   const basisLabel =
     row.basis === 'batch'
       ? `Per batch of ${formatQuantity(row.batch_yield ?? '0')}`
@@ -50,7 +47,7 @@ function IngredientSummary({ row }: { row: RecipeOwnerRow }) {
       <div className="mb-1 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">
         {basisLabel}
       </div>
-      {shown.map((ing, i) => (
+      {row.ingredients.map((ing, i) => (
         <div key={i}>
           <span className="tabular-nums text-gray-800">
             {formatQuantity(ing.quantity)} {ing.unit}
@@ -58,7 +55,6 @@ function IngredientSummary({ row }: { row: RecipeOwnerRow }) {
           {ing.name}
         </div>
       ))}
-      {extra > 0 && <div className="text-gray-400">+{extra} more</div>}
     </div>
   );
 }

@@ -256,6 +256,8 @@ async def list_recipe_owners(
                 .order_by(
                     RecipeVersion.recipe_id,
                     RecipeVersion.status,
+                    # Lines are listed by ingredient name everywhere.
+                    func.lower(InventoryItem.name),
                     RecipeLine.display_order,
                 )
             )
@@ -485,7 +487,12 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                 .select_from(RecipeLine)
                 .join(InventoryItem, InventoryItem.id == RecipeLine.item_id)
                 .where(RecipeLine.recipe_version_id.in_(version_ids))
-                .order_by(RecipeLine.recipe_version_id, RecipeLine.display_order)
+                .order_by(
+                    RecipeLine.recipe_version_id,
+                    # The kitchen reads (and prints) a card by ingredient name.
+                    func.lower(InventoryItem.name),
+                    RecipeLine.display_order,
+                )
             )
         ).all()
         for vid, name, quantity, unit, yield_pct in line_rows:
