@@ -424,3 +424,12 @@ class TestReceivingGoesThroughTheSameMap:
                     db, purchase_order=order, user=_user(), received={}
                 )
         assert order.status == PO.APPROVED.value
+
+
+def test_a_receive_request_may_carry_no_stock_lines():
+    """A misc-only order sends no stock lines; the service, not the schema,
+    decides whether anything was received."""
+    from app.schemas.inventory import ReceivePurchaseOrderRequest
+
+    assert ReceivePurchaseOrderRequest.model_validate({"lines": []}).lines == []
+    assert ReceivePurchaseOrderRequest.model_validate({}).lines == []

@@ -20160,7 +20160,7 @@ export interface components {
         /** ReceivePurchaseOrderRequest */
         ReceivePurchaseOrderRequest: {
             /** Lines */
-            lines: components["schemas"]["ReceiveLine"][];
+            lines?: components["schemas"]["ReceiveLine"][];
         };
         /**
          * ReceiverCreate

@@ -746,7 +746,9 @@ class ReceiveLine(BaseModel):
 
 
 class ReceivePurchaseOrderRequest(BaseModel):
-    lines: list[ReceiveLine] = Field(min_length=1)
+    #: What arrived per stock line. Empty for an order of only misc lines —
+    #: whether anything was received is the service's call, not the schema's.
+    lines: list[ReceiveLine] = Field(default_factory=list)
 
 
 class VoidPurchaseOrderRequest(BaseModel):

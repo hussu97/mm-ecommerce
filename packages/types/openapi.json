@@ -31500,14 +31500,10 @@
             "items": {
               "$ref": "#/components/schemas/ReceiveLine"
             },
-            "minItems": 1,
             "title": "Lines",
             "type": "array"
           }
         },
-        "required": [
-          "lines"
-        ],
         "title": "ReceivePurchaseOrderRequest",
         "type": "object"
       },
