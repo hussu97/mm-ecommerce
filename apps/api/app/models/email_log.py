@@ -33,9 +33,14 @@ class EmailLog(Base, UUIDMixin):
     template: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     recipient: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject: Mapped[str] = mapped_column(String(500), nullable=False)
+    # 64 since migration 286: a local-first counter order number runs to 40.
     order_number: Mapped[str | None] = mapped_column(
-        String(30), nullable=True, index=True
+        String(64), nullable=True, index=True
     )
+    #: What a non-order email is about — an inventory report id, a transfer or
+    #: purchase-order reference. Kept out of `order_number`, which the admin
+    #: links to `/orders/{n}`.
+    reference: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     resend_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

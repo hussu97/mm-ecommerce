@@ -721,8 +721,14 @@ async def _log(
     subject: str,
     result: dict,
     order_number: str | None = None,
+    *,
+    reference: str | None = None,
 ) -> None:
-    """Persist an EmailLog row. Swallows all errors so logging never breaks email flow."""
+    """Persist an EmailLog row. Swallows all errors so logging never breaks email flow.
+
+    `order_number` is for an order's emails only — the admin links it to the
+    order. Anything else an email is about (an inventory report, a transfer, a
+    purchase order) goes in `reference`."""
     try:
         async with AsyncSessionFactory() as db:
             db.add(
@@ -731,6 +737,7 @@ async def _log(
                     recipient=recipient,
                     subject=subject,
                     order_number=order_number,
+                    reference=reference,
                     status=result["status"],
                     resend_id=result.get("resend_id"),
                     error=result.get("error"),
@@ -983,7 +990,7 @@ async def send_inventory_report_submitted(
             recipient,
             subject,
             result,
-            report_id,
+            reference=report_id,
         )
 
 
@@ -1089,7 +1096,7 @@ async def send_transfer_sending_variance(
             recipient,
             subject,
             result,
-            transfer_reference,
+            reference=transfer_reference,
         )
 
 
@@ -1201,7 +1208,7 @@ async def send_purchase_order_receiving_variance(
             recipient,
             subject,
             result,
-            purchase_order_reference,
+            reference=purchase_order_reference,
         )
 
 

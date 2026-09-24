@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import search as search_text
@@ -32,6 +32,9 @@ class EmailLogItem(BaseModel):
     recipient: str
     subject: str
     order_number: str | None = None
+    #: A non-order email's subject — an inventory report id, a transfer or
+    #: purchase-order reference. Not a link target.
+    reference: str | None = None
     status: str
     resend_id: str | None = None
     error: str | None = None
@@ -55,7 +58,9 @@ async def list_email_logs(
     ),
     template: str | None = Query(None, description="Filter by template name"),
     recipient: str | None = Query(None, description="Search by recipient email"),
-    order_number: str | None = Query(None, description="Search by order number"),
+    order_number: str | None = Query(
+        None, description="Search by order number or reference"
+    ),
     date_from: datetime | None = Query(
         None, description="Filter logs from this datetime (UTC)"
     ),
@@ -77,7 +82,12 @@ async def list_email_logs(
     if recipient:
         stmt = stmt.where(search_text.contains(EmailLog.recipient, recipient))
     if order_number:
-        stmt = stmt.where(search_text.contains(EmailLog.order_number, order_number))
+        stmt = stmt.where(
+            or_(
+                search_text.contains(EmailLog.order_number, order_number),
+                search_text.contains(EmailLog.reference, order_number),
+            )
+        )
     if date_from:
         stmt = stmt.where(EmailLog.sent_at >= date_from)
     if date_to:

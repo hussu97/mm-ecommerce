@@ -827,6 +827,8 @@ export interface EmailLog {
   recipient: string;
   subject: string;
   order_number: string | null;
+  /** A non-order email's subject (inventory report, transfer, PO). Not a link. */
+  reference: string | null;
   status: EmailLogStatus;
   resend_id: string | null;
   error: string | null;
