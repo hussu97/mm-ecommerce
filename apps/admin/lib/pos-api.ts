@@ -302,7 +302,7 @@ export const inventoryApi = {
   receivePurchaseOrder: (
     id: string,
     lines: Array<{ purchase_order_item_id: string; quantity: number; variance_reason?: string | null }>,
-  ) => api.post<InventoryTransaction>(`/inventory/purchase-orders/${id}/receive`, { lines }),
+  ) => api.post<InventoryTransaction | null>(`/inventory/purchase-orders/${id}/receive`, { lines }),
   uploadPurchaseOrderInvoice: (id: string, file: File) =>
     request<PurchaseOrder>(`/inventory/purchase-orders/${id}/invoice`, {
       method: 'POST',
