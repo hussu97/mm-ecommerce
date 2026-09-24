@@ -27,6 +27,7 @@ from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError
 from app.models.inventory import (
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseOrderMiscItem,
 )
 from app.models.inventory import (
     PurchaseOrderStatusEnum as PO,
@@ -384,3 +385,51 @@ class TestReceivingGoesThroughTheSameMap:
         assert order.status == PO.CLOSED.value
         assert line.received_quantity == Decimal("10")
         assert line.variance_reason is None
+
+    async def test_an_order_of_only_misc_lines_closes_without_moving_stock(self):
+        """Bakers Village invoice 30183 (PO-004151): piping bags and cake boxes
+        are misc lines — never inventory — so receiving the order closes it with
+        no stock receipt instead of refusing it as "nothing received"."""
+        order = _po(PO.APPROVED)
+        order.items = []
+        order.misc_items = [
+            PurchaseOrderMiscItem(
+                name="Liqua Gel, Cake Box, Piping bags",
+                quantity=Decimal("16"),
+                storage_unit="Pcs",
+                entered_total=Decimal("228.38"),
+            )
+        ]
+
+        db, patches = self._receive_env(order)
+        with patches[0], patches[1], patches[2] as post:
+            result = await inventory_service.receive_purchase_order(
+                db, purchase_order=order, user=_user(), received={}
+            )
+
+        assert result is None
+        assert order.status == PO.CLOSED.value
+        post.assert_not_awaited()
+        db.add.assert_not_called()
+
+    async def test_an_order_with_nothing_arrived_and_no_misc_lines_is_refused(self):
+        order = _po(PO.APPROVED)
+        order.items = []
+        order.misc_items = []
+
+        db, patches = self._receive_env(order)
+        with patches[0], patches[1], patches[2]:
+            with pytest.raises(BadRequestError, match="Nothing was received"):
+                await inventory_service.receive_purchase_order(
+                    db, purchase_order=order, user=_user(), received={}
+                )
+        assert order.status == PO.APPROVED.value
+
+
+def test_a_receive_request_may_carry_no_stock_lines():
+    """A misc-only order sends no stock lines; the service, not the schema,
+    decides whether anything was received."""
+    from app.schemas.inventory import ReceivePurchaseOrderRequest
+
+    assert ReceivePurchaseOrderRequest.model_validate({"lines": []}).lines == []
+    assert ReceivePurchaseOrderRequest.model_validate({}).lines == []

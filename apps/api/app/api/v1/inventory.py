@@ -1632,7 +1632,7 @@ async def void_purchase_order(
 
 
 @purchase_orders_router.post(
-    "/{po_id}/receive", response_model=InventoryTransactionResponse
+    "/{po_id}/receive", response_model=InventoryTransactionResponse | None
 )
 async def receive_purchase_order(
     po_id: uuid.UUID,
@@ -1644,7 +1644,8 @@ async def receive_purchase_order(
 
     Whatever is not received is recorded as short; a line whose received quantity
     differs from what was ordered carries a variance reason, and the office is
-    emailed the short/excess.
+    emailed the short/excess. An order of only miscellaneous lines closes with
+    no stock receipt, and the response is ``null``.
     """
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
@@ -1660,6 +1661,8 @@ async def receive_purchase_order(
     reloaded = await _load_po(db, po_id)
     await _email_po_receiving_variance(db, reloaded, user)
     await _refresh_vat_ledger_for_po(db, reloaded)
+    if transaction is None:
+        return None
     transaction = await inventory_service.load_transaction(db, transaction.id)
     return await _serialise_one_transaction(db, transaction)
 

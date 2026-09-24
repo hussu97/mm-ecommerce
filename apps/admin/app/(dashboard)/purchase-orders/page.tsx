@@ -861,7 +861,12 @@ function ReceiveOrder({
       );
       return;
     }
-    if (order.items.every((i) => Number(quantities[i.id] || 0) <= 0)) {
+    // Misc lines are never stock, so an order of only misc lines (or one whose
+    // stock was all short) still closes on its misc lines.
+    if (
+      order.misc_items.length === 0 &&
+      order.items.every((i) => Number(quantities[i.id] || 0) <= 0)
+    ) {
       setError('Enter at least one received quantity.');
       return;
     }
@@ -891,57 +896,80 @@ function ReceiveOrder({
         and whatever is short is recorded against the line. A line that differs from
         what was ordered needs a reason, and the office is emailed the short/excess.
       </p>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
-            <th className="py-2 text-left">Item</th>
-            <th className="py-2 text-right">To receive</th>
-            <th className="py-2 text-right w-32">Received</th>
-            <th className="py-2 text-right w-24">Variance</th>
-            <th className="py-2 text-left w-56">Reason</th>
-          </tr>
-        </thead>
-        <tbody>
-          {order.items.map((item) => {
-            const v = variance(item);
-            return (
-              <tr key={item.id} className={`border-b border-gray-100 ${interactiveRowClass}`}>
-                <td className="py-2">
-                  <span className="font-medium">{item.item_name}</span>{' '}
-                  <code className="text-xs text-gray-400">{item.item_sku}</code>
-                </td>
-                <td className="py-2 text-right text-gray-500">{formatQuantity(item.quantity)}</td>
-                <td className="py-2 pl-2">
-                  <Input
-                    type="number"
-                    step="0.0001"
-                    value={quantities[item.id] ?? ''}
-                    onChange={(e) =>
-                      setQuantities((prev) => ({ ...prev, [item.id]: e.target.value }))
-                    }
-                  />
-                </td>
-                <td className={`py-2 text-right tabular-nums ${v === 0 ? 'text-gray-300' : v < 0 ? 'text-red-600 font-medium' : 'text-amber-600 font-medium'}`}>
-                  {v === 0 ? '—' : `${v > 0 ? '+' : ''}${formatQuantity(v)}`}
-                </td>
-                <td className="py-2 pl-2">
-                  {differs(item) ? (
+      {order.items.length > 0 && (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
+              <th className="py-2 text-left">Item</th>
+              <th className="py-2 text-right">To receive</th>
+              <th className="py-2 text-right w-32">Received</th>
+              <th className="py-2 text-right w-24">Variance</th>
+              <th className="py-2 text-left w-56">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.items.map((item) => {
+              const v = variance(item);
+              return (
+                <tr key={item.id} className={`border-b border-gray-100 ${interactiveRowClass}`}>
+                  <td className="py-2">
+                    <span className="font-medium">{item.item_name}</span>{' '}
+                    <code className="text-xs text-gray-400">{item.item_sku}</code>
+                  </td>
+                  <td className="py-2 text-right text-gray-500">{formatQuantity(item.quantity)}</td>
+                  <td className="py-2 pl-2">
                     <Input
-                      value={reasons[item.id] ?? ''}
+                      type="number"
+                      step="0.0001"
+                      value={quantities[item.id] ?? ''}
                       onChange={(e) =>
-                        setReasons((prev) => ({ ...prev, [item.id]: e.target.value }))
+                        setQuantities((prev) => ({ ...prev, [item.id]: e.target.value }))
                       }
-                      placeholder="Why short / over?"
                     />
-                  ) : (
-                    <span className="text-gray-300 text-xs">—</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  </td>
+                  <td className={`py-2 text-right tabular-nums ${v === 0 ? 'text-gray-300' : v < 0 ? 'text-red-600 font-medium' : 'text-amber-600 font-medium'}`}>
+                    {v === 0 ? '—' : `${v > 0 ? '+' : ''}${formatQuantity(v)}`}
+                  </td>
+                  <td className="py-2 pl-2">
+                    {differs(item) ? (
+                      <Input
+                        value={reasons[item.id] ?? ''}
+                        onChange={(e) =>
+                          setReasons((prev) => ({ ...prev, [item.id]: e.target.value }))
+                        }
+                        placeholder="Why short / over?"
+                      />
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {order.misc_items.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-1 text-[11px] uppercase tracking-widest text-gray-500 font-body">
+            Miscellaneous items — not tracked as inventory, closed with the order
+          </p>
+          <table className="w-full text-sm">
+            <tbody>
+              {order.misc_items.map((misc) => (
+                <tr key={misc.id} className="border-b border-gray-100">
+                  <td className="py-2 font-medium">{misc.name}</td>
+                  <td className="py-2 text-right text-gray-500 tabular-nums">
+                    {formatQuantity(misc.quantity)} {misc.storage_unit}
+                  </td>
+                  <td className="py-2 text-right tabular-nums">{formatCurrency(misc.entered_total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {error && <p className="mt-3 text-xs text-red-600 font-body">{error}</p>}
 

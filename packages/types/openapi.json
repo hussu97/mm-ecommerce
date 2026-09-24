@@ -31500,14 +31500,10 @@
             "items": {
               "$ref": "#/components/schemas/ReceiveLine"
             },
-            "minItems": 1,
             "title": "Lines",
             "type": "array"
           }
         },
-        "required": [
-          "lines"
-        ],
         "title": "ReceivePurchaseOrderRequest",
         "type": "object"
       },
@@ -56024,7 +56020,7 @@
     },
     "/api/v1/inventory/purchase-orders/{po_id}/receive": {
       "post": {
-        "description": "Receive a delivery in one action, closing the PO.\n\nWhatever is not received is recorded as short; a line whose received quantity\ndiffers from what was ordered carries a variance reason, and the office is\nemailed the short/excess.",
+        "description": "Receive a delivery in one action, closing the PO.\n\nWhatever is not received is recorded as short; a line whose received quantity\ndiffers from what was ordered carries a variance reason, and the office is\nemailed the short/excess. An order of only miscellaneous lines closes with\nno stock receipt, and the response is ``null``.",
         "operationId": "receive_purchase_order_api_v1_inventory_purchase_orders__po_id__receive_post",
         "parameters": [
           {
@@ -56053,7 +56049,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InventoryTransactionResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/InventoryTransactionResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Receive Purchase Order Api V1 Inventory Purchase Orders  Po Id  Receive Post"
                 }
               }
             },

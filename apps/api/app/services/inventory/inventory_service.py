@@ -834,7 +834,10 @@ async def _lock_purchase_order(
             await db.execute(
                 select(PurchaseOrder)
                 .where(PurchaseOrder.id == purchase_order_id)
-                .options(selectinload(PurchaseOrder.items))
+                .options(
+                    selectinload(PurchaseOrder.items),
+                    selectinload(PurchaseOrder.misc_items),
+                )
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -1011,7 +1014,7 @@ async def create_pos_purchase_order(
     data,
     invoice_object_key: str | None = None,
     invoice_content_type: str | None = None,
-) -> tuple[PurchaseOrder, InventoryTransaction]:
+) -> tuple[PurchaseOrder, InventoryTransaction | None]:
     """Create a purchase order at the till and receive it in one action.
 
     The order is born approved (its receipt is the approval — there is no
@@ -1065,9 +1068,14 @@ async def receive_purchase_order(
     user: User,
     received: dict[uuid.UUID, Decimal],
     reasons: dict[uuid.UUID, str] | None = None,
-) -> InventoryTransaction:
+) -> InventoryTransaction | None:
     """
     Receive an approved PO in one action, closing it.
+
+    Returns the stock receipt, or ``None`` when nothing stocked arrived but the
+    order carries miscellaneous lines — those are never inventory, so an order
+    of only misc lines (a box of piping bags) closes without moving stock. Its
+    money still counts: the VAT reclaim reads the closed PO's header.
 
     Receiving is a single event, mirroring how a transfer is received: `received`
     maps each line to the quantity that actually arrived, and whatever was not
@@ -1108,23 +1116,7 @@ async def receive_purchase_order(
             "ordered: " + ", ".join(missing)
         )
 
-    transaction = InventoryTransaction(
-        reference=await next_reference(
-            db, InventoryTransactionTypeEnum.PURCHASING.value
-        ),
-        type=InventoryTransactionTypeEnum.PURCHASING.value,
-        status=TransactionStatusEnum.DRAFT.value,
-        branch_id=purchase_order.branch_id,
-        warehouse_id=purchase_order.warehouse_id,
-        supplier_id=purchase_order.supplier_id,
-        purchase_order_id=purchase_order.id,
-        business_date=business_date,
-        creator_id=user.id,
-    )
-    db.add(transaction)
-    await db.flush()
-
-    any_line = False
+    lines: list[InventoryTransactionItem] = []
     paid_tax = Decimal("0")
     for po_item in purchase_order.items:
         quantity = _q(received.get(po_item.id, 0))
@@ -1139,10 +1131,8 @@ async def receive_purchase_order(
         )
         if quantity <= 0:
             continue
-        any_line = True
-        db.add(
+        lines.append(
             InventoryTransactionItem(
-                transaction_id=transaction.id,
                 item_id=po_item.item_id,
                 quantity=quantity,
                 unit=po_item.unit,
@@ -1161,10 +1151,34 @@ async def receive_purchase_order(
                 Decimal(str(po_item.vat_amount or 0)) * (reclaimable / ordered)
             )
 
-    if not any_line:
-        raise BadRequestError("Nothing was received")
-    transaction.paid_tax = _money(paid_tax)
+    if not lines:
+        if not purchase_order.misc_items:
+            raise BadRequestError("Nothing was received")
+        # Only non-inventory lines arrived: close the order, move no stock.
+        await transition_purchase_order(
+            db, purchase_order, PurchaseOrderStatusEnum.CLOSED, user=user
+        )
+        await db.flush()
+        return None
 
+    transaction = InventoryTransaction(
+        reference=await next_reference(
+            db, InventoryTransactionTypeEnum.PURCHASING.value
+        ),
+        type=InventoryTransactionTypeEnum.PURCHASING.value,
+        status=TransactionStatusEnum.DRAFT.value,
+        branch_id=purchase_order.branch_id,
+        warehouse_id=purchase_order.warehouse_id,
+        supplier_id=purchase_order.supplier_id,
+        purchase_order_id=purchase_order.id,
+        business_date=business_date,
+        creator_id=user.id,
+        paid_tax=_money(paid_tax),
+        # Built with its lines, so the append can't trigger a lazy load of the
+        # flushed transaction's collection (MissingGreenlet under async).
+        items=lines,
+    )
+    db.add(transaction)
     await db.flush()
     await db.refresh(transaction)
     posted = await post_transaction(db, transaction=transaction, user=user)

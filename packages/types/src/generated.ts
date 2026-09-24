@@ -4328,7 +4328,8 @@ export interface paths {
          *
          *     Whatever is not received is recorded as short; a line whose received quantity
          *     differs from what was ordered carries a variance reason, and the office is
-         *     emailed the short/excess.
+         *     emailed the short/excess. An order of only miscellaneous lines closes with
+         *     no stock receipt, and the response is ``null``.
          */
         post: operations["receive_purchase_order_api_v1_inventory_purchase_orders__po_id__receive_post"];
         delete?: never;
@@ -20159,7 +20160,7 @@ export interface components {
         /** ReceivePurchaseOrderRequest */
         ReceivePurchaseOrderRequest: {
             /** Lines */
-            lines: components["schemas"]["ReceiveLine"][];
+            lines?: components["schemas"]["ReceiveLine"][];
         };
         /**
          * ReceiverCreate
@@ -31863,7 +31864,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InventoryTransactionResponse"];
+                    "application/json": components["schemas"]["InventoryTransactionResponse"] | null;
                 };
             };
             /** @description Validation Error */
