@@ -6,10 +6,11 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, Query, status
-from sqlalchemy import exists, func, inspect, or_, select
+from sqlalchemy import exists, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import search as search_text
 from app.core import trading_hours
 from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import (
@@ -271,16 +272,15 @@ async def list_orders(
         # customer's name or phone, a marketplace's own reference/channel — and
         # the products on the order.
         needle = q.strip()
-        like = f"%{needle.lower()}%"
         conditions = [
-            func.lower(Order.order_number).like(like),
-            func.lower(Order.customer_name).like(like),
-            func.lower(Order.customer_phone).like(like),
-            func.lower(Order.external_reference).like(like),
-            func.lower(Order.aggregator_channel).like(like),
+            search_text.contains(Order.order_number, needle),
+            search_text.contains(Order.customer_name, needle),
+            search_text.contains(Order.customer_phone, needle),
+            search_text.contains(Order.external_reference, needle),
+            search_text.contains(Order.aggregator_channel, needle),
             exists().where(
                 OrderItem.order_id == Order.id,
-                func.lower(OrderItem.product_name).like(like),
+                search_text.contains(OrderItem.product_name, needle),
             ),
         ]
         # `check_number` is an integer counter; match it only on a numeric query.

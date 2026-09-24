@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.exceptions import NotFoundError
 from app.core.permissions import require
@@ -177,12 +178,11 @@ async def list_grubops_orders(
             GrubOpsOrderMap.mm_order_id.in_(select(unmapped_subq.c.order_id))
         )
     if search:
-        like = f"%{search.strip()}%"
         filters.append(
-            GrubOpsOrderMap.external_id.ilike(like)
-            | GrubOpsOrderMap.source_channel.ilike(like)
-            | GrubOpsOrderMap.grubops_order_id.ilike(like)
-            | GrubOpsOrderMap.last_grubops_status.ilike(like)
+            search_text.contains(GrubOpsOrderMap.external_id, search)
+            | search_text.contains(GrubOpsOrderMap.source_channel, search)
+            | search_text.contains(GrubOpsOrderMap.grubops_order_id, search)
+            | search_text.contains(GrubOpsOrderMap.last_grubops_status, search)
         )
 
     base = select(GrubOpsOrderMap)

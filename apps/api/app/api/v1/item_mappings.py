@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.permissions import require
@@ -195,12 +196,11 @@ async def list_mappings(
     if kind is not None:
         query = query.where(ExternalItemMap.mm_kind == kind)
     if search:
-        like = f"%{search.strip()}%"
         query = query.where(
-            mm_name_expr.ilike(like)
-            | ExternalItemMap.external_name.ilike(like)
-            | ExternalItemMap.external_ref.ilike(like)
-            | ExternalItemMap.external_sub_ref.ilike(like)
+            search_text.contains(mm_name_expr, search)
+            | search_text.contains(ExternalItemMap.external_name, search)
+            | search_text.contains(ExternalItemMap.external_ref, search)
+            | search_text.contains(ExternalItemMap.external_sub_ref, search)
         )
 
     total = (

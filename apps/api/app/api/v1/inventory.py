@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import object_storage
+from app.core import search as search_text
 from app.core.config import settings
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
@@ -373,9 +374,9 @@ async def list_items(
     if category_id:
         filters.append(InventoryItem.category_id == category_id)
     if search:
-        pattern = f"%{search.lower()}%"
         filters.append(
-            InventoryItem.name.ilike(pattern) | InventoryItem.sku.ilike(pattern)
+            search_text.contains(InventoryItem.name, search)
+            | search_text.contains(InventoryItem.sku, search)
         )
     items = await crud_service.list_all(
         db, InventoryItem, include_inactive=include_inactive, filters=filters
@@ -599,9 +600,11 @@ async def list_levels(
     if category_id:
         stmt = stmt.where(InventoryItem.category_id == category_id)
     if search and search.strip():
-        like = f"%{search.strip()}%"
         stmt = stmt.where(
-            or_(InventoryItem.name.ilike(like), InventoryItem.sku.ilike(like))
+            or_(
+                search_text.contains(InventoryItem.name, search),
+                search_text.contains(InventoryItem.sku, search),
+            )
         )
     if below_minimum_only:
         # Numeric columns; the SQL comparison matches the per-row Decimal check
@@ -982,16 +985,15 @@ async def list_transactions(
         # ledger search reaches the whole log, not just the page it had loaded
         # (F-ADM-2). An EXISTS on the item table, not a join, so a multi-line
         # transaction is not duplicated in the result.
-        term = f"%{search.strip()}%"
         stmt = stmt.where(
             or_(
-                InventoryTransaction.reference.ilike(term),
+                search_text.contains(InventoryTransaction.reference, search),
                 InventoryTransaction.items.any(
                     InventoryTransactionItem.item_id.in_(
                         select(InventoryItem.id).where(
                             or_(
-                                InventoryItem.name.ilike(term),
-                                InventoryItem.sku.ilike(term),
+                                search_text.contains(InventoryItem.name, search),
+                                search_text.contains(InventoryItem.sku, search),
                             )
                         )
                     )
@@ -2021,13 +2023,12 @@ async def pos_purchase_orders_to_receive(
         .limit(limit)
     )
     if q and q.strip():
-        like = f"%{q.strip().lower()}%"
         stmt = stmt.where(
             or_(
-                func.lower(PurchaseOrder.reference).like(like),
+                search_text.contains(PurchaseOrder.reference, q),
                 exists().where(
                     Supplier.id == PurchaseOrder.supplier_id,
-                    func.lower(Supplier.name).like(like),
+                    search_text.contains(Supplier.name, q),
                 ),
             )
         )
@@ -2073,18 +2074,17 @@ async def pos_completed_purchases(
             )
         )
     if q and q.strip():
-        like = f"%{q.strip().lower()}%"
         stmt = stmt.where(
             or_(
-                func.lower(PurchaseOrder.reference).like(like),
+                search_text.contains(PurchaseOrder.reference, q),
                 exists().where(
                     Supplier.id == PurchaseOrder.supplier_id,
-                    func.lower(Supplier.name).like(like),
+                    search_text.contains(Supplier.name, q),
                 ),
                 exists().where(
                     PurchaseOrderItem.purchase_order_id == PurchaseOrder.id,
                     PurchaseOrderItem.item_id == InventoryItem.id,
-                    func.lower(InventoryItem.name).like(like),
+                    search_text.contains(InventoryItem.name, q),
                 ),
             )
         )

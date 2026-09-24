@@ -224,7 +224,9 @@ export const api = {
  * The one query-string builder, shared with `pos-api.ts`.
  *
  * `undefined`, `null` and `''` all mean "don't send the filter" — an empty
- * string in a select is "All", not a value the API should see. `false` IS
+ * string in a select is "All", not a value the API should see. Strings are
+ * trimmed first, so what somebody typed into a search box reaches the API
+ * without stray spaces, and a box holding only spaces sends nothing. `false` IS
  * sent: `is_active=false` is the Inactive tab, not the absence of a filter.
  * Arrays repeat the key (`category=a&category=b`), which is how FastAPI reads
  * a multi-value query param.
@@ -234,7 +236,8 @@ export function buildQs(
 ): string {
   if (!params) return '';
   const search = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
+  for (const [k, raw] of Object.entries(params)) {
+    const v = typeof raw === 'string' ? raw.trim() : raw;
     if (v === undefined || v === null || v === '') continue;
     if (Array.isArray(v)) v.forEach(item => search.append(k, String(item)));
     else search.set(k, String(v));

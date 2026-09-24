@@ -18,6 +18,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.permissions import require
@@ -279,7 +280,7 @@ async def list_polygons(
 
     filters = [DeliveryPolygon.version_id == version_id]
     if search:
-        filters.append(DeliveryPolygon.name.ilike(f"%{search.strip()}%"))
+        filters.append(search_text.contains(DeliveryPolygon.name, search))
     if provider:
         filters.append(DeliveryPolygon.fulfilment_provider == provider)
     if branch_id is not None:
