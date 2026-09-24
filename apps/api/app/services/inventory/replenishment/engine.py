@@ -232,11 +232,14 @@ class Snapshot:
     facts: list[Fact]
     #: (branch, item) → on hand now, storage units.
     on_hand: dict[tuple[uuid.UUID, uuid.UUID], float]
-    #: (branch, item) → availability floor.
+    #: (branch, item) → the most one sale of anything sold there draws.
     floors: dict[tuple[uuid.UUID, uuid.UUID], float]
     settings: Settings
     #: Whether the pool branch produces at all (branch inventory settings).
     pool_produces: bool = True
+    #: (branch, item) → the least one sale of anything sold there draws. The
+    #: floor never drops below it, so the smallest option stays sellable.
+    min_floors: dict[tuple[uuid.UUID, uuid.UUID], float] = field(default_factory=dict)
 
 
 # ─── Distributions ────────────────────────────────────────────────────────────
@@ -958,7 +961,15 @@ def forecast_item(
         return snapshot.on_hand.get((branch_id, item_id), 0.0)
 
     def floor(branch_id: uuid.UUID) -> float:
-        return snapshot.floors.get((branch_id, item_id), 0.0)
+        """Enough for the biggest single sale — but no more than the branch can
+        sell within the item's shelf life, and never less than the smallest
+        single sale. A box of 9 is not worth holding where 1 sells a month."""
+        top = snapshot.floors.get((branch_id, item_id), 0.0)
+        if top <= 0:
+            return 0.0
+        low = min(snapshot.min_floors.get((branch_id, item_id), 1.0), top)
+        sells = model.item_models[(branch_id, item_id)].level * item.shelf_life_days
+        return min(top, max(low, float(_ceil(sells))))
 
     def close_of(branch_id: uuid.UUID, day: date) -> datetime | None:
         cal = snapshot.branches[branch_id].calendar

@@ -26,6 +26,7 @@ const TABS = [
   { href: '/inventory/templates', label: 'Report templates' },
   { href: '/inventory/submissions', label: 'Report submissions' },
   { href: '/inventory/transfers', label: 'Transfers & Production' },
+  { href: '/inventory/replenishment', label: 'Forecast' },
   { href: '/inventory/categories', label: 'Categories' },
   { href: '/inventory/integrity', label: 'Integrity' },
 ];

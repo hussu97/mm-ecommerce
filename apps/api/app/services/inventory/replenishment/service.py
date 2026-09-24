@@ -80,12 +80,11 @@ async def current_forecast(
     db: AsyncSession,
     *,
     source_branch_id: uuid.UUID | None,
-    bucket_hours: int | None = None,
     as_of: datetime | None = None,
 ) -> ForecastResponse:
     as_of = as_of or datetime.now(timezone.utc)
     snapshot = await loaders.build_snapshot(
-        db, as_of=as_of, source_branch_id=source_branch_id, bucket_hours=bucket_hours
+        db, as_of=as_of, source_branch_id=source_branch_id
     )
     results = engine.forecast(snapshot)
     return ForecastResponse(

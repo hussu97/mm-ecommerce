@@ -13,6 +13,11 @@
 // The grid mirrors items/page.tsx (per-branch columns from activeBranches) and
 // reports/[id]/page.tsx (per-cell Record<itemId, Record<colKey,string>> + setCell,
 // category grouping, inputMode="decimal").
+//
+// For a transfer, the replenishment forecast is shown beside the relevant cells
+// as a visual guide only ("fc N" under each destination, "keep N" under the
+// source's on-hand, "fc N" under qty to produce) — nothing is pre-filled and
+// nothing about it is sent on submit. Hovering a hint explains the number.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -20,6 +25,10 @@ import Link from 'next/link';
 import {
   branchesApi,
   inventoryApi,
+  replenishmentApi,
+  type ReplenishmentForecast,
+  type ReplenishmentForecastItem,
+  type ReplenishmentForecastLine,
   type TransferOrderCreate,
 } from '@/lib/pos-api';
 import type { Branch, InventoryCategory, InventoryItem, InventoryLevel } from '@/lib/pos-types';
@@ -34,6 +43,47 @@ const parseNum = (value: string | undefined): number => {
   const n = Number(value.trim());
   return Number.isFinite(n) ? n : 0;
 };
+
+// Forecast windows arrive as Dubai wall-clock times with no offset; read the
+// clock straight off the string so the browser's own zone cannot shift it.
+const clock = (iso: string | null | undefined): string => (iso ? iso.slice(11, 16) : '—');
+const TIER_LABEL: Record<number, string> = {
+  0: 'every branch\'s need met',
+  1: 'short — source\'s own demand first',
+  2: 'short — availability floors first',
+  3: 'short — shared by expected sales',
+};
+
+function lineExplain(line: ReplenishmentForecastLine, level: number, unit: string): string {
+  const pct = Math.round(level * 100);
+  const parts = line.kind === 'retain'
+    ? [`Keep ${line.qty} ${unit} at ${line.branch_name} (the source).`,
+      line.window_start
+        ? `Its demand until today's production lands, ${clock(line.window_start)}–${clock(line.window_end)} ≈ ${line.window_demand_mean} (${pct}% of days ≤ ${line.window_demand_quantile}).`
+        : 'Today\'s production has already landed, so it only holds its floor back.']
+    : [`Send ${line.qty} ${unit} to ${line.branch_name}.`,
+      line.window_start
+        ? `Rest-of-day demand ${clock(line.window_start)}–${clock(line.window_end)} ≈ ${line.window_demand_mean} (${pct}% of days ≤ ${line.window_demand_quantile}).`
+        : 'Closed for the rest of today.'];
+  parts.push(`Availability floor ${line.floor} (the biggest single sale here) → target ${line.target}; holds ${line.on_hand}.`);
+  if (line.kind === 'transfer') parts.push(`Needs ${line.need}.`);
+  if (line.tier !== null && line.tier !== undefined) parts.push(`Allocation: ${TIER_LABEL[line.tier] ?? line.tier}.`);
+  if (line.shortfall > 0) parts.push(`${line.shortfall} short of target — the source does not hold enough.`);
+  parts.push(`Whole-day forecast ${line.day_demand_mean}.`);
+  return parts.join('\n');
+}
+
+function productionExplain(item: ReplenishmentForecastItem, level: number): string {
+  const p = item.production;
+  if (!p) return '';
+  const pct = Math.round(level * 100);
+  const lines = [
+    `Produce ${p.units} ${item.storage_unit}${p.batches !== null && p.batches !== undefined ? ` (${p.batches} batch${p.batches === 1 ? '' : 'es'})` : ''}.`,
+    `Carries every branch from ${clock(p.window_start)} (when it lands) to the next batch at ${clock(p.window_end)}: demand ≈ ${p.protection_demand_mean} (${pct}% of days ≤ ${p.protection_demand_quantile}) + floors ${p.floors}, less ${p.usable_stock} still usable then.`,
+  ];
+  if (p.capped_by_shelf_life) lines.push('Capped: more would not sell within the item\'s shelf life.');
+  return lines.join('\n');
+}
 
 export default function NewTransferOrderPage() {
   const router = useRouter();
@@ -65,6 +115,9 @@ export default function NewTransferOrderPage() {
   const [bases, setBases] = useState<Map<string, { basis: 'unit' | 'batch'; batchYield: number | null }>>(new Map());
   const [submitting, setSubmitting] = useState(false);
   const [banner, setBanner] = useState<{ text: string; error: boolean } | null>(null);
+  // The replenishment forecast for the chosen source — a guide shown beside the
+  // cells, never written into them. A failed fetch just shows no hints.
+  const [forecast, setForecast] = useState<ReplenishmentForecast | null>(null);
 
   // A stable token so a retried submit does not raise the fan-out twice.
   const requestId = useRef(typeof crypto !== 'undefined' ? crypto.randomUUID() : `${Date.now()}`);
@@ -95,6 +148,27 @@ export default function NewTransferOrderPage() {
     });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!sourceBranchId || kind !== 'transfer') {
+      setForecast(null);
+      return;
+    }
+    let cancelled = false;
+    replenishmentApi
+      .forecast({ source_branch_id: sourceBranchId })
+      .then((f) => { if (!cancelled) setForecast(f); })
+      .catch(() => { if (!cancelled) setForecast(null); });
+    return () => { cancelled = true; };
+  }, [sourceBranchId, kind]);
+
+  // itemId → its forecast; and (itemId, branchId) → that branch's line.
+  const forecastByItem = useMemo(
+    () => new Map((forecast?.items ?? []).map((it) => [it.item_id, it])),
+    [forecast],
+  );
+  const forecastLine = (itemId: string, branchId: string): ReplenishmentForecastLine | undefined =>
+    forecastByItem.get(itemId)?.lines.find((l) => l.branch_id === branchId);
 
   const activeBranches = useMemo(
     () => branches
@@ -393,6 +467,18 @@ export default function NewTransferOrderPage() {
                           </td>
                           <td className={`px-2 py-1 text-right tabular-nums ${overThreshold ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
                             {kind === 'return' ? '—' : onHand === undefined ? <span className="text-gray-300">0</span> : formatQuantity(onHand)}
+                            {(() => {
+                              const keep = forecastLine(item.id, sourceBranchId);
+                              if (!keep || !forecast) return null;
+                              return (
+                                <span
+                                  className="block text-xs normal-case text-sky-700 whitespace-nowrap cursor-help"
+                                  title={lineExplain(keep, forecast.service_level, item.storage_unit)}
+                                >
+                                  keep {keep.qty}
+                                </span>
+                              );
+                            })()}
                           </td>
                           {destinationBranches.map((b) => (
                             <td key={b.id} className="px-2 py-1 text-right">
@@ -412,6 +498,19 @@ export default function NewTransferOrderPage() {
                                 <span className="text-xs normal-case text-gray-400 whitespace-nowrap" title={`Current stock at ${b.name}`}>
                                   in stock {formatQuantity(stockAt(item.id, b.id))}
                                 </span>
+                                {(() => {
+                                  const fc = forecastLine(item.id, b.id);
+                                  if (!fc || !forecast) return null;
+                                  return (
+                                    <span
+                                      className="text-xs normal-case text-sky-700 whitespace-nowrap cursor-help"
+                                      title={lineExplain(fc, forecast.service_level, item.storage_unit)}
+                                    >
+                                      fc {fc.qty}
+                                      {fc.shortfall > 0 && <span className="text-amber-700"> · short {fc.shortfall}</span>}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </td>
                           ))}
@@ -446,6 +545,20 @@ export default function NewTransferOrderPage() {
                                           ? `batch → ${formatQuantity(produceUnits(item.id))} ${item.storage_unit}`
                                           : 'batch')
                                         : item.storage_unit}
+                                    </span>
+                                  );
+                                })()}
+                                {(() => {
+                                  const fcItem = forecastByItem.get(item.id);
+                                  const p = fcItem?.production;
+                                  if (!fcItem || !p || !forecast) return null;
+                                  const hasBatches = p.batches !== null && p.batches !== undefined;
+                                  return (
+                                    <span
+                                      className="text-xs normal-case text-sky-700 whitespace-nowrap cursor-help"
+                                      title={productionExplain(fcItem, forecast.service_level)}
+                                    >
+                                      fc {hasBatches ? `${p.batches} batch${p.batches === 1 ? '' : 'es'}` : `${formatQuantity(p.units)} ${item.storage_unit}`}
                                     </span>
                                   );
                                 })()}

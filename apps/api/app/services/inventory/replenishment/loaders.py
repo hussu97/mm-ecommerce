@@ -94,18 +94,25 @@ async def on_hand_as_of(
 
 async def floors(
     db: AsyncSession, branch_ids: list[uuid.UUID], item_ids: set[uuid.UUID]
-) -> dict[tuple[uuid.UUID, uuid.UUID], float]:
-    """(branch, item) → the most one sale of anything sold at the branch draws."""
+) -> tuple[
+    dict[tuple[uuid.UUID, uuid.UUID], float], dict[tuple[uuid.UUID, uuid.UUID], float]
+]:
+    """(branch, item) → the most, and the least, one sale of anything sold at the
+    branch draws of the item."""
     catalog = await recipe_service.load_active_catalog(db)
     requirements = auto_availability_service.requirements_by_owner(catalog)
-    out: dict[tuple[uuid.UUID, uuid.UUID], float] = defaultdict(float)
+    most: dict[tuple[uuid.UUID, uuid.UUID], float] = defaultdict(float)
+    least: dict[tuple[uuid.UUID, uuid.UUID], float] = {}
     for branch_id in branch_ids:
         for owner in await auto_availability_service.owners_sold_at(db, branch_id):
             for item_id, per_sale in requirements.get(owner, {}).items():
-                if item_id in item_ids:
-                    key = (branch_id, item_id)
-                    out[key] = max(out[key], float(per_sale))
-    return dict(out)
+                draw = float(per_sale)
+                if item_id not in item_ids or draw <= 0:
+                    continue
+                key = (branch_id, item_id)
+                most[key] = max(most[key], draw)
+                least[key] = min(least.get(key, draw), draw)
+    return dict(most), least
 
 
 async def build_snapshot(
@@ -113,7 +120,6 @@ async def build_snapshot(
     *,
     as_of: datetime,
     source_branch_id: uuid.UUID | None = None,
-    bucket_hours: int | None = None,
 ) -> engine.Snapshot:
     settings_row = await load_settings(db)
     pool_id = source_branch_id or settings_row.production_branch_id
@@ -141,7 +147,7 @@ async def build_snapshot(
     business_date = date.fromisoformat(
         business_day_service.business_date_for(pool, as_of, tz)
     )
-    settings = to_engine(settings_row, bucket_hours=bucket_hours)
+    settings = to_engine(settings_row)
 
     cals = await branch_calendars(db, branches)
     items_rows = (
@@ -184,6 +190,7 @@ async def build_snapshot(
             )
         )
     )
+    most, least = await floors(db, [b.id for b in branches], set(item_ids))
     return engine.Snapshot(
         business_date=business_date,
         now=as_of.astimezone(tz).replace(tzinfo=None),
@@ -197,7 +204,8 @@ async def build_snapshot(
             db, business_date - timedelta(days=settings.window_days), business_date
         ),
         on_hand=await on_hand_as_of(db, item_ids, as_of),
-        floors=await floors(db, [b.id for b in branches], set(item_ids)),
+        floors=most,
+        min_floors=least,
         settings=settings,
         pool_produces=pool_produces,
     )

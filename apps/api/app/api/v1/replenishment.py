@@ -28,15 +28,13 @@ router = APIRouter()
 @router.get("/forecast", response_model=ForecastResponse)
 async def get_forecast(
     source_branch_id: uuid.UUID | None = Query(default=None),
-    bucket_hours: int | None = Query(default=None, ge=1, le=6),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("inventory.transfers.manage")),
 ):
     """Forecast transfer quantity per destination and production quantity per
-    produced good, for the source branch's current business day, as of now."""
-    return await service.current_forecast(
-        db, source_branch_id=source_branch_id, bucket_hours=bucket_hours
-    )
+    produced good, for the source branch's current business day, as of now.
+    The intraday bucket width is the global setting."""
+    return await service.current_forecast(db, source_branch_id=source_branch_id)
 
 
 @router.get("/history", response_model=ForecastHistoryResponse)

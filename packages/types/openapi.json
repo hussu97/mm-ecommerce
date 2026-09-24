@@ -57697,7 +57697,7 @@
     },
     "/api/v1/inventory/replenishment/forecast": {
       "get": {
-        "description": "Forecast transfer quantity per destination and production quantity per\nproduced good, for the source branch's current business day, as of now.",
+        "description": "Forecast transfer quantity per destination and production quantity per\nproduced good, for the source branch's current business day, as of now.\nThe intraday bucket width is the global setting.",
         "operationId": "get_forecast_api_v1_inventory_replenishment_forecast_get",
         "parameters": [
           {
@@ -57715,24 +57715,6 @@
                 }
               ],
               "title": "Source Branch Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "bucket_hours",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maximum": 6,
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Bucket Hours"
             }
           }
         ],

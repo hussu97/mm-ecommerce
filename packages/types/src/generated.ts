@@ -4559,6 +4559,7 @@ export interface paths {
          * Get Forecast
          * @description Forecast transfer quantity per destination and production quantity per
          *     produced good, for the source branch's current business day, as of now.
+         *     The intraday bucket width is the global setting.
          */
         get: operations["get_forecast_api_v1_inventory_replenishment_forecast_get"];
         put?: never;
@@ -32636,7 +32637,6 @@ export interface operations {
         parameters: {
             query?: {
                 source_branch_id?: string | null;
-                bucket_hours?: number | null;
             };
             header?: never;
             path?: never;

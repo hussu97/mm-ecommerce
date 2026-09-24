@@ -22,11 +22,9 @@ async def load_settings(db: AsyncSession) -> ReplenishmentSettings:
     return row
 
 
-def to_engine(
-    row: ReplenishmentSettings, *, bucket_hours: int | None = None
-) -> engine.Settings:
+def to_engine(row: ReplenishmentSettings) -> engine.Settings:
     return engine.Settings(
-        bucket_hours=bucket_hours or row.bucket_hours,
+        bucket_hours=row.bucket_hours,
         service_level=float(row.service_level),
         pool_weight=float(row.production_branch_weight),
         same_day_ready_time=row.same_day_ready_time,

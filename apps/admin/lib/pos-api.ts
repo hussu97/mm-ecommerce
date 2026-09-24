@@ -55,6 +55,17 @@ export type TransferOrderCreate = Schemas['TransferOrderCreate'] & {
   production_items?: TransferOrderProductionItem[];
 };
 export type TransferOrderReport = Schemas['TransferOrderReport'];
+// The replenishment forecast: guide quantities on the transfer & production form,
+// its shadow history (forecast vs actual) and its settings. Read-only guide —
+// nothing here creates an order.
+export type ReplenishmentForecast = Schemas['ForecastResponse'];
+export type ReplenishmentForecastItem = Schemas['ForecastItem'];
+export type ReplenishmentForecastLine = Schemas['ForecastBranchLine'];
+export type ReplenishmentHistory = Schemas['ForecastHistoryResponse'];
+export type ReplenishmentHistoryRow = Schemas['ForecastHistoryRow'];
+export type ReplenishmentAccuracy = Schemas['ForecastAccuracy'];
+export type ReplenishmentSettings = Schemas['ReplenishmentSettingsResponse'];
+export type ReplenishmentSettingsUpdate = Schemas['ReplenishmentSettingsUpdate'];
 
 // ─── Branches & floor plan ────────────────────────────────────────────────────
 
@@ -442,4 +453,16 @@ export const posReportsApi = {
   voidsReturns: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/voids-returns${buildQs(w)}`),
   tills: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/tills${buildQs(w)}`),
   drawerOperations: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/drawer-operations${buildQs(w)}`),
+};
+
+// ─── Replenishment forecast ───────────────────────────────────────────────────
+
+export const replenishmentApi = {
+  forecast: (params: { source_branch_id?: string }) =>
+    api.get<ReplenishmentForecast>(`/inventory/replenishment/forecast${buildQs(params)}`),
+  history: (params: { date_from?: string; date_to?: string; branch_id?: string; item_id?: string; kind?: string; mode?: string }) =>
+    api.get<ReplenishmentHistory>(`/inventory/replenishment/history${buildQs(params)}`),
+  settings: () => api.get<ReplenishmentSettings>('/inventory/replenishment/settings'),
+  updateSettings: (body: ReplenishmentSettingsUpdate) =>
+    api.put<ReplenishmentSettings>('/inventory/replenishment/settings', body),
 };

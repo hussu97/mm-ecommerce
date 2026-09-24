@@ -442,3 +442,19 @@ def test_weeks_before_a_branch_ramped_up_are_not_its_demand():
     snap = snapshot(facts)
     model = e.ForecastModel(snap, e.ProfileModel(facts, snap.branches, 3))
     assert model.item_models[(POOL, ITEM)].level == pytest.approx(30, rel=0.1)
+
+
+def test_a_big_box_floor_is_capped_where_the_item_barely_sells():
+    # Barsha sells ~0.1 a day: 14 days of shelf life cover ~2, so the 9-piece
+    # box floor drops to 2 — never below the single-piece sale.
+    facts = history(ITEM, {POOL: 20, BARSHA: 0.1})
+    snap = e.Snapshot(
+        **{
+            **snapshot(facts, on_hand={(POOL, ITEM): 500}).__dict__,
+            "floors": {(POOL, ITEM): 9, (BARSHA, ITEM): 9},
+            "min_floors": {(POOL, ITEM): 1, (BARSHA, ITEM): 1},
+        }
+    )
+    result = e.forecast(snap)[0]
+    assert line(result, POOL).floor == 9
+    assert 1 <= line(result, BARSHA).floor <= 2
