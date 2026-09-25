@@ -54,7 +54,7 @@ function Line({
       <span className="tabular-nums">
         {shown}
         {pct !== undefined && (
-          <span className="ml-2 text-[11px] text-gray-400">
+          <span className="ml-2 inline-block w-11 text-right text-[11px] text-gray-400">
             {pct === null ? '' : `${pct.toFixed(1)}%`}
           </span>
         )}
@@ -65,6 +65,8 @@ function Line({
 
 export function PnlLines({ pnl }: { pnl: OrderPnl }) {
   const negative = pnl.pc3 < 0;
+  // Every line's share of GMV, as the API quoted it.
+  const pct = pnl.shares;
   return (
     <div className="space-y-1">
       {!pnl.is_sale && (
@@ -72,14 +74,15 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
           Cancelled, but the marketplace still charged for it — no revenue, only the charge.
         </p>
       )}
-      <Line label="GMV (items before discounts, incl. VAT)" value={pnl.gmv} />
-      {pnl.refunds !== 0 && <Line label="Refunds" value={pnl.refunds} tone="cost" />}
-      <Line label="VAT on sales" value={pnl.output_vat} tone="cost" hint="Output VAT owed to the FTA, less the VAT inside any refund." />
-      <Line label="Net revenue" value={pnl.net_revenue} tone="subtotal" />
+      <Line label="GMV (items before discounts, incl. VAT)" value={pnl.gmv} pct={pct.gmv} />
+      {pnl.refunds !== 0 && <Line label="Refunds" value={pnl.refunds} tone="cost" pct={pct.refunds} />}
+      <Line label="VAT on sales" value={pnl.output_vat} tone="cost" pct={pct.output_vat} hint="Output VAT owed to the FTA, less the VAT inside any refund." />
+      <Line label="Net revenue" value={pnl.net_revenue} tone="subtotal" pct={pct.net_revenue} />
       <Line
         label="COGS (net of VAT)"
         value={pnl.cogs}
         tone="cost"
+        pct={pct.cogs}
         hint={
           pnl.cogs_missing
             ? 'No stock movement was recorded for this order (before inventory go-live, or it never posted), so its cost of goods is unknown — not zero.'
@@ -92,40 +95,42 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
       />
       {pnl.cogs !== null && (
         <>
-          <Line label="Produced goods" value={pnl.cogs_produced} tone="cost" indent />
-          <Line label="Raw ingredients" value={pnl.cogs_raw} tone="cost" indent />
-          <Line label="Packaging" value={pnl.cogs_packaging} tone="cost" indent />
-          <Line label="Resale goods" value={pnl.cogs_resale} tone="cost" indent />
+          <Line label="Produced goods" value={pnl.cogs_produced} tone="cost" pct={pct.cogs_produced} indent />
+          <Line label="Raw ingredients" value={pnl.cogs_raw} tone="cost" pct={pct.cogs_raw} indent />
+          <Line label="Packaging" value={pnl.cogs_packaging} tone="cost" pct={pct.cogs_packaging} indent />
+          <Line label="Resale goods" value={pnl.cogs_resale} tone="cost" pct={pct.cogs_resale} indent />
         </>
       )}
-      <Line label="PC1" value={pnl.pc1} tone="subtotal" pct={pnl.pc1_pct} />
+      <Line label="PC1" value={pnl.pc1} tone="subtotal" pct={pct.pc1} />
       {pnl.delivery_fees !== 0 && (
         <Line
           label="Delivery fees charged"
           value={pnl.delivery_fees}
           tone="credit"
+          pct={pct.delivery_fees}
           hint="Delivery and small-basket fees the customer paid. No VAT is charged on them."
         />
       )}
-      <Line label="Payment fees" value={pnl.payment_fees} tone="cost" />
-      <Line label="Aggregator & delivery fees" value={pnl.aggregator_and_delivery_fees} tone="cost" />
-      {pnl.commission !== 0 && <Line label="Commission" value={pnl.commission} tone="cost" indent />}
+      <Line label="Payment fees" value={pnl.payment_fees} tone="cost" pct={pct.payment_fees} />
+      <Line label="Aggregator & delivery fees" value={pnl.aggregator_and_delivery_fees} tone="cost" pct={pct.aggregator_and_delivery_fees} />
+      {pnl.commission !== 0 && <Line label="Commission" value={pnl.commission} tone="cost" pct={pct.commission} indent />}
       {pnl.marketplace_fees !== 0 && (
-        <Line label="Loyalty / Pro / subsidy fees" value={pnl.marketplace_fees} tone="cost" indent />
+        <Line label="Loyalty / Pro / subsidy fees" value={pnl.marketplace_fees} tone="cost" pct={pct.marketplace_fees} indent />
       )}
-      {pnl.delivery_cost !== 0 && <Line label="Our courier" value={pnl.delivery_cost} tone="cost" indent />}
-      <Line label="Misc fees" value={pnl.misc_fees} tone="cost" />
+      {pnl.delivery_cost !== 0 && <Line label="Our courier" value={pnl.delivery_cost} tone="cost" pct={pct.delivery_cost} indent />}
+      <Line label="Misc fees" value={pnl.misc_fees} tone="cost" pct={pct.misc_fees} />
       {pnl.cancellation_charges !== 0 && (
-        <Line label="Cancellation charges" value={pnl.cancellation_charges} tone="cost" indent />
+        <Line label="Cancellation charges" value={pnl.cancellation_charges} tone="cost" pct={pct.cancellation_charges} indent />
       )}
       <Line
         label="VAT reclaimed on fees"
         value={pnl.fees_vat}
         tone="credit"
+        pct={pct.fees_vat}
         hint="The input VAT inside the fees above. Zero under an entity that is not VAT-registered, where it stays a cost."
       />
-      <Line label="PC2" value={pnl.pc2} tone="subtotal" pct={pnl.pc2_pct} />
-      <Line label="Discounts" value={pnl.discounts} tone="cost" />
+      <Line label="PC2" value={pnl.pc2} tone="subtotal" pct={pct.pc2} />
+      <Line label="Discounts" value={pnl.discounts} tone="cost" pct={pct.discounts} />
       <div
         className={cn(
           'flex items-baseline justify-between border-t border-gray-300 pt-1 text-sm font-body font-medium',
@@ -135,13 +140,13 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
         <span>PC3</span>
         <span className="tabular-nums">
           {formatCurrency(pnl.pc3)}
-          <span className="ml-2 text-[11px] text-gray-400">
-            {pnl.pc3_pct === null ? '' : `${pnl.pc3_pct.toFixed(1)}%`}
+          <span className="ml-2 inline-block w-11 text-right text-[11px] text-gray-400">
+            {pct.pc3 === null ? '' : `${pct.pc3.toFixed(1)}%`}
           </span>
         </span>
       </div>
       <div className="pt-2 text-[11px] font-body text-gray-400 space-y-0.5">
-        <p>Revenue and fees as billed (incl. VAT); delivery fees carry no VAT; COGS at net cost. Subtotals are net of VAT.</p>
+        <p>Revenue and fees as billed (incl. VAT); delivery fees carry no VAT; COGS at net cost. Subtotals are net of VAT. % is of GMV.</p>
         {pnl.is_sale && pnl.cogs_missing && (
           <p className="text-amber-700">COGS not recorded for this order.</p>
         )}
@@ -217,7 +222,7 @@ export function OrderPnlDialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm border border-gray-200 bg-white p-5"
+        className="w-full max-w-md border border-gray-200 bg-white p-5"
         onClick={e => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">

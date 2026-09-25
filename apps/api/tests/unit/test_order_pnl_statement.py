@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.schemas.pnl import PnlStatement
-from app.services.orders.order_pnl import CHANNELS, OrderPnl, statement_fields
+from app.schemas.pnl import PnlShares, PnlStatement
+from app.services.orders.order_pnl import (
+    CHANNELS,
+    OrderPnl,
+    share_fields,
+    statement_fields,
+    statement_payload,
+)
 
 D = Decimal
 
@@ -55,6 +61,31 @@ def test_no_gmv_has_no_percentage():
 
 def test_the_service_fills_exactly_the_schema():
     assert set(statement_fields(_order())) == set(PnlStatement.model_fields)
+    assert set(share_fields(_order())) == set(PnlShares.model_fields)
+    PnlStatement(**statement_payload(_order()))  # validates as sent
+
+
+def test_every_line_has_its_share_of_gmv():
+    p = _order()
+    shares = share_fields(p)
+    assert shares["gmv"] == D("100.00")
+    assert shares["pc3"] == p.share(p.pc3) == D("66.94")
+    assert shares["output_vat"] == p.share(p.output_vat)
+    assert shares["cogs_raw"] == p.share(p.cogs_raw)
+    assert shares["discounts"] == p.share(p.discounts)
+
+
+def test_unknown_cogs_has_no_share_and_no_gmv_has_none_at_all():
+    assert share_fields(_order(cogs=None))["cogs"] is None
+    empty = share_fields(
+        _order(
+            gmv=D("0"),
+            refunds=D("0"),
+            discounts=D("0"),
+            cancellation_charges=D("11.60"),
+        )
+    )
+    assert set(empty.values()) == {None}
 
 
 def test_channel_codes_are_unique():

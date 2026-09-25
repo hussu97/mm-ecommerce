@@ -57,7 +57,8 @@ type Column = PnlReport['total'];
 type Row = {
   label: string;
   value: (c: Column) => number | null;
-  pct?: (c: Column) => number | null;
+  /** The line's share of GMV, as the API quoted it in `shares`. */
+  share: keyof Column['shares'];
   kind: 'line' | 'cost' | 'credit' | 'sub' | 'detail' | 'result';
   /** Show a detail row even when it is zero everywhere — a zero is the point. */
   always?: boolean;
@@ -66,31 +67,31 @@ type Row = {
 // The statement, top to bottom. Costs are shown as negatives; the sub-lines
 // under a cost group are the parts it is made of.
 const ROWS: Row[] = [
-  { label: 'GMV (items before discounts, incl. VAT)', value: c => c.gmv, kind: 'line' },
-  { label: 'Refunds', value: c => c.refunds, kind: 'cost' },
-  { label: 'VAT on sales', value: c => c.output_vat, kind: 'cost' },
-  { label: 'Net revenue', value: c => c.net_revenue, kind: 'sub' },
-  { label: 'COGS (net of VAT)', value: c => c.cogs, kind: 'cost' },
+  { label: 'GMV (items before discounts, incl. VAT)', value: c => c.gmv, share: 'gmv', kind: 'line' },
+  { label: 'Refunds', value: c => c.refunds, share: 'refunds', kind: 'cost' },
+  { label: 'VAT on sales', value: c => c.output_vat, share: 'output_vat', kind: 'cost' },
+  { label: 'Net revenue', value: c => c.net_revenue, share: 'net_revenue', kind: 'sub' },
+  { label: 'COGS (net of VAT)', value: c => c.cogs, share: 'cogs', kind: 'cost' },
   // By inventory item kind. Always shown: a packaging line at zero is the
   // finding (packaging never priced), not noise to hide.
-  { label: 'Produced goods', value: c => c.cogs_produced, kind: 'detail', always: true },
-  { label: 'Raw ingredients', value: c => c.cogs_raw, kind: 'detail', always: true },
-  { label: 'Packaging', value: c => c.cogs_packaging, kind: 'detail', always: true },
-  { label: 'Resale goods', value: c => c.cogs_resale, kind: 'detail', always: true },
-  { label: 'PC1', value: c => c.pc1, pct: c => c.pc1_pct, kind: 'sub' },
-  { label: 'Delivery fees charged (no VAT)', value: c => c.delivery_fees, kind: 'credit' },
-  { label: 'Payment fees', value: c => c.payment_fees, kind: 'cost' },
-  { label: 'Aggregator & delivery fees', value: c => c.aggregator_and_delivery_fees, kind: 'cost' },
-  { label: 'Commission', value: c => c.commission, kind: 'detail' },
-  { label: 'Loyalty / Pro / subsidy fees', value: c => c.marketplace_fees, kind: 'detail' },
-  { label: 'Our courier', value: c => c.delivery_cost, kind: 'detail' },
-  { label: 'Misc fees', value: c => c.misc_fees, kind: 'cost' },
-  { label: 'Cancellation charges', value: c => c.cancellation_charges, kind: 'detail' },
-  { label: 'Platform & period charges', value: c => c.period_charges, kind: 'detail' },
-  { label: 'VAT reclaimed on fees', value: c => c.fees_vat, kind: 'credit' },
-  { label: 'PC2', value: c => c.pc2, pct: c => c.pc2_pct, kind: 'sub' },
-  { label: 'Discounts', value: c => c.discounts, kind: 'cost' },
-  { label: 'PC3', value: c => c.pc3, pct: c => c.pc3_pct, kind: 'result' },
+  { label: 'Produced goods', value: c => c.cogs_produced, share: 'cogs_produced', kind: 'detail', always: true },
+  { label: 'Raw ingredients', value: c => c.cogs_raw, share: 'cogs_raw', kind: 'detail', always: true },
+  { label: 'Packaging', value: c => c.cogs_packaging, share: 'cogs_packaging', kind: 'detail', always: true },
+  { label: 'Resale goods', value: c => c.cogs_resale, share: 'cogs_resale', kind: 'detail', always: true },
+  { label: 'PC1', value: c => c.pc1, share: 'pc1', kind: 'sub' },
+  { label: 'Delivery fees charged (no VAT)', value: c => c.delivery_fees, share: 'delivery_fees', kind: 'credit' },
+  { label: 'Payment fees', value: c => c.payment_fees, share: 'payment_fees', kind: 'cost' },
+  { label: 'Aggregator & delivery fees', value: c => c.aggregator_and_delivery_fees, share: 'aggregator_and_delivery_fees', kind: 'cost' },
+  { label: 'Commission', value: c => c.commission, share: 'commission', kind: 'detail' },
+  { label: 'Loyalty / Pro / subsidy fees', value: c => c.marketplace_fees, share: 'marketplace_fees', kind: 'detail' },
+  { label: 'Our courier', value: c => c.delivery_cost, share: 'delivery_cost', kind: 'detail' },
+  { label: 'Misc fees', value: c => c.misc_fees, share: 'misc_fees', kind: 'cost' },
+  { label: 'Cancellation charges', value: c => c.cancellation_charges, share: 'cancellation_charges', kind: 'detail' },
+  { label: 'Platform & period charges', value: c => c.period_charges, share: 'period_charges', kind: 'detail' },
+  { label: 'VAT reclaimed on fees', value: c => c.fees_vat, share: 'fees_vat', kind: 'credit' },
+  { label: 'PC2', value: c => c.pc2, share: 'pc2', kind: 'sub' },
+  { label: 'Discounts', value: c => c.discounts, share: 'discounts', kind: 'cost' },
+  { label: 'PC3', value: c => c.pc3, share: 'pc3', kind: 'result' },
 ];
 
 function money(value: number | null, kind: Row['kind']) {
@@ -187,7 +188,7 @@ export default function ProfitLossPage() {
         <h1 className="font-display text-2xl text-gray-800">Profit &amp; Loss</h1>
         <p className="mt-0.5 text-xs font-body text-gray-400">
           {from === to ? from : `${from} → ${to}`} · revenue and fees as billed, VAT shown as its
-          own lines · delivered orders and charged cancellations
+          own lines · delivered orders and charged cancellations · % is of GMV
         </p>
       </div>
 
@@ -314,7 +315,7 @@ export default function ProfitLossPage() {
                       </td>
                       {columns.map(c => {
                         const v = r.value(c);
-                        const pct = r.pct?.(c);
+                        const pct = c.shares[r.share];
                         return (
                           <td
                             key={c.channel}
@@ -324,11 +325,9 @@ export default function ProfitLossPage() {
                             )}
                           >
                             {money(v, r.kind)}
-                            {pct !== undefined && (
-                              <span className="block text-[10px] text-gray-400">
-                                {pct === null ? '' : `${pct.toFixed(1)}%`}
-                              </span>
-                            )}
+                            <span className="block text-[10px] text-gray-400">
+                              {pct === null ? '' : `${pct.toFixed(1)}%`}
+                            </span>
                           </td>
                         );
                       })}
