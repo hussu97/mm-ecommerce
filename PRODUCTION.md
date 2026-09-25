@@ -776,7 +776,7 @@ anything.
 | `PAYMOB_APPLE_PAY_INTEGRATION_ID` | *(unset)* | Optional. Unset (`0`) means no Apple Pay through Paymob |
 | `PAYMOB_CALLBACK_BASE_URL` | *(unset)* | `https://api.meltingmomentscakes.com` — each intention's `notification_url` and `redirection_url` are built from it |
 | `PAYMOB_API_URL` | *(unset)* | Defaults to `https://uae.paymob.com` |
-| `PAYMOB_CHECKOUT_URL` | *(unset)* | Defaults to `https://uae.checkout.paymob.com` |
+| `PAYMOB_CHECKOUT_URL` | *(unset)* | Defaults to `https://uae.paymob.com/unifiedcheckout` (the documented form; it redirects to `uae.checkout.paymob.com`) |
 | `PAYMOB_TIMEOUT_SECONDS` | *(unset)* | Defaults to `10` |
 | `PAYMOB_CHECKOUT_EXPIRY_SECONDS` | *(unset)* | Defaults to `86400` (24h, like Stripe's session; inside the 48h stale-checkout sweep) |
 
@@ -812,8 +812,24 @@ against real sandbox traffic before the flag goes on:
       after a refund POST (the refund read-back relies on it).
 - [ ] Multiple partial refunds on one transaction work
       (`can_process_multiple_refunds`).
-- [ ] Refund callback shape: the parent arrives with `is_refunded: true` and
-      the child with `has_parent_transaction: true`.
+- [ ] Refund/void callback shape: which object arrives — the parent with
+      `is_refunded`/`is_voided`, the child with `has_parent_transaction`, or
+      both. Either is handled (a child is resolved through its parent, read
+      back from Paymob), but confirm, and confirm `is_refunded` is set on a
+      *partial* refund too.
+- [ ] The refund POST's reply: `amount_cents` is this refund's own amount
+      (it is capped at the request either way), and whether a refund that is
+      still `pending` already counts in the parent's `refunded_amount_cents`
+      (the retry-safety read-back relies on it).
+- [ ] Transaction inquiry by Paymob order id returns the *latest* transaction
+      when an order has several (decline then paid retry), and answers a 4xx
+      (not an empty 200) for an order with no transaction — both read as
+      "no payment" here.
+- [ ] `billing_data.country` is accepted as ISO alpha-3 (`ARE`), as in
+      Paymob's examples.
+- [ ] A 401/403/404 creating an intention (bad key, unknown integration id)
+      fails over to the next gateway — confirm Paymob does not also use those
+      codes for faults in the order itself.
 - [ ] Real decline `acq_response_code` values match the provisional ISO-8583
       map in `paymob_provider._ACQ_FAILURE_REASONS`.
 - [ ] `notification_url` is honoured for the Apple Pay integration id, not

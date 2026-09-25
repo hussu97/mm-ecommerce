@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     #: The API host (intentions, refunds, transaction reads).
     PAYMOB_API_URL: str = "https://uae.paymob.com"
     #: The hosted Unified Checkout page the customer is sent to.
-    PAYMOB_CHECKOUT_URL: str = "https://uae.checkout.paymob.com"
+    PAYMOB_CHECKOUT_URL: str = "https://uae.paymob.com/unifiedcheckout"
     #: Sent as `Authorization: Token …` to create intentions and refunds.
     PAYMOB_SECRET_KEY: str = ""
     #: Public; rides on the checkout URL alongside the intention's client secret.

@@ -38,7 +38,7 @@ x-api-environment: &api-environment
   # pydantic refuses "" at import and the container does not start.
   PAYMOB_ENABLED: ${PAYMOB_ENABLED:-false}
   PAYMOB_API_URL: ${PAYMOB_API_URL:-https://uae.paymob.com}
-  PAYMOB_CHECKOUT_URL: ${PAYMOB_CHECKOUT_URL:-https://uae.checkout.paymob.com}
+  PAYMOB_CHECKOUT_URL: ${PAYMOB_CHECKOUT_URL:-https://uae.paymob.com/unifiedcheckout}
   PAYMOB_SECRET_KEY: ${PAYMOB_SECRET_KEY:-}
   PAYMOB_PUBLIC_KEY: ${PAYMOB_PUBLIC_KEY:-}
   PAYMOB_API_KEY: ${PAYMOB_API_KEY:-}
@@ -271,7 +271,7 @@ x-pos-environment: &pos-environment
   # Paymob: same defaults, same reason.
   PAYMOB_ENABLED: ${PAYMOB_ENABLED:-false}
   PAYMOB_API_URL: ${PAYMOB_API_URL:-https://uae.paymob.com}
-  PAYMOB_CHECKOUT_URL: ${PAYMOB_CHECKOUT_URL:-https://uae.checkout.paymob.com}
+  PAYMOB_CHECKOUT_URL: ${PAYMOB_CHECKOUT_URL:-https://uae.paymob.com/unifiedcheckout}
   PAYMOB_SECRET_KEY: ${PAYMOB_SECRET_KEY:-}
   PAYMOB_PUBLIC_KEY: ${PAYMOB_PUBLIC_KEY:-}
   PAYMOB_API_KEY: ${PAYMOB_API_KEY:-}

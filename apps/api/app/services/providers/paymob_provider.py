@@ -89,6 +89,11 @@ _AED_MINIMUM = Decimal("2.00")
 #: wrong". A 4xx is about what we sent; these are about Paymob.
 _UNAVAILABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
+#: Answers to creating an intention that mean *our* configuration is broken —
+#: a bad or rotated key (401/403), an integration id Paymob no longer knows
+#: (404). Failed over like an outage; a 400/406 is about the order, and is not.
+_MISCONFIGURED_STATUSES = frozenset({401, 403, 404})
+
 #: The processed-callback signature, in Paymob's order. `order.id` is spelled
 #: `order` (or `order_id`) on the redirect's query string, where every field is
 #: flat — see `_signed_value`.
@@ -576,7 +581,8 @@ class PaymobProvider(PaymentGatewayProvider):
                 "city": "NA",
                 "state": "NA",
                 "postal_code": "NA",
-                "country": "AE",
+                # ISO alpha-3, as in every Paymob example (`EGY`).
+                "country": "ARE",
             },
             # Diagnostic only. It comes back on the callback unsigned, so it is
             # logged and never used to find an order — see the module docstring.
@@ -603,7 +609,10 @@ class PaymobProvider(PaymentGatewayProvider):
             logger.error("Paymob unreachable creating intention: %s", exc)
             raise GatewayUnavailableError(f"Paymob unreachable: {exc}") from exc
 
-        if response.status_code in _UNAVAILABLE_STATUSES:
+        if response.status_code in _UNAVAILABLE_STATUSES | _MISCONFIGURED_STATUSES:
+            # 401/403/404 here are ours-but-not-the-order's: a rotated key, a
+            # retired integration id. Nothing about this customer's order, so
+            # the next gateway may take it rather than card checkout going down.
             logger.error(
                 "Paymob returned %s creating intention: %s",
                 response.status_code,
@@ -866,13 +875,20 @@ class PaymobProvider(PaymentGatewayProvider):
             )
 
         if _truthy(signed("has_parent_transaction")):
-            # The refund or void transaction itself. The money fact arrives on
-            # the parent's own callback (`is_refunded` / `is_voided`), and acting
-            # on both would count one refund twice.
+            # The refund or void transaction itself. Not a money fact on its
+            # own: `verify_event` resolves it through the parent — read back
+            # from Paymob — into the same refund event the parent's own
+            # callback produces (same id, so the two dedupe and one refund is
+            # never counted twice). `parent_transaction` is unsigned, which is
+            # why it is only a pointer to look up, never a figure to believe.
+            parent = fields.get("parent_transaction")
             return GatewayEvent(
                 event_id=f"paymob:txn:{txn_id}:child",
                 event_type=PaymentEventType.UNHANDLED,
                 raw_type="child_transaction",
+                payment_id=_wrap(_TXN_PREFIX, parent)
+                if _DIGITS.match(str(parent or ""))
+                else None,
                 **base,
             )
 
@@ -977,6 +993,8 @@ class PaymobProvider(PaymentGatewayProvider):
         Raises `GatewayUnavailableError` when Paymob cannot be asked, which the
         webhook answers with a 500 (retry) and the reconcile sweep backstops.
         """
+        if event.raw_type == "child_transaction" and event.payment_id:
+            return await self._refund_from_parent(event)
         if event.event_type not in (
             PaymentEventType.SUCCEEDED,
             PaymentEventType.FAILED,
@@ -1034,6 +1052,62 @@ class PaymobProvider(PaymentGatewayProvider):
             cumulative=True,
         )
 
+    async def _refund_from_parent(self, child: GatewayEvent) -> GatewayEvent:
+        """
+        A refund or void transaction, as the refund of the payment it belongs to.
+
+        Paymob may report a refund on the child transaction rather than (or as
+        well as) on the parent. The parent is read from Paymob and must belong
+        to the same signed Paymob order; its own cumulative figure is what is
+        applied, under the id the parent's callback would carry.
+        """
+        parent_id = _unwrap(_TXN_PREFIX, child.payment_id)
+        body = await self._get_transaction(parent_id)
+        parent_order = _wrap(_ORDER_PREFIX, _signed_value(body, "order.id", flat=False))
+        if parent_order != child.session_id:
+            logger.critical(
+                "Paymob child transaction points at %s, which is not on Paymob "
+                "order %s — not applied",
+                parent_id,
+                child.session_id,
+            )
+            return GatewayEvent(
+                event_id=child.event_id,
+                event_type=PaymentEventType.UNHANDLED,
+                raw_type="child_mismatch",
+                session_id=child.session_id,
+            )
+        captured = _as_int(body.get("amount_cents"))
+        payment_id = _wrap(_TXN_PREFIX, parent_id)
+        if _truthy(body.get("is_voided")):
+            return GatewayEvent(
+                event_id=f"paymob:txn:{parent_id}:voided",
+                event_type=PaymentEventType.REFUNDED,
+                raw_type="voided",
+                session_id=child.session_id,
+                payment_id=payment_id,
+                amount_refunded=captured,
+                amount_captured=captured,
+                fully_refunded=True,
+                refund_id=f"paymob:{payment_id}:void",
+                cumulative=True,
+            )
+        refunded = _as_int(body.get("refunded_amount_cents")) or 0
+        if refunded <= 0:
+            return child
+        return GatewayEvent(
+            event_id=f"paymob:txn:{parent_id}:refunded-{refunded}",
+            event_type=PaymentEventType.REFUNDED,
+            raw_type="refunded",
+            session_id=child.session_id,
+            payment_id=payment_id,
+            amount_refunded=refunded,
+            amount_captured=captured,
+            fully_refunded=bool(captured) and refunded >= (captured or 0),
+            refund_id=f"paymob:{payment_id}:{refunded}",
+            cumulative=True,
+        )
+
     async def fetch_outcome(self, attempt) -> GatewayEvent | None:
         """
         What Paymob says happened to *attempt*, for the reconcile sweep.
@@ -1049,11 +1123,17 @@ class PaymobProvider(PaymentGatewayProvider):
             return None
         paymob_order = _unwrap(_ORDER_PREFIX, attempt.session_id)
         token = await self._bearer_token()
-        body = await self._read(
-            "POST",
-            "/api/ecommerce/orders/transaction_inquiry",
-            json={"auth_token": token, "order_id": paymob_order},
-        )
+        try:
+            body = await self._read(
+                "POST",
+                "/api/ecommerce/orders/transaction_inquiry",
+                json={"auth_token": token, "order_id": paymob_order},
+            )
+        except BadRequestError:
+            # Paymob refusing the question — typically "not found" for an order
+            # nobody ever paid on — is an answer: there is no payment. Only an
+            # outage (`GatewayUnavailableError`) is "maybe", and it propagates.
+            return None
         if not body.get("id"):
             return None
         data = body.get("data") if isinstance(body.get("data"), dict) else {}
@@ -1185,7 +1265,11 @@ class PaymobProvider(PaymentGatewayProvider):
 
         # What was actually sent back, from Paymob's reply rather than our
         # request — a processor may refund less than asked.
-        refunded = _as_int(body.get("amount_cents")) or requested
+        # Capped at what was asked: the reply's `amount_cents` is the refund
+        # transaction's own amount in the one example there is, and if Paymob
+        # ever answers with the parent instead, believing it would book the
+        # whole charge as refunded after a partial.
+        refunded = min(_as_int(body.get("amount_cents")) or requested, requested)
         pending = _truthy(body.get("pending"))
         return GatewayRefund(
             refund_id=f"paymob:{payment_id}:{remote + refunded}",

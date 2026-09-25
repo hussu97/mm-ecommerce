@@ -700,6 +700,18 @@ async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> d
     # this event matches — and read afterwards, a second, distinct charge on a
     # second attempt looks like a redelivery of money we already had, and is
     # never given back (see `_handle_payment_succeeded`).
+    if event.event_type in (PaymentEventType.REFUNDED, PaymentEventType.DISPUTED):
+        # The order row first, before this event dirties an attempt row. A
+        # request that issues a refund (a cancellation, an admin refund) holds
+        # the order row and updates the attempt at commit; taking the attempt
+        # here first and the order second deadlocked the two whenever the
+        # gateway's webhook arrived inside that window. Waiting on the order
+        # also means reading its committed refund — see `_handle_refund`.
+        await db.execute(select(Order.id).where(Order.id == order.id).with_for_update())
+        await db.refresh(
+            order, attribute_names=["status", "refunded_amount", "refunded_at"]
+        )
+
     settled_before = {
         t.payment_id
         for t in order.payment_transactions
@@ -1048,6 +1060,12 @@ async def _handle_payment_succeeded(
                 order.payment_provider,
                 payment_id,
             )
+            # Parked for a person, visibly: the attempt keeps its status (see
+            # `_status_for_attempt`) and carries why. The expiry sweep will not
+            # cancel an order holding one — money was taken — and the sweeps
+            # that ask gateways stop asking about it.
+            if matched is not None:
+                matched.error_code = UNDERPAID
             return
 
     if payment_id:
@@ -1078,6 +1096,18 @@ async def _handle_payment_succeeded(
             exc,
         )
 
+
+#: Marks an attempt whose gateway reported a capture short of the order total:
+#: money moved, the order was not confirmed, and a person has to decide.
+UNDERPAID = "underpaid"
+
+#: Attempt statuses a gateway may still turn into a payment. A decline is one of
+#: them: a Paymob intention can take a successful retry after a declined card,
+#: on the same attempt.
+RECONCILABLE_ATTEMPT_STATUSES = (
+    PaymentTransactionStatusEnum.PENDING.value,
+    PaymentTransactionStatusEnum.FAILED.value,
+)
 
 #: Marks the row of a second charge this application gave back, so its own
 #: refund webhook is not mistaken for a refund of the order (`_handle_refund`).
@@ -1275,9 +1305,10 @@ async def _handle_checkout_expired(db: AsyncSession, order: Order) -> bool:
 
 async def _gateway_reports_paid(order: Order) -> bool:
     """
-    Whether any still-pending attempt on *order* is, per its own gateway, paid.
+    Whether any unsettled attempt on *order* is, per its own gateway, paid.
 
-    Every pending attempt is asked, not only the one `order.payment_provider`
+    Declined attempts are asked too — a Paymob intention can take a paid retry
+    after a decline, on the same attempt. Every such attempt is asked, not only the one `order.payment_provider`
     names: an order that failed over from one gateway to another can hold an
     older attempt that was paid after all. A gateway not wired for
     `fetch_outcome` answers None and is simply not asked. A gateway that cannot
@@ -1285,10 +1316,10 @@ async def _gateway_reports_paid(order: Order) -> bool:
     that cannot be walked back, and one more tick costs nothing.
     """
     for attempt in getattr(order, "payment_transactions", None) or []:
-        if (
-            getattr(attempt, "status", None)
-            != PaymentTransactionStatusEnum.PENDING.value
-        ):
+        if getattr(attempt, "error_code", None) == UNDERPAID:
+            # Money was taken and a person has to decide; never cancelled here.
+            return True
+        if getattr(attempt, "status", None) not in RECONCILABLE_ATTEMPT_STATUSES:
             continue
         provider = payment_gateway_router.PROVIDERS.get(getattr(attempt, "gateway", ""))
         fetch = getattr(provider, "fetch_outcome", None)
@@ -1430,18 +1461,15 @@ async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) ->
     customer by email that their money was on its way back. A partial is now
     recorded and reported, and the order keeps the status it had.
 
-    **The order row is locked first.** The admin refund route holds this row
-    `FOR UPDATE` across its gateway call, and a gateway that answers its refund
-    webhook quickly can deliver it inside that window. Read without the lock,
-    this handler saw neither the admin's slice row nor its status move, set the
+    **Reached with the order row locked** (`_apply_event` takes it before
+    touching any attempt). The admin refund route holds this row `FOR UPDATE`
+    across its gateway call, and a gateway that answers its refund webhook
+    quickly can deliver it inside that window. Read without the lock, this
+    handler saw neither the admin's slice row nor its status move, set the
     total, and moved a just-cancelled order to `refunded` with a second email.
     Waiting on the lock and re-reading means it sees the committed refund and
     stands down.
     """
-    await db.execute(select(Order.id).where(Order.id == order.id).with_for_update())
-    await db.refresh(
-        order, attribute_names=["status", "refunded_amount", "refunded_at"]
-    )
 
     # The refund of a second charge this application already gave back
     # (`_record_and_refund_duplicate`). It is money on a charge that was never

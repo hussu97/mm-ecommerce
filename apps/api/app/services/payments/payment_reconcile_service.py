@@ -9,7 +9,9 @@ sweep cancels it and restocks a box somebody bought.
 This sweep closes that gap for every gateway that can be asked
 (`PaymentGatewayProvider.fetch_outcome` — Paymob today). Every
 `_SWEEP_EVERY_MINUTES` it picks online orders still `created` or
-`payment_failed` with a pending attempt on such a gateway, asks the gateway what
+`payment_failed` with an unsettled attempt on such a gateway — declined ones
+included, since a Paymob intention can take a paid retry after a decline — and
+skipping any parked as underpaid for a person, asks the gateway what
 became of each attempt, and applies a *success* through
 `payment_service.apply_reconciled_event` — the same dedup and the same handlers
 a webhook uses, with the same event id, so a late webhook for the same payment
@@ -40,7 +42,6 @@ from app.models.base import utcnow
 from app.models.order import Order, OrderStatusEnum
 from app.models.payment_transaction import (
     PaymentTransaction,
-    PaymentTransactionStatusEnum,
 )
 from app.models.pos_order import OrderSourceEnum
 from app.services.payments import payment_service
@@ -90,8 +91,11 @@ async def _candidates(db, gateways: set[str], *, now: datetime) -> list[Order]:
             Order.created_at <= now - _NOT_BEFORE,
             Order.created_at >= now - _NOT_AFTER,
             PaymentTransaction.gateway.in_(gateways),
-            PaymentTransaction.status == PaymentTransactionStatusEnum.PENDING.value,
+            PaymentTransaction.status.in_(
+                payment_service.RECONCILABLE_ATTEMPT_STATUSES
+            ),
             PaymentTransaction.session_id.is_not(None),
+            PaymentTransaction.error_code.is_distinct_from(payment_service.UNDERPAID),
         )
         .options(selectinload(Order.payment_transactions))
         .order_by(Order.created_at)
@@ -120,8 +124,9 @@ async def sweep_once(now: datetime | None = None) -> int:
                 for order in orders
                 for attempt in order.payment_transactions
                 if attempt.gateway in gateways
-                and attempt.status == PaymentTransactionStatusEnum.PENDING.value
+                and attempt.status in payment_service.RECONCILABLE_ATTEMPT_STATUSES
                 and attempt.session_id
+                and attempt.error_code != payment_service.UNDERPAID
             ]
 
         applied = 0

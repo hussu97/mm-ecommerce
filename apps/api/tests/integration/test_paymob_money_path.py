@@ -680,3 +680,215 @@ async def test_two_successes_on_one_intention_keep_the_first_and_return_the_seco
         "transaction_id": first["id"],
         "amount_cents": 12500,
     }
+
+
+# ── from the money-path adversary review: each was reproduced, then fixed ─────
+
+
+async def test_a_paid_retry_after_a_decline_is_reconciled_not_cancelled(
+    world, monkeypatch
+):
+    """Decline, then a successful retry on the same intention whose webhook and
+    return are both lost. The attempt reads `failed`, and the sweeps used to ask
+    only about `pending` ones — so the 48h sweep cancelled a paid order."""
+    from datetime import timedelta
+
+    from app.models.base import utcnow
+    from app.models.order import OrderStatusEnum
+    from app.services.payments import payment_reconcile_service as prs
+
+    order = await world.new_order(created_at=utcnow() - timedelta(minutes=30))
+    paymob_order = await _checkout(world, order)
+    assert (
+        await _post(world, world.fake.pay(paymob_order, success=False))
+    ).status_code == 200
+    world.fake.pay(paymob_order)  # paid on retry; nothing tells us
+
+    @asynccontextmanager
+    async def _mine(*a, **k):
+        yield True
+
+    monkeypatch.setattr(prs.advisory_lock, "held", _mine)
+    monkeypatch.setattr(prs, "AsyncSessionFactory", world.maker)
+    assert await prs.sweep_once() == 1
+    assert (await world.load(order.id)).status == OrderStatusEnum.CONFIRMED
+
+
+async def test_the_expiry_sweep_will_not_cancel_a_paid_retry_after_a_decline(world):
+    from datetime import timedelta
+
+    from app.models.base import utcnow
+    from app.services.payments import payment_service
+
+    order = await world.new_order(created_at=utcnow() - timedelta(hours=49))
+    paymob_order = await _checkout(world, order)
+    assert (
+        await _post(world, world.fake.pay(paymob_order, success=False))
+    ).status_code == 200
+    world.fake.pay(paymob_order)
+    async with world.maker() as s:
+        cancelled = await payment_service.expire_stale_checkouts(s)
+        await s.commit()
+    assert order.order_number not in cancelled
+
+
+async def test_an_abandoned_checkout_paymob_has_no_transaction_for_still_expires(
+    world, monkeypatch
+):
+    """Inquiry answering 4xx for an order nobody paid on is 'no payment', not
+    'maybe paid' — or no abandoned Paymob checkout would ever be cancelled."""
+    from datetime import timedelta
+
+    from app.models.base import utcnow
+    from app.services.payments import payment_service
+    from app.services.providers import paymob_provider as pm
+
+    order = await world.new_order(created_at=utcnow() - timedelta(hours=49))
+    await _checkout(world, order)
+
+    def handler(request):
+        if request.url.path == "/api/ecommerce/orders/transaction_inquiry":
+            return httpx.Response(404, json={"detail": "Not found."})
+        return world.fake.handler(request)
+
+    monkeypatch.setattr(
+        pm.PaymobProvider,
+        "_client",
+        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))),
+    )
+    async with world.maker() as s:
+        cancelled = await payment_service.expire_stale_checkouts(s)
+        await s.commit()
+    assert order.order_number in cancelled
+
+
+async def test_an_underpaid_order_is_parked_for_a_person(world, monkeypatch):
+    """Money taken, order not confirmed. Never cancelled by the sweep, and the
+    gateway is not asked about it again every tick."""
+    from datetime import timedelta
+
+    from app.models.base import utcnow
+    from app.models.order import OrderStatusEnum
+    from app.services.payments import payment_service
+    from app.services.providers import paymob_provider as pm
+
+    order = await world.new_order(created_at=utcnow() - timedelta(hours=49))
+    paymob_order = await _checkout(world, order)
+    txn = world.fake.pay(paymob_order)
+    txn["amount_cents"] = 100  # AED 1 of 125
+    assert (await _post(world, txn)).status_code == 200
+
+    stored = await world.load(order.id)
+    assert stored.status == OrderStatusEnum.CREATED
+    attempt = next(t for t in stored.payment_transactions if t.session_id)
+    assert attempt.status == "pending" and attempt.error_code == "underpaid"
+    assert payment_service._is_paid(stored) is False
+
+    asked = []
+    real = pm.PaymobProvider.fetch_outcome
+
+    async def counting(self, a):
+        asked.append(a)
+        return await real(self, a)
+
+    monkeypatch.setattr(pm.PaymobProvider, "fetch_outcome", counting)
+    async with world.maker() as s:
+        cancelled = await payment_service.expire_stale_checkouts(s)
+        await s.commit()
+    assert order.order_number not in cancelled
+    assert asked == [], "parked, not re-queried"
+
+
+async def test_a_cancel_refund_and_its_fast_callback_do_not_deadlock(
+    world, monkeypatch
+):
+    """The cancellation holds the order row while Paymob refunds; Paymob's
+    refund callback lands before that commits. The callback used to take the
+    attempt row, then wait on the order — deadlocking with the cancel."""
+    import asyncio
+
+    from sqlalchemy import select, update
+    from sqlalchemy.orm import selectinload
+
+    from app.models.order import Order
+    from app.services.payments import payment_service
+    from app.services.providers import paymob_provider as pm
+
+    order = await world.new_order()
+    paymob_order = await _checkout(world, order)
+    txn = world.fake.pay(paymob_order)
+    assert (await _post(world, txn)).status_code == 200
+
+    pending: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        response = world.fake.handler(request)
+        if request.url.path == "/api/acceptance/void_refund/refund":
+            pending["callback"] = asyncio.create_task(
+                _post(world, dict(world.fake.txns[txn["id"]]))
+            )
+            await asyncio.sleep(0.8)  # let it reach the lock
+        return response
+
+    monkeypatch.setattr(
+        pm.PaymobProvider,
+        "_client",
+        staticmethod(lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))),
+    )
+
+    async with world.maker() as s:
+        loaded = (
+            await s.execute(
+                select(Order)
+                .options(
+                    selectinload(Order.payment_transactions), selectinload(Order.items)
+                )
+                .where(Order.id == order.id)
+            )
+        ).scalar_one()
+        # What the cancel's own status write does first: hold the order row.
+        await s.execute(
+            update(Order).where(Order.id == order.id).values(admin_notes="x")
+        )
+        assert await payment_service.refund_order(s, loaded) == Decimal("125.00")
+        await s.commit()  # a deadlock would abort one of the two here
+
+    callback = await pending["callback"]
+    assert callback.status_code == 200, callback.text
+    stored = await world.load(order.id)
+    assert Decimal(str(stored.refunded_amount)) == Decimal("125.00")
+    assert len(world.fake.refund_posts) == 1
+
+
+async def test_a_refund_reported_on_the_child_transaction_is_booked_once(world):
+    """Paymob may report a dashboard refund on the refund (child) transaction
+    rather than the parent. It is resolved through the parent — read back from
+    Paymob — and a parent callback for the same refund is then a duplicate."""
+    order = await world.new_order()
+    paymob_order = await _checkout(world, order)
+    txn = world.fake.pay(paymob_order)
+    assert (await _post(world, txn)).status_code == 200
+
+    # A refund made on Paymob's dashboard: parent updated, child transaction.
+    parent = world.fake.txns[txn["id"]]
+    parent["refunded_amount_cents"] = 2500
+    parent["is_refunded"] = True
+    world.fake.next_txn += 1
+    child = {
+        **parent,
+        "id": world.fake.next_txn,
+        "amount_cents": 2500,
+        "has_parent_transaction": True,
+        "is_refunded": False,
+        "parent_transaction": txn["id"],
+    }
+    world.fake.txns[child["id"]] = child
+
+    assert (await _post(world, child)).status_code == 200
+    stored = await world.load(order.id)
+    assert Decimal(str(stored.refunded_amount)) == Decimal("25.00")
+
+    assert (await _post(world, dict(parent))).json().get("duplicate") is True
+    assert Decimal(str((await world.load(order.id)).refunded_amount)) == Decimal(
+        "25.00"
+    )

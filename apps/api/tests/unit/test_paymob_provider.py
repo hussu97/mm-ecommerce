@@ -62,7 +62,7 @@ def configured(monkeypatch):
         "PAYMOB_APPLE_PAY_INTEGRATION_ID": APPLE_ID,
         "PAYMOB_CALLBACK_BASE_URL": "https://api.example.test",
         "PAYMOB_API_URL": "https://uae.paymob.test",
-        "PAYMOB_CHECKOUT_URL": "https://uae.checkout.paymob.test",
+        "PAYMOB_CHECKOUT_URL": "https://uae.paymob.test/unifiedcheckout",
     }.items():
         monkeypatch.setattr(settings, name, value)
     pm._bearer.update(token=None, expires=0.0)
@@ -840,3 +840,55 @@ async def test_fetch_outcome_ignores_an_answer_about_another_order(monkeypatch):
 
 async def test_fetch_outcome_is_nothing_for_another_gateway():
     assert await pm.provider.fetch_outcome(_attempt(gateway="stripe")) is None
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 404])
+async def test_a_broken_paymob_configuration_fails_over(monkeypatch, status_code):
+    """A rotated key or a retired integration id is nothing the customer did —
+    card checkout should move to the next gateway, not go down."""
+    _transport(monkeypatch, lambda r: httpx.Response(status_code, json={"detail": "x"}))
+    with pytest.raises(GatewayUnavailableError):
+        await pm.provider.create_session(_order())
+
+
+async def test_a_refund_reply_can_never_book_more_than_was_asked(monkeypatch):
+    """If Paymob answered with the parent (amount 12500) for a 30.00 partial,
+    believing it would book the whole charge as refunded."""
+    _transport(
+        monkeypatch,
+        _refund_backend(
+            0,
+            refund_response=httpx.Response(
+                200, json={"success": True, "pending": False, "amount_cents": 12500}
+            ),
+        ),
+    )
+    result = await pm.provider.refund(
+        payment_id="txn_1",
+        amount=Decimal("30.00"),
+        idempotency_key="k",
+        expected_prior_refunded=Decimal("0"),
+    )
+    assert result.amount == Decimal("30.00")
+    assert result.refund_id == "paymob:txn_1:3000"
+
+
+async def test_an_inquiry_paymob_refuses_means_no_payment(monkeypatch):
+    def handler(request):
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(201, json={"token": "bearer_x"})
+        return httpx.Response(404, json={"detail": "Not found."})
+
+    _transport(monkeypatch, handler)
+    assert await pm.provider.fetch_outcome(_attempt()) is None
+
+
+async def test_an_inquiry_outage_is_still_maybe(monkeypatch):
+    def handler(request):
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(201, json={"token": "bearer_x"})
+        return httpx.Response(503, text="down")
+
+    _transport(monkeypatch, handler)
+    with pytest.raises(GatewayUnavailableError):
+        await pm.provider.fetch_outcome(_attempt())
