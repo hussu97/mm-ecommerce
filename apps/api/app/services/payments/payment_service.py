@@ -9,7 +9,7 @@ pay — and delegates the question of which processor settles a card to
 The seam that makes this work is `providers/base.py`: every gateway hands back
 the same `GatewaySession` and the same `GatewayEvent`, so everything below
 `_apply_event` is written once and is the same code whether the money came
-through Stripe or Ziina. There is deliberately no `if gateway == "stripe"` in
+through Stripe, Ziina or Paymob. There is deliberately no `if gateway == "stripe"` in
 this file, and adding one would be the first step back to where it started.
 """
 
@@ -593,7 +593,7 @@ async def _dedup_and_apply(db: AsyncSession, gateway: str, event: GatewayEvent) 
 
 async def handle_gateway_return(
     db: AsyncSession, gateway: str, query: Mapping[str, str]
-) -> str:
+) -> tuple[str, str]:
     """
     The customer's signed return from a gateway's hosted page: settle what it
     proves, and say where to send them.
@@ -610,6 +610,8 @@ async def handle_gateway_return(
     along with its dedup row — that would swallow the real webhook as a
     duplicate and strand the order — so it is rolled back to nothing and logged,
     and the customer is redirected regardless.
+
+    Returns where to send the customer and the order it was about.
 
     Raises `BadRequestError` for a signature that does not verify (the route
     sends the customer to the checkout with no side effects) and
@@ -649,8 +651,8 @@ async def handle_gateway_return(
     # failed just now: sending a customer who has paid back to the payment step
     # is how an order gets paid for twice.
     if event.event_type is PaymentEventType.SUCCEEDED or _is_paid(order):
-        return checkout_urls.success_url(order)
-    return checkout_urls.cancel_url(order)
+        return checkout_urls.success_url(order), order.order_number
+    return checkout_urls.cancel_url(order), order.order_number
 
 
 async def apply_reconciled_event(

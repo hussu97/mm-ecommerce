@@ -773,7 +773,7 @@ async def refund_order_admin(
     Hand money back on a delivered website order, in part or in full.
 
     Only for an order MM took the money on itself — a website order paid by card
-    through Stripe or Ziina. A counter sale is refunded on the till and an
+    through Stripe, Ziina or Paymob. A counter sale is refunded on the till and an
     aggregator order was paid at the marketplace, so neither is refundable here.
     The order must be `delivered`: a live order is cancelled instead (which
     refunds it), and a settled one has already been dealt with.

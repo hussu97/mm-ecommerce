@@ -391,7 +391,9 @@ async def paymob_return(request: Request, db: AsyncSession = Depends(get_db)):
     target = f"{settings.WEB_URL}/checkout"
     try:
         try:
-            target = await payment_service.handle_gateway_return(db, "paymob", query)
+            target, recorder.order_number = await payment_service.handle_gateway_return(
+                db, "paymob", query
+            )
         except (BadRequestError, NotFoundError) as e:
             if "signature" in str(e).lower():
                 recorder.signature_valid = False
@@ -400,6 +402,7 @@ async def paymob_return(request: Request, db: AsyncSession = Depends(get_db)):
             logger.warning("Paymob return not honoured: %s", e)
         else:
             recorder.signature_valid = True
+            recorder.matched = True
             recorder.http_status = 303
             recorder.finish(
                 result={
