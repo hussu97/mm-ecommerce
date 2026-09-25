@@ -120,7 +120,9 @@ export function canRefund(
   return (
     order.status === 'delivered' &&
     order.source === 'online' &&
-    (order.payment_provider === 'stripe' || order.payment_provider === 'ziina')
+    (order.payment_provider === 'stripe' ||
+      order.payment_provider === 'ziina' ||
+      order.payment_provider === 'paymob')
   );
 }
 

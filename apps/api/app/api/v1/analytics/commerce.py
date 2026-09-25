@@ -363,7 +363,7 @@ def _payment_method_label(value: str | None) -> str:
     lowered = value.strip().lower()
     if lowered == "cod":
         return "cod"
-    if lowered in ("card", "stripe", "ziina"):
+    if lowered in ("card", "stripe", "ziina", "paymob"):
         return "card"
     return lowered
 

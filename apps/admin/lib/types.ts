@@ -735,9 +735,9 @@ export interface RevenueBreakdown {
   /** How customers chose to pay: `card` or `cod`. The commercial split. */
   by_payment_method: BreakdownItem[];
   /**
-   * Which processor settled the card orders: `stripe` or `ziina`. Card only —
-   * cash has no gateway, and a `cod` slice here would make the chart answer
-   * neither question.
+   * Which processor settled the card orders: `stripe`, `ziina` or `paymob`.
+   * Card only — cash has no gateway, and a `cod` slice here would make the
+   * chart answer neither question.
    */
   by_payment_gateway: BreakdownItem[];
   /** @deprecated The old combined split. Now identical to `by_payment_method`. */
@@ -1295,8 +1295,9 @@ export interface PaginatedAuditLogs {
 /**
  * A card processor and the terms on which it is sent traffic.
  *
- * The customer never sees any of this. They chose "card"; which of Stripe or
- * Ziina settles it is an operations decision, and this is the shape of it.
+ * The customer never sees any of this. They chose "card"; which of Stripe,
+ * Ziina or Paymob settles it is an operations decision, and this is the shape
+ * of it.
  */
 export interface PaymentGateway {
   code: string;
@@ -1321,7 +1322,7 @@ export interface PaymentGateway {
    *
    * Computed on the server, never stored — it is a fact about the running
    * container. A gateway that is not configured cannot be activated, which is
-   * what lets the Ziina toggle exist on production and do nothing.
+   * what lets the Ziina and Paymob toggles exist on production and do nothing.
    */
   is_configured: boolean;
   /** Whether the router would actually pick it right now. */

@@ -65,7 +65,10 @@ async def _candidates(db, *, now: datetime) -> list[Order]:
             Order.created_at >= oldest,
         )
         .order_by(Order.created_at)
-        .options(selectinload(Order.items))
+        # Attempts too: a gateway whose resume link lives on the attempt row
+        # (Paymob keeps its client secret in the stored checkout URL) reads them
+        # after this session has closed, where a lazy load cannot happen.
+        .options(selectinload(Order.items), selectinload(Order.payment_transactions))
     )
     return list(rows)
 

@@ -45,7 +45,13 @@ class TamaraProvider(PaymentGatewayProvider):
     ) -> GatewaySession:
         raise BadRequestError("Tamara payment provider is not yet integrated.")
 
-    def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
+    def parse_webhook(
+        self,
+        payload: bytes,
+        headers: Mapping[str, str],
+        *,
+        query: Mapping[str, str] | None = None,
+    ) -> GatewayEvent:
         raise BadRequestError("Tamara webhooks are not yet implemented.")
 
 

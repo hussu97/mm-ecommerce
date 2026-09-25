@@ -295,8 +295,17 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     (
         "checkout",
         "security_note",
-        "Payments are processed securely via Stripe. We never store your card details.",
+        "Payments are processed securely by our certified payment partners. We never store your card details.",
     ),
+    # In-page Apple Pay through a gateway whose button needs the order to exist
+    # first (Paymob's Pixel): the order is placed, then the button appears.
+    ("checkout", "apple_pay_preparing", "Getting Apple Pay ready…"),
+    (
+        "checkout",
+        "apple_pay_tap_to_pay",
+        "Your order is saved. Tap the Apple Pay button to pay.",
+    ),
+    ("checkout", "apple_pay_pay_another_way", "Pay by card instead"),
     ("checkout", "order_notes_label", "Order notes (optional)"),
     ("checkout", "notes_placeholder", "Any special requests or allergies?"),
     ("checkout", "continue_to_delivery", "Continue to Delivery"),
@@ -1075,8 +1084,15 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     (
         "checkout",
         "security_note",
-        "تُعالَج المدفوعات بأمان عبر Stripe. لا نحفظ بيانات بطاقتك أبداً.",
+        "تُعالَج المدفوعات بأمان عبر شركاء الدفع المعتمدين لدينا. لا نحفظ بيانات بطاقتك أبداً.",
     ),
+    ("checkout", "apple_pay_preparing", "جارٍ تجهيز Apple Pay…"),
+    (
+        "checkout",
+        "apple_pay_tap_to_pay",
+        "تم حفظ طلبك. اضغط على زر Apple Pay لإتمام الدفع.",
+    ),
+    ("checkout", "apple_pay_pay_another_way", "الدفع بالبطاقة بدلاً من ذلك"),
     ("checkout", "order_notes_label", "ملاحظات الطلب (اختياري)"),
     ("checkout", "notes_placeholder", "أي طلبات خاصة أو حساسية من مكونات؟"),
     ("checkout", "continue_to_delivery", "المتابعة للتوصيل"),

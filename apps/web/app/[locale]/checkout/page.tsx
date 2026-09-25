@@ -31,9 +31,11 @@ import { PickupBranchPicker } from './components/PickupBranchPicker';
 import { ChoiceRow, Section } from './components/Section';
 import { UnserviceableNotice } from './components/UnserviceableNotice';
 import { PromoCodeStep } from './components/PromoCodeStep';
+import { PaymobApplePayPanel } from './components/PaymobApplePayPanel';
 import { clearCheckoutSession, useCheckoutForm } from './hooks/useCheckoutForm';
 import { stashOrderHandoff } from '@/lib/order-handoff';
 import { useApplePay } from './hooks/useApplePay';
+import { usePaymobApplePay } from './hooks/usePaymobApplePay';
 import { useOrderPreview } from './hooks/useOrderPreview';
 import { usePhoneVerification } from './hooks/usePhoneVerification';
 import { useRetryOrder } from './hooks/useRetryOrder';
@@ -54,6 +56,9 @@ import { Icon } from '@/components/ui/Icon';
 function paymentOptionsFor(method: 'delivery' | 'pickup'): PaymentMethod[] {
   return method === 'pickup' ? ['cod', 'card'] : ['card'];
 }
+
+/** The one element the embedded Apple Pay SDK draws its button into. */
+const APPLE_PAY_SDK_ELEMENT_ID = 'checkout-apple-pay-sdk';
 
 // ─── Reaching a field ─────────────────────────────────────────────────────────
 
@@ -228,6 +233,18 @@ function CheckoutContent() {
    * is a view-model flag, not a payment method, and never reaches the wire.
    */
   const [applePaySelected, setApplePaySelected] = useState<boolean | null>(null);
+  /**
+   * The order the two-tap Apple Pay path wrote, when it has written one.
+   *
+   * That path cannot open the sheet from our button (see `usePaymobApplePay`),
+   * so the order exists *before* the customer pays — and from then on it is an
+   * unpaid order like any other: held in `retryOrder`, read-only on screen, and
+   * payable on the card page if the customer steps off Apple Pay. Remembered
+   * here so that Apple Pay keeps being offered for *this* order (a second
+   * attempt pays for it rather than writing another), where an unpaid order
+   * returned from a gateway replays its own gateway instead.
+   */
+  const [applePayOrderNumber, setApplePayOrderNumber] = useState<string | null>(null);
   const [pickupBranches, setPickupBranches] = useState<PickupBranch[]>([]);
   /**
    * The section the button just pointed at, lit for a moment.
@@ -534,13 +551,30 @@ function CheckoutContent() {
   // render. A returned unpaid order replays its own gateway, so Apple Pay is
   // not offered on that path.
   const applePay = useApplePay({ enabled: !retryOrder, amount: total });
-  const applePayOffered = !retryOrder && applePay.available;
+  const stripeApplePayOffered = !retryOrder && applePay.available;
+  // The other in-page Apple Pay, for when the active card gateway draws its own
+  // Apple Pay button (`usePaymobApplePay`): offered when the server says that
+  // gateway's Apple Pay is live and the device can do Apple Pay, and only where
+  // Stripe's is not — the customer sees one Apple Pay option, never two. Unlike
+  // Stripe's it survives the order being written, because that is the first
+  // of its two taps: the unpaid order it wrote is still its own to pay for.
+  const ownApplePayOrder =
+    retryOrder !== null && applePayOrderNumber !== null && retryOrder.order_number === applePayOrderNumber;
+  const paymobApplePay = usePaymobApplePay({ enabled: !retryOrder || ownApplePayOrder, amount: total });
+  const paymobApplePayOffered =
+    !stripeApplePayOffered && (!retryOrder || ownApplePayOrder) && paymobApplePay.available;
+  const applePayOffered = stripeApplePayOffered || paymobApplePayOffered;
   // Default to Apple Pay wherever it is offered — `null` means the customer has
   // not picked yet, and the lead option is the one-tap one. An explicit tap on
   // Card or Cash sets `false` and sticks. Guarded by `applePayOffered`, so if
   // Apple Pay stops being offered the selection falls back to the card/cash
   // choice the form already holds.
   const isApplePay = applePayOffered && (applePaySelected ?? true);
+  // Which of the two Apple Pays a press means. Stripe's swaps the pay button
+  // for the system Apple Pay button; the embedded SDK's keeps "Place order",
+  // which writes the order and reveals the SDK's own button as the second tap.
+  const isStripeApplePay = isApplePay && stripeApplePayOffered;
+  const isPaymobApplePay = isApplePay && paymobApplePayOffered;
   const selectedPayment: 'card' | 'cod' | 'apple_pay' = isApplePay ? 'apple_pay' : paymentMethod;
   // What the card row says it accepts. The hosted card page carries both
   // wallets, so ordinarily it names them both — but when Apple Pay is broken
@@ -788,17 +822,15 @@ function CheckoutContent() {
   };
 
   /**
-   * No `useCallback`, and deliberately.
+   * Check the form before a new order is written, and point at what is missing.
    *
-   * This was memoized by hand against a seventeen-entry dependency array — one
-   * entry per thing the checkout knows — which is a list nobody can keep
-   * correct and which the React Compiler could not preserve anyway: several of
-   * those values are now passed to components in other files, so it cannot
-   * prove they are not mutated and skips compiling the whole component. The
-   * compiler memoizes this for us, correctly, from what the function actually
-   * reads.
+   * The half of `handleSubmit` that decides whether the press may go ahead —
+   * shared with the two-tap Apple Pay path, which writes the order on the same
+   * "Place order" press and so owes it the same checks. True when there is
+   * nothing to complain about, including when there is no form to check: an
+   * unpaid order already exists and owns its own details.
    */
-  const handleSubmit = async () => {
+  const validateForm = (): boolean => {
     if (!retryOrder) {
       // Filled in the order the page is read, because `fields[0]` is what the
       // customer is scrolled to. Email used to be checked first and sat at the
@@ -900,10 +932,26 @@ function CheckoutContent() {
         // field that is also empty hides the other half of the answer.
         if (fields.length === 1 && fields[0] === 'verifyPhone') openAddress('verifyPhone');
         revealField(fields[0]);
-        return;
+        return false;
       }
       setErrors({});
     }
+    return true;
+  };
+
+  /**
+   * No `useCallback`, and deliberately.
+   *
+   * This was memoized by hand against a seventeen-entry dependency array — one
+   * entry per thing the checkout knows — which is a list nobody can keep
+   * correct and which the React Compiler could not preserve anyway: several of
+   * those values are now passed to components in other files, so it cannot
+   * prove they are not mutated and skips compiling the whole component. The
+   * compiler memoizes this for us, correctly, from what the function actually
+   * reads.
+   */
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
 
     // Last attempt's verdict on the coupon, cleared before this one asks again.
     setPromoRefusal(null);
@@ -1055,6 +1103,90 @@ function CheckoutContent() {
     }
   };
 
+  /**
+   * The first tap of the two-tap Apple Pay path: write the order, then reveal
+   * the embedded SDK's own Apple Pay button, which is the second.
+   *
+   * Two taps because that SDK needs a payment intention — and so an order — to
+   * exist before it will draw its button, and it will not open the sheet from
+   * ours (see `usePaymobApplePay`). So this is reached from "Place order" like
+   * the card path, after the same validation, and it reports failures with the
+   * same split as `handleApplePay`: `create_order` for our own API refusing the
+   * order, `create_session` for the gateway (opening the intention, loading the
+   * SDK, a declined sheet).
+   *
+   * From the moment the order is written it is held as the unpaid order
+   * (`retryOrder`), exactly as the card path holds one whose payment failed —
+   * so the screen stops pricing a basket that is now empty, and a customer who
+   * steps off Apple Pay pays for this same order on the card page rather than
+   * placing a second one. A second Apple Pay attempt pays for it too.
+   */
+  const handlePaymobApplePay = async () => {
+    if (!validateForm()) return;
+    setSubmitting(true);
+    setPromoRefusal(null);
+    await paymobApplePay.start(APPLE_PAY_SDK_ELEMENT_ID, {
+      createOrder: async () => {
+        if (retryOrder && ownApplePayOrder) return retryOrder;
+        const order = await createOrderFromForm();
+        setApplePayOrderNumber(order.order_number);
+        setRetryOrder(order);
+        return order;
+      },
+      onSuccess: (order) => {
+        analytics.checkoutStepComplete({ step: 1, delivery_method: form.deliveryMethod });
+        const orderEmail =
+          order.email ?? accountEmail ?? form.email.trim().toLowerCase();
+        // As in `handleApplePay`: the email crosses in sessionStorage, not the
+        // URL (F-WEB-2).
+        stashOrderHandoff({ order_number: order.order_number, email: orderEmail });
+        window.location.assign(
+          `/${locale}/checkout/confirmation?order_number=${order.order_number}`,
+        );
+      },
+      onError: (message, stage, orderNumber) => {
+        setSubmitting(false);
+        // Empty message = the customer dismissed the sheet. The order stays
+        // unpaid and the button stays put for another go; nothing is said.
+        if (!message) return;
+
+        if (stage === 'create_order') {
+          analytics.orderCreateFailed({
+            reason: failureReason(new Error(message)),
+            delivery_method: form.deliveryMethod,
+            total,
+            has_promo: form.promoDiscount > 0,
+          });
+        } else {
+          analytics.paymentFailed({
+            order_number: orderNumber ?? '',
+            error_message: message,
+            reason: failureReason(new Error(message)),
+            provider: 'apple_pay',
+            total,
+            stage: stage ?? 'create_session',
+          });
+        }
+        addToast(message, 'error');
+      },
+    });
+    // Resolved once the SDK's button is on the page (or the attempt failed and
+    // said so above). The button this press came from is no longer the one on
+    // screen, so it stops spinning; the SDK's is the one to press now.
+    setSubmitting(false);
+  };
+
+  /**
+   * Step off the two-tap Apple Pay onto the card: take the SDK's button down.
+   * The order it wrote, if any, stays — the card page pays for that one.
+   */
+  const leaveApplePay = (method: PaymentMethod) => {
+    paymobApplePay.reset();
+    analytics.paymentMethodSelected({ method, delivery_method: form.deliveryMethod, total });
+    setApplePaySelected(false);
+    onChange({ paymentMethod: method });
+  };
+
   // ── Non-form states ────────────────────────────────────────────────────────
 
   if (cartError && !submitting && !retryOrder) {
@@ -1137,7 +1269,8 @@ function CheckoutContent() {
   const onPlaceOrder = () => {
     const { action, errorField } = gateBehaviour;
     if (action.kind === 'submit') {
-      void handleSubmit();
+      if (isPaymobApplePay) void handlePaymobApplePay();
+      else void handleSubmit();
       return;
     }
     // The same event the validation pass fires, from the other half of the same
@@ -1193,7 +1326,7 @@ function CheckoutContent() {
    * customer down the page to whatever is still missing — an Apple Pay sheet
    * over an unfinished form would open onto an order that cannot be written.
    */
-  const showApplePayButton = isApplePay && (gate.kind === 'ready' || gate.kind === 'submitting');
+  const showApplePayButton = isStripeApplePay && (gate.kind === 'ready' || gate.kind === 'submitting');
   const applePayButton = (
     <button
       type="button"
@@ -1207,6 +1340,21 @@ function CheckoutContent() {
 
   /** Whichever button this checkout is currently offering. */
   const actionButton = showApplePayButton ? applePayButton : placeOrderButton;
+
+  /**
+   * The embedded SDK's Apple Pay button, once "Place order" has written the
+   * order — shown in place of the action button. Rendered in one place for
+   * every screen width, not in each of the two button slots, because the SDK
+   * mounts into a single element id.
+   */
+  const applePayPanelOpen = isPaymobApplePay && paymobApplePay.status !== 'idle';
+
+  const securityNote = (
+    <p className="mt-3 flex items-center justify-center gap-1.5 text-gray-400">
+      <Icon name="lock" className="text-sm" />
+      <span className="font-body text-xs">{t('checkout.security_note')}</span>
+    </p>
+  );
 
   /** The momentary "it's this one" ring — never the red of a rejected value. */
   const highlightRing = (field: string) =>
@@ -1531,10 +1679,13 @@ function CheckoutContent() {
       <Section label={t('checkout.payment_method')}>
         <div className="space-y-2">
           {/* Apple Pay — offered topmost as the one-tap path. Rendered only
-              when Stripe is the active gateway and the device can actually do
-              Apple Pay (`applePayOffered`). It is a card underneath, so the
-              order is written no differently; what it changes is that the pay
-              button below becomes the in-page sheet. */}
+              when the active card gateway can take Apple Pay in-page and the
+              device can actually do Apple Pay (`applePayOffered`). It is a
+              card underneath, so the order is written no differently; what it
+              changes is that the pay button below becomes the in-page sheet
+              (Stripe) or reveals the Apple Pay button that opens it (the
+              embedded SDK's two-tap path). Either way the row is the same, and
+              names no processor. */}
           {applePayOffered && (
             <button
               type="button"
@@ -1613,17 +1764,10 @@ function CheckoutContent() {
                 key={id}
                 type="button"
                 aria-pressed={selectedPayment === id}
-                onClick={() => {
-                  analytics.paymentMethodSelected({
-                    method: id,
-                    delivery_method: form.deliveryMethod,
-                    total,
-                  });
-                  // Choosing card or cash steps off Apple Pay; the underlying
-                  // card/cash method is what the order is written with.
-                  setApplePaySelected(false);
-                  onChange({ paymentMethod: id });
-                }}
+                // Choosing card or cash steps off Apple Pay (and takes down the
+                // embedded SDK's button if it was up); the underlying card/cash
+                // method is what the order is written with.
+                onClick={() => leaveApplePay(id)}
                 className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
                   selectedPayment === id ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
                 }`}
@@ -1702,14 +1846,25 @@ function CheckoutContent() {
         )}
       </Section>
 
-      {/* 6 — One button, and on a phone it never leaves the screen. */}
-      <div className="hidden sm:block pt-2">
-        {actionButton}
-        <p className="mt-3 flex items-center justify-center gap-1.5 text-gray-400">
-          <Icon name="lock" className="text-sm" />
-          <span className="font-body text-xs">{t('checkout.security_note')}</span>
-        </p>
-      </div>
+      {/* 6 — One button, and on a phone it never leaves the screen. While
+             the two-tap Apple Pay is up, its panel is that button, at every
+             width, and the sticky bar below steps aside for it. */}
+      {applePayPanelOpen ? (
+        <div className="pt-2">
+          <PaymobApplePayPanel
+            elementId={APPLE_PAY_SDK_ELEMENT_ID}
+            status={paymobApplePay.status}
+            onPayAnotherWay={() => leaveApplePay('card')}
+            t={t}
+          />
+          {securityNote}
+        </div>
+      ) : (
+        <div className="hidden sm:block pt-2">
+          {actionButton}
+          {securityNote}
+        </div>
+      )}
 
       {/* Sticky, not fixed.
           `position: fixed` resolves `bottom: 0` against the *layout* viewport,
@@ -1720,9 +1875,11 @@ function CheckoutContent() {
           laid out in normal flow and pinned by the scroller itself, so there is
           no second viewport for it to disagree with. `-mx-4` cancels the page
           gutter so it still spans edge to edge. */}
-      <div className="sm:hidden sticky bottom-0 z-30 -mx-4 mt-4 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        {actionButton}
-      </div>
+      {!applePayPanelOpen && (
+        <div className="sm:hidden sticky bottom-0 z-30 -mx-4 mt-4 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {actionButton}
+        </div>
+      )}
 
       <AddressModal
         isOpen={addressOpen}

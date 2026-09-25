@@ -806,9 +806,9 @@ async def refund_order_admin(
 
     if order.source != OrderSourceEnum.ONLINE.value:
         raise BadRequestError("Only website orders can be refunded here")
-    if order.payment_provider not in ("stripe", "ziina"):
+    if order.payment_provider not in ("stripe", "ziina", "paymob"):
         raise BadRequestError(
-            "Only card orders paid via Stripe or Ziina can be refunded here"
+            "Only card orders paid via Stripe, Ziina or Paymob can be refunded here"
         )
     if order.status != OrderStatusEnum.DELIVERED:
         raise ConflictError("Only a delivered order can be refunded here")

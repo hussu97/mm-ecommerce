@@ -72,6 +72,10 @@ _LOOP_BEATS = {
         "run_forever",
         "replenishment",
     ),
+    "app.services.payments.payment_reconcile_service": (
+        "run_forever",
+        "payment_reconcile",
+    ),
 }
 
 

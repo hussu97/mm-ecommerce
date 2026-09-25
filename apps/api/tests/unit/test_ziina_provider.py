@@ -442,6 +442,7 @@ class TestRefundsAccumulate:
             return_value=SimpleNamespace(rowcount=1, first=lambda: None)
         )
         db.flush = AsyncMock()
+        db.refresh = AsyncMock()
 
         first, headers1 = _signed(self._refund_payload("rf_1", 5000))
         await payment_service.handle_webhook(db, "ziina", first, headers1)

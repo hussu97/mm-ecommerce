@@ -135,6 +135,55 @@ class Settings(BaseSettings):
     ZIINA_TEST_MODE: bool = False
     ZIINA_TIMEOUT_SECONDS: int = 10
 
+    # ── Paymob (card gateway) ────────────────────────────────────────────────
+    #
+    # The third processor for card payments (and Apple Pay). As with Ziina,
+    # which gateway an order goes through is decided at runtime from the
+    # `payment_gateways` table — see `payment_gateway_router`. These are only
+    # the credentials.
+    #
+    # **Production runs on Stripe.** Paymob ships built and switched off, and
+    # the same three locks hold it: the `payment_gateways` row is active (it
+    # ships inactive), `PAYMOB_ENABLED` is true (it defaults false, everywhere),
+    # and every credential below that the money path needs is present. Any one
+    # of them false and the router will not pick it.
+    #
+    #: The master switch. Deliberately separate from the keys, for the same
+    #: reason `ZIINA_ENABLED` is: keys turn up on a VM for all sorts of reasons
+    #: and none of them is a decision to start charging real cards through a
+    #: new processor.
+    PAYMOB_ENABLED: bool = False
+    #: The API host (intentions, refunds, transaction reads).
+    PAYMOB_API_URL: str = "https://uae.paymob.com"
+    #: The hosted Unified Checkout page the customer is sent to.
+    PAYMOB_CHECKOUT_URL: str = "https://uae.checkout.paymob.com"
+    #: Sent as `Authorization: Token …` to create intentions and refunds.
+    PAYMOB_SECRET_KEY: str = ""
+    #: Public; rides on the checkout URL alongside the intention's client secret.
+    PAYMOB_PUBLIC_KEY: str = ""
+    #: Exchanged at `POST /api/auth/tokens` for the Bearer token the
+    #: transaction reads (inquiry, refund read-back) take. Not the secret key.
+    PAYMOB_API_KEY: str = ""
+    #: Paymob signs each processed callback (and the customer's redirect) as an
+    #: HMAC-SHA512 over a fixed field list, passed as `?hmac=`. Without it the
+    #: webhook endpoint refuses every push rather than trusting an unsigned one.
+    PAYMOB_HMAC_SECRET: str = ""
+    #: The card integration the hosted page offers. Test and live integration
+    #: ids differ, and a callback from one this environment does not own is
+    #: ignored — so this is also what tells a test payment from a live one.
+    PAYMOB_CARD_INTEGRATION_ID: int = 0
+    #: Optional. Zero means no Apple Pay through Paymob.
+    PAYMOB_APPLE_PAY_INTEGRATION_ID: int = 0
+    #: This API's public origin (e.g. https://api.meltingmomentscakes.com).
+    #: Paymob is told per intention where to send the callback
+    #: (`notification_url`) and where to bounce the customer (`redirection_url`),
+    #: and both are built from this.
+    PAYMOB_CALLBACK_BASE_URL: str = ""
+    PAYMOB_TIMEOUT_SECONDS: int = 10
+    #: How long the hosted page accepts a payment. Matches Stripe's 24h session
+    #: and sits inside the 48h `expire_stale_checkouts` sweep.
+    PAYMOB_CHECKOUT_EXPIRY_SECONDS: int = 86400
+
     # ── Resend (email) ────────────────────────────────────────────────────────
     RESEND_API_KEY: str = ""
     FROM_EMAIL: str = "noreply@meltingmomentscakes.com"
@@ -822,6 +871,28 @@ class Settings(BaseSettings):
                 if not getattr(self, name):
                     errors.append(
                         f"ZIINA_ENABLED is set but {name} is empty — a gateway "
+                        "that can charge and cannot be told what it charged"
+                    )
+
+        # The same deliberate act for Paymob, and more of it has to be present:
+        # the secret key charges, the HMAC secret verifies the callback, the API
+        # key reads a refund back before sending another, the integration id is
+        # what the hosted page offers and what tells our payments from someone
+        # else's, and the callback base is where Paymob is told to send the
+        # news. Any one missing is a gateway that takes money and cannot settle
+        # the order it took it for.
+        if self.PAYMOB_ENABLED:
+            for name in (
+                "PAYMOB_SECRET_KEY",
+                "PAYMOB_PUBLIC_KEY",
+                "PAYMOB_API_KEY",
+                "PAYMOB_HMAC_SECRET",
+                "PAYMOB_CARD_INTEGRATION_ID",
+                "PAYMOB_CALLBACK_BASE_URL",
+            ):
+                if not getattr(self, name):
+                    errors.append(
+                        f"PAYMOB_ENABLED is set but {name} is empty — a gateway "
                         "that can charge and cannot be told what it charged"
                     )
 

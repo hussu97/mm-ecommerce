@@ -68,3 +68,41 @@ def test_development_keeps_its_permissive_defaults():
     # The wildcard is correct for local development; the guard is production-only.
     dev = Settings(_env_file=None, APP_ENV="development", ALLOWED_HOSTS=["*"])
     assert dev.ALLOWED_HOSTS == ["*"]
+
+
+# ── Paymob: a half-switched-on gateway must not boot ─────────────────────────
+
+_PAYMOB_CREDS = dict(
+    PAYMOB_SECRET_KEY="egy_sk_live_x",
+    PAYMOB_PUBLIC_KEY="egy_pk_live_x",
+    PAYMOB_API_KEY="api_key_x",
+    PAYMOB_HMAC_SECRET="hmac_x",
+    PAYMOB_CARD_INTEGRATION_ID=12345,
+    PAYMOB_CALLBACK_BASE_URL="https://api.meltingmomentscakes.com",
+)
+
+
+def test_paymob_enabled_without_its_secrets_is_refused():
+    # The flag on and nothing else is a gateway the router could pick that
+    # cannot verify the callback telling it a card was charged.
+    with pytest.raises(ValueError, match="PAYMOB_ENABLED is set") as exc:
+        _settings(PAYMOB_ENABLED=True)
+    for name in _PAYMOB_CREDS:
+        assert name in str(exc.value)
+
+
+@pytest.mark.parametrize("missing", sorted(_PAYMOB_CREDS))
+def test_paymob_enabled_with_any_one_secret_missing_is_refused(missing):
+    creds = {**_PAYMOB_CREDS}
+    creds[missing] = 0 if missing == "PAYMOB_CARD_INTEGRATION_ID" else ""
+    with pytest.raises(ValueError, match=missing):
+        _settings(PAYMOB_ENABLED=True, **creds)
+
+
+def test_paymob_enabled_with_every_secret_boots():
+    _settings(PAYMOB_ENABLED=True, **_PAYMOB_CREDS)  # must not raise
+
+
+def test_paymob_off_needs_no_secrets():
+    # The supported production state: built, wired, switched off.
+    _settings(PAYMOB_ENABLED=False)  # must not raise

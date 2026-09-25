@@ -41,19 +41,24 @@ const PROVIDER_OPTIONS = [
   { value: 'slider', label: 'Slider' },
   { value: 'stripe', label: 'Stripe' },
   { value: 'ziina', label: 'Ziina' },
+  { value: 'paymob', label: 'Paymob' },
 ];
 
 // The couriers' two endpoints behave nothing alike — one arrives on a state
 // change, the other every twenty seconds. For a payment gateway the value says
 // which *mount* the processor is calling; both do identical work, and which URL
 // Stripe is actually configured against is otherwise unanswerable without
-// asking them.
+// asking them. `payments_return` is not a processor push at all: it is Paymob's
+// customer redirect, which carries the same signed fields and is logged the
+// same way so a payment settled by the bounce is as auditable as one settled
+// by the callback. The value is matched exactly against `webhook_logs.endpoint`.
 const ENDPOINT_OPTIONS = [
   { value: '', label: 'All Endpoints' },
   { value: 'status', label: 'Status (courier)' },
   { value: 'tracking', label: 'Tracking (courier)' },
   { value: 'payments', label: '/payments/webhooks/…' },
   { value: 'webhooks', label: '/webhooks/…' },
+  { value: 'payments_return', label: 'Payment return (/payments/paymob/return)' },
 ];
 
 const OUTCOME_OPTIONS = [
@@ -69,6 +74,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   slider: 'Slider',
   stripe: 'Stripe',
   ziina: 'Ziina',
+  paymob: 'Paymob',
 };
 
 /** Seven days back, which is also the whole retention window. */

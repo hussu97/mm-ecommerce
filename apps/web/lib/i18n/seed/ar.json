@@ -211,7 +211,7 @@
   "checkout.promo_placeholder": "رمز الخصم",
   "checkout.remove_promo": "إزالة الخصم",
   "checkout.review_and_pay": "المراجعة والدفع",
-  "checkout.security_note": "تُعالَج المدفوعات بأمان عبر Stripe. لا نحفظ بيانات بطاقتك أبداً.",
+  "checkout.security_note": "تُعالَج المدفوعات بأمان عبر شركاء الدفع المعتمدين لدينا. لا نحفظ بيانات بطاقتك أبداً.",
   "checkout.set_address": "حدّد العنوان",
   "checkout.step_delivery": "التوصيل",
   "checkout.step_information": "المعلومات",
@@ -472,5 +472,8 @@
   "verify.title": "تحقق من رقم هاتفك",
   "verify.too_many": "محاولات كثيرة. حاول بعد بضع دقائق.",
   "verify.unavailable": "التحقق غير متاح حالياً.",
-  "verify.verified": "تم التحقق"
+  "verify.verified": "تم التحقق",
+  "checkout.apple_pay_preparing": "جارٍ تجهيز Apple Pay…",
+  "checkout.apple_pay_tap_to_pay": "تم حفظ طلبك. اضغط على زر Apple Pay لإتمام الدفع.",
+  "checkout.apple_pay_pay_another_way": "الدفع بالبطاقة بدلاً من ذلك"
 }

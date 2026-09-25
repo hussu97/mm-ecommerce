@@ -29,7 +29,7 @@ class TestEligibility:
 
         monkeypatch.setattr(payment_gateway_router, "candidates", _candidates)
         result = await apple_pay_service.eligibility(object(), amount=Decimal("50"))
-        assert result == {"eligible": True}
+        assert result == {"eligible": True, "paymob_apple_pay": False}
 
     async def test_ziina_default_is_not_eligible(self, monkeypatch):
         async def _candidates(_db, _amount):
@@ -37,7 +37,7 @@ class TestEligibility:
 
         monkeypatch.setattr(payment_gateway_router, "candidates", _candidates)
         result = await apple_pay_service.eligibility(object(), amount=Decimal("50"))
-        assert result == {"eligible": False}
+        assert result == {"eligible": False, "paymob_apple_pay": False}
 
     async def test_no_gateway_is_not_eligible(self, monkeypatch):
         async def _candidates(_db, _amount):
@@ -45,7 +45,7 @@ class TestEligibility:
 
         monkeypatch.setattr(payment_gateway_router, "candidates", _candidates)
         result = await apple_pay_service.eligibility(object(), amount=Decimal("50"))
-        assert result == {"eligible": False}
+        assert result == {"eligible": False, "paymob_apple_pay": False}
 
     async def test_amount_defaults_to_the_stripe_floor(self, monkeypatch):
         # No amount named → the coarse probe still asks the gateway question at
@@ -58,7 +58,7 @@ class TestEligibility:
 
         monkeypatch.setattr(payment_gateway_router, "candidates", _candidates)
         result = await apple_pay_service.eligibility(object())
-        assert result == {"eligible": True}
+        assert result == {"eligible": True, "paymob_apple_pay": False}
         assert seen == [Decimal("2.00")]
 
 
@@ -69,7 +69,7 @@ class TestEndpointAuth:
         # 401 that would hide the option from every guest.
         response = await client.get("/api/v1/payments/apple-pay/eligibility")
         assert response.status_code == 200
-        assert response.json() == {"eligible": False}
+        assert response.json() == {"eligible": False, "paymob_apple_pay": False}
 
     async def test_intent_still_requires_auth(self, client):
         # The money-spending endpoint stays owner-only.

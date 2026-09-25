@@ -48,7 +48,13 @@ class TabbyProvider(PaymentGatewayProvider):
     ) -> GatewaySession:
         raise BadRequestError("Tabby payment provider is not yet integrated.")
 
-    def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
+    def parse_webhook(
+        self,
+        payload: bytes,
+        headers: Mapping[str, str],
+        *,
+        query: Mapping[str, str] | None = None,
+    ) -> GatewayEvent:
         raise BadRequestError("Tabby webhooks are not yet implemented.")
 
 

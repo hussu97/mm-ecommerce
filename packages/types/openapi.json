@@ -2770,6 +2770,11 @@
           "eligible": {
             "title": "Eligible",
             "type": "boolean"
+          },
+          "paymob_apple_pay": {
+            "default": false,
+            "title": "Paymob Apple Pay",
+            "type": "boolean"
           }
         },
         "required": [
@@ -25060,7 +25065,7 @@
         "type": "object"
       },
       "PaymentMethodEnum": {
-        "description": "What the customer chose, which is not what processed it.\n\n`CARD` is the whole of the card estate \u2014 a customer who paid by card on\nStripe and one who paid by card on Ziina made the same choice and should\nread the same way on their order, in the admin, and in every breakdown.\nThe gateway lives on `orders.payment_provider`.\n\n`STRIPE` is the value this column held for every card order written before\nthe split, kept as an accepted alias so an in-flight checkout and a retry of\nan old order both still work. Nothing new is written with it.",
+        "description": "What the customer chose, which is not what processed it.\n\n`CARD` is the whole of the card estate \u2014 a customer who paid by card on\nStripe, one who paid on Ziina and one who paid on Paymob made the same\nchoice and should read the same way on their order, in the admin, and in\nevery breakdown.\nThe gateway lives on `orders.payment_provider`.\n\n`STRIPE` is the value this column held for every card order written before\nthe split, kept as an accepted alias so an in-flight checkout and a retry of\nan old order both still work. Nothing new is written with it.",
         "enum": [
           "card",
           "cod",
@@ -25491,6 +25496,53 @@
           "order_status"
         ],
         "title": "PaymentStatusResponse",
+        "type": "object"
+      },
+      "PaymobApplePaySessionRequest": {
+        "properties": {
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_number"
+        ],
+        "title": "PaymobApplePaySessionRequest",
+        "type": "object"
+      },
+      "PaymobApplePaySessionResponse": {
+        "description": "What the browser mounts Paymob's Pixel Apple Pay button with.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "client_secret": {
+            "title": "Client Secret",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "public_key": {
+            "title": "Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "public_key",
+          "client_secret",
+          "amount",
+          "currency",
+          "order_number"
+        ],
+        "title": "PaymobApplePaySessionResponse",
         "type": "object"
       },
       "PermissionCatalogue": {
@@ -64397,6 +64449,53 @@
         ]
       }
     },
+    "/api/v1/payments/apple-pay/paymob-session": {
+      "post": {
+        "description": "Mint a Paymob intention so the browser can draw Paymob's Apple Pay button.\n\nOwner-only, and refused unless Paymob is the active card gateway and has an\nApple Pay integration. Settles through the ordinary Paymob webhook, like\nevery Paymob card payment \u2014 this endpoint writes no order status of its own.",
+        "operationId": "create_paymob_apple_pay_session_api_v1_payments_apple_pay_paymob_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymobApplePaySessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymobApplePaySessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Paymob Apple Pay Session",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
     "/api/v1/payments/create-session": {
       "post": {
         "description": "Create a payment checkout session for an order.\n\nThe body names a *method* \u2014 card or cash. For a card, which gateway settles\nit is decided server-side from the `payment_gateways` table, so a client\ncannot pick its own processor and a Stripe outage is answered without\nshipping anything.\n\nAuthentication is required and the order must belong to the caller. This\nused to take an optional user it never read, which left confirming a\nstranger's pickup order as `cod` a matter of guessing an order number.",
@@ -73890,7 +73989,7 @@
         "operationId": "list_webhook_logs_api_v1_webhook_logs_get",
         "parameters": [
           {
-            "description": "lalamove | noon_send | stripe | ziina",
+            "description": "lalamove | noon_send | stripe | ziina | paymob",
             "in": "query",
             "name": "provider",
             "required": false,
@@ -73903,12 +74002,12 @@
                   "type": "null"
                 }
               ],
-              "description": "lalamove | noon_send | stripe | ziina",
+              "description": "lalamove | noon_send | stripe | ziina | paymob",
               "title": "Provider"
             }
           },
           {
-            "description": "status | tracking | payments | webhooks",
+            "description": "status | tracking | payments | webhooks | payments_return",
             "in": "query",
             "name": "endpoint",
             "required": false,
@@ -73921,7 +74020,7 @@
                   "type": "null"
                 }
               ],
-              "description": "status | tracking | payments | webhooks",
+              "description": "status | tracking | payments | webhooks | payments_return",
               "title": "Endpoint"
             }
           },

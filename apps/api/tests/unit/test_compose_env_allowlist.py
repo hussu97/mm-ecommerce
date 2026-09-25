@@ -125,6 +125,18 @@ def test_the_register_gets_the_payment_gateway_credentials_too():
         "ZIINA_API_URL",
         "ZIINA_TEST_MODE",
         "ZIINA_TIMEOUT_SECONDS",
+        "PAYMOB_ENABLED",
+        "PAYMOB_API_URL",
+        "PAYMOB_CHECKOUT_URL",
+        "PAYMOB_SECRET_KEY",
+        "PAYMOB_PUBLIC_KEY",
+        "PAYMOB_API_KEY",
+        "PAYMOB_HMAC_SECRET",
+        "PAYMOB_CARD_INTEGRATION_ID",
+        "PAYMOB_APPLE_PAY_INTEGRATION_ID",
+        "PAYMOB_CALLBACK_BASE_URL",
+        "PAYMOB_TIMEOUT_SECONDS",
+        "PAYMOB_CHECKOUT_EXPIRY_SECONDS",
     ):
         assert key in pos_env, f"{key} never reaches the register"
 

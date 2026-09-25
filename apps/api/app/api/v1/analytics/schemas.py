@@ -109,7 +109,7 @@ class RevenueBreakdown(BaseModel):
     #: carrying the card estate this week.
     by_payment_method: list[BreakdownItem]
 
-    #: Which processor settled the card orders: `stripe` or `ziina`.
+    #: Which processor settled the card orders: `stripe`, `ziina` or `paymob`.
     #:
     #: Card only. Cash is deliberately excluded rather than shown as a third
     #: slice, because "cash" is not a gateway and putting it here makes the

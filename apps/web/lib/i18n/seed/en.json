@@ -211,7 +211,7 @@
   "checkout.promo_placeholder": "Promo code",
   "checkout.remove_promo": "Remove promo",
   "checkout.review_and_pay": "Review & Pay",
-  "checkout.security_note": "Payments are processed securely via Stripe. We never store your card details.",
+  "checkout.security_note": "Payments are processed securely by our certified payment partners. We never store your card details.",
   "checkout.set_address": "Set address",
   "checkout.step_delivery": "Delivery",
   "checkout.step_information": "Information",
@@ -472,5 +472,8 @@
   "verify.title": "Verify your mobile number",
   "verify.too_many": "Too many attempts. Try again in a few minutes.",
   "verify.unavailable": "Verification is unavailable right now.",
-  "verify.verified": "Verified"
+  "verify.verified": "Verified",
+  "checkout.apple_pay_preparing": "Getting Apple Pay ready…",
+  "checkout.apple_pay_tap_to_pay": "Your order is saved. Tap the Apple Pay button to pay.",
+  "checkout.apple_pay_pay_another_way": "Pay by card instead"
 }

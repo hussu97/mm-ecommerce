@@ -69,8 +69,11 @@ class _StubProvider:
     def __init__(self, event):
         self._event = event
 
-    def parse_webhook(self, payload, headers):
+    def parse_webhook(self, payload, headers, *, query=None):
         return self._event
+
+    async def verify_event(self, event):
+        return event
 
 
 @pytest.fixture
@@ -174,3 +177,49 @@ async def test_the_exact_amount_confirms(db, order, monkeypatch):
     await payment_service.handle_webhook(db, "stripe", b"{}", {})
 
     assert order.status == OrderStatusEnum.CONFIRMED
+
+
+async def test_an_underpaid_capture_does_not_settle_the_attempt(db, order, monkeypatch):
+    """
+    Refusing to confirm is not enough if the attempt is marked `succeeded`
+    anyway: `_is_paid` would then read true, the customer could not pay the
+    difference (a paid order refuses a new session), and the expiry sweep would
+    never close it. The attempt keeps its status.
+    """
+    from app.models.payment_transaction import PaymentTransactionStatusEnum
+
+    attempt = SimpleNamespace(
+        gateway="stripe",
+        session_id="cs_1",
+        payment_id=None,
+        status=PaymentTransactionStatusEnum.PENDING.value,
+        raw_status=None,
+        error_code=None,
+        error_message=None,
+        failure_reason=None,
+        is_settled=False,
+    )
+    order.payment_transactions.append(attempt)
+    monkeypatch.setattr(
+        payment_service, "_load_order_by_handle", AsyncMock(return_value=order)
+    )
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router,
+        "PROVIDERS",
+        {
+            "stripe": _StubProvider(
+                # Matched by its session handle — the shape a gateway without
+                # metadata (Paymob) emits.
+                _make_event(
+                    session_id="cs_1",
+                    payment_id="pi_9",
+                    amount_captured=10000,
+                )
+            )
+        },
+    )
+
+    await payment_service.handle_webhook(db, "stripe", b"{}", {})
+
+    assert attempt.status == PaymentTransactionStatusEnum.PENDING.value
+    assert payment_service._is_paid(order) is False

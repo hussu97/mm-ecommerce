@@ -55,8 +55,9 @@ browser / register
 Two things sit beside that path rather than in it:
 
 - `app/services/providers/` — the HTTP clients for Lalamove, noon Send,
-  Slider, Stripe, Ziina, Tabby, Tamara, GrubOps, Mapbox and APNs. A `provider`
-  speaks somebody else's protocol; the `service` beside it decides when to.
+  Slider, Stripe, Ziina, Paymob, Tabby, Tamara, GrubOps, Mapbox and APNs. A
+  `provider` speaks somebody else's protocol; the `service` beside it decides
+  when to.
 - `app/core/` — config, database session, exceptions, permissions, money,
   images, phone. `Settings` is the only reader of the environment.
 

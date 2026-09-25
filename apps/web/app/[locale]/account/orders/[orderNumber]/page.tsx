@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { use } from 'react';
 import { ordersApi } from '@/lib/api';
-import { Order, OrderStatus } from '@/lib/types';
+import { Order, OrderStatus, toPaymentMethod } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { formatPrice } from '@/lib/utils';
@@ -223,7 +223,13 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
         <div className="border border-gray-200 p-4">
           <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-2">{t('order.payment')}</h2>
           <p className="text-sm text-gray-700 font-body capitalize">
-            {order.payment_provider || order.payment_method || '—'}
+            {/* The method the customer chose, in the checkout's own words —
+                never the processor, which is ours to pick and theirs to ignore. */}
+            {order.payment_method || order.payment_provider
+              ? toPaymentMethod(order.payment_method || order.payment_provider) === 'cod'
+                ? t('checkout.cash_on_delivery')
+                : t('checkout.credit_debit_card')
+              : '—'}
           </p>
           {order.notes && (
             <div className="mt-3">

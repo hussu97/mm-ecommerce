@@ -647,7 +647,7 @@ export function toWireMethod(method: PaymentMethod): 'stripe' | 'cod' {
 
 export interface PaymentSessionResponse {
   /**
-   * The gateway that was actually used — `stripe`, `ziina`, `cod`, `none`.
+   * The gateway that was actually used — `stripe`, `ziina`, `paymob`, `cod`, `none`.
    * Reported so a failure can be attributed to a processor in analytics; it is
    * never shown to the customer.
    */
@@ -664,6 +664,29 @@ export interface PaymentSessionResponse {
  */
 export interface ApplePayEligibility {
   eligible: boolean;
+  /**
+   * The *other* in-page Apple Pay: the active card gateway is the one whose
+   * Apple Pay is drawn by its embedded SDK (see `usePaymobApplePay`), not by
+   * Stripe.js. `eligible` keeps meaning Stripe, so a bundle that predates this
+   * field is unaffected by it. Optional because an API older than this bundle
+   * does not send it — absent reads as "no".
+   */
+  paymob_apple_pay?: boolean;
+}
+
+/**
+ * An Apple-Pay-only payment intention for an order, as the embedded SDK needs
+ * it at mount: the account's public key and the intention's client secret.
+ * `amount` is the server-computed figure (never re-derived here), carried for
+ * the record rather than for display — the SDK reads the amount off the
+ * intention itself.
+ */
+export interface PaymobApplePaySession {
+  public_key: string;
+  client_secret: string;
+  amount: string;
+  currency: 'AED';
+  order_number: string;
 }
 
 /**

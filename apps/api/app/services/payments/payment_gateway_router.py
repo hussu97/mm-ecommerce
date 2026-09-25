@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BadRequestError
 from app.models.payment_gateway import PaymentGateway, PaymentGatewayEnum
 from app.services.providers.base import PaymentGatewayProvider
+from app.services.providers.paymob_provider import provider as paymob_provider
 from app.services.providers.stripe_provider import provider as stripe_provider
 from app.services.providers.ziina_provider import provider as ziina_provider
 
@@ -70,6 +71,7 @@ class NoGatewayAvailableError(BadRequestError):
 PROVIDERS: dict[str, PaymentGatewayProvider] = {
     PaymentGatewayEnum.STRIPE.value: stripe_provider,
     PaymentGatewayEnum.ZIINA.value: ziina_provider,
+    PaymentGatewayEnum.PAYMOB.value: paymob_provider,
 }
 
 
