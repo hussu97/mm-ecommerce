@@ -40,6 +40,8 @@ vi.mock('@/lib/api', () => ({
 /** Handlers the hook registers via `request.on(event, cb)`, captured so the
  * test can fire them directly instead of driving a real Apple Pay sheet. */
 let registered: Record<string, (...args: unknown[]) => unknown> = {};
+/** The most recent PaymentRequest the hook built, for asserting on the sheet. */
+let lastRequest: ReturnType<typeof makePaymentRequest> | null = null;
 
 function makePaymentRequest() {
   return {
@@ -54,7 +56,7 @@ function makePaymentRequest() {
 
 vi.mock('@stripe/stripe-js', () => ({
   loadStripe: vi.fn(async () => ({
-    paymentRequest: vi.fn(() => makePaymentRequest()),
+    paymentRequest: vi.fn(() => (lastRequest = makePaymentRequest())),
     confirmCardPayment: mocks.confirmCardPayment,
   })),
 }));
@@ -203,5 +205,71 @@ describe('useApplePay — stage-aware failure reporting', () => {
     expect(onError).toHaveBeenCalledWith('');
     expect(onError).not.toHaveBeenCalledWith(expect.anything(), 'create_order', expect.anything());
     expect(onError).not.toHaveBeenCalledWith(expect.anything(), 'create_session', expect.anything());
+  });
+});
+
+describe('useApplePay — setup survives the total moving', () => {
+  /** An eligibility answer the test releases by hand, so the total can change
+   * while setup is still waiting on it. */
+  function deferredEligibility() {
+    let release!: (value: { eligible: boolean }) => void;
+    mocks.applePayEligibility.mockImplementation(
+      () => new Promise((resolve) => { release = resolve; }),
+    );
+    return (value = { eligible: true }) => release(value);
+  }
+
+  it('still becomes available when the amount changes mid-setup', async () => {
+    // A delivery checkout: the total moves the moment the delivery-fee preview
+    // lands, typically while eligibility is still in flight. That used to
+    // cancel the setup for good and Apple Pay never appeared.
+    const release = deferredEligibility();
+    const view = renderHook(
+      ({ amount }) => useApplePay({ enabled: true, amount }),
+      { initialProps: { amount: 100 } },
+    );
+    view.rerender({ amount: 115 });
+    await act(async () => { release(); });
+
+    await waitFor(() => expect(view.result.current.available).toBe(true));
+    // The total moving is not a reason to probe again.
+    expect(mocks.applePayEligibility).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a setup that was torn down before it finished', async () => {
+    const release = deferredEligibility();
+    const view = renderHook(
+      ({ enabled }) => useApplePay({ enabled, amount: 100 }),
+      { initialProps: { enabled: true } },
+    );
+    view.rerender({ enabled: false });
+    await act(async () => { release(); });
+    expect(view.result.current.available).toBe(false);
+
+    mocks.applePayEligibility.mockReset().mockResolvedValue({ eligible: true });
+    view.rerender({ enabled: true });
+    await waitFor(() => expect(view.result.current.available).toBe(true));
+  });
+
+  it('shows the live total on the sheet, not the one setup probed with', async () => {
+    const release = deferredEligibility();
+    const view = renderHook(
+      ({ amount }) => useApplePay({ enabled: true, amount }),
+      { initialProps: { amount: 100 } },
+    );
+    view.rerender({ amount: 115 });
+    await act(async () => { release(); });
+    await waitFor(() => expect(view.result.current.available).toBe(true));
+
+    const handlers: ApplePayHandlers = {
+      total: 115,
+      createOrder: vi.fn(),
+      onSuccess: vi.fn(),
+      onError: vi.fn(),
+    };
+    act(() => view.result.current.pay(handlers));
+    expect(lastRequest?.update).toHaveBeenCalledWith({
+      total: { label: 'Melting Moments Cakes', amount: 11500 },
+    });
   });
 });
