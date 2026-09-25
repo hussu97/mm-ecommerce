@@ -279,6 +279,7 @@ _PRESERVE_IF_NULL = (
     "refund_amount",
     "net_payable",
     "statement_id",
+    "customer_is_member",
     "address_geocode_status",
     # customer_name/phone/address + driver_name/phone are handled by
     # _PREFER_UNMASKED (which also COALESCEs); driver_status is a plain word.
@@ -546,6 +547,7 @@ async def upsert_order(
         "refund_amount": order.refund_amount,
         "net_payable": order.net_payable,
         "statement_id": order.statement_id,
+        "customer_is_member": order.customer_is_member,
         "raw": _json_safe(order.raw) if order.raw is not None else None,
     }
     insert_stmt = pg_insert(AggregatorOrder).values(**values)

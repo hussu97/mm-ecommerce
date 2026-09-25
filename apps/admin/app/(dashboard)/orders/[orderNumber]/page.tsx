@@ -694,6 +694,13 @@ export default function OrderDetailPage() {
           </p>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             {order.courier && <CourierLogo courier={order.courier} size={28} showName />}
+            {/* The marketplace's own loyalty flag (Talabat's "Is Subscription
+                Order"). A Pro order carries its 4 AED Pro delivery fee. */}
+            {details?.aggregator_customer_is_member && (
+              <Badge variant="info">
+                {order.aggregator_channel === 'talabat' ? 'Talabat Pro' : 'Loyalty member'}
+              </Badge>
+            )}
             {order.aggregator_display_code && (
               <span className="text-sm font-body text-gray-700">
                 Pickup code{' '}

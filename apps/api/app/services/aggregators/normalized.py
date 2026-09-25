@@ -126,6 +126,11 @@ class StandardOrder:
     refund_amount: Decimal | None = None
     net_payable: Decimal | None = None
     statement_id: str | None = None
+    #: Whether the customer is on the marketplace's loyalty subscription (Talabat
+    #: Pro), as the marketplace itself reports it. None where the channel doesn't
+    #: say. Feeds `aggregator_order.customer_is_member`, which promotion copies onto
+    #: `orders.aggregator_customer_is_member`.
+    customer_is_member: bool | None = None
     items: list[StandardOrderItem] = field(default_factory=list)
     raw: dict | None = None
 

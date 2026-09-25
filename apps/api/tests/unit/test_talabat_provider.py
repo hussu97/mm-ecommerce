@@ -505,6 +505,18 @@ def test_orders_from_csv_unbilled_order_has_unknown_fees_not_zero():
     assert order.net_payable is None
 
 
+@pytest.mark.parametrize(
+    ("flag", "expected"), [("Y", True), ("N", False), ("", None), (" y ", True)]
+)
+def test_orders_from_csv_is_subscription_order_is_talabat_pro(flag, expected):
+    """ "Is Subscription Order" is Talabat Pro: Y/N map to a member flag, and
+    anything else is unknown."""
+    client = TalabatClient()
+    row = {**_UNBILLED_ROW, "Is Subscription Order": flag}
+    order = client._orders_from_csv(_csv_from_rows([row]))[0]
+    assert order.customer_is_member is expected
+
+
 def test_orders_from_csv_billed_zero_fees_stay_zero():
     """Once billed ("Payment type" filled), a 0.00 is a real zero: a cash order
     has no online payment fee, and a non-Pro order has no marketing fee."""
