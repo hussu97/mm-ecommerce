@@ -892,3 +892,17 @@ async def test_an_inquiry_outage_is_still_maybe(monkeypatch):
     _transport(monkeypatch, handler)
     with pytest.raises(GatewayUnavailableError):
         await pm.provider.fetch_outcome(_attempt())
+
+
+async def test_an_inquiry_refused_for_any_other_reason_is_still_maybe(monkeypatch):
+    """Only "not found" means no payment. A permission error must not let the
+    expiry sweep cancel an order Paymob could not be asked about."""
+
+    def handler(request):
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(201, json={"token": "bearer_x"})
+        return httpx.Response(403, json={"detail": "forbidden"})
+
+    _transport(monkeypatch, handler)
+    with pytest.raises(BadRequestError):
+        await pm.provider.fetch_outcome(_attempt())

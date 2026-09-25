@@ -181,6 +181,10 @@ _bearer: dict[str, Any] = {"token": None, "expires": 0.0}
 # ── small pure helpers ─────────────────────────────────────────────────────────
 
 
+class _NotFound(BadRequestError):
+    """Paymob answered 404 to a read: the thing asked about does not exist."""
+
+
 def _wrap(prefix: str, value: Any) -> str | None:
     if value is None or value == "":
         return None
@@ -460,6 +464,8 @@ class PaymobProvider(PaymentGatewayProvider):
             raise GatewayUnavailableError(
                 f"Paymob error {response.status_code}: {response.text[:200]}"
             )
+        if response.status_code == 404:
+            raise _NotFound(f"Paymob has no {path}")
         if response.status_code >= 400:
             raise BadRequestError(f"Paymob refused {path}: {_error_message(response)}")
         try:
@@ -1129,10 +1135,11 @@ class PaymobProvider(PaymentGatewayProvider):
                 "/api/ecommerce/orders/transaction_inquiry",
                 json={"auth_token": token, "order_id": paymob_order},
             )
-        except BadRequestError:
-            # Paymob refusing the question — typically "not found" for an order
-            # nobody ever paid on — is an answer: there is no payment. Only an
-            # outage (`GatewayUnavailableError`) is "maybe", and it propagates.
+        except _NotFound:
+            # "Not found" for an order nobody ever paid on is an answer: there
+            # is no payment. Any other refusal (a permission error, a changed
+            # path) and any outage is "maybe" and propagates — the expiry sweep
+            # must not cancel an order Paymob could not be asked about.
             return None
         if not body.get("id"):
             return None

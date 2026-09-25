@@ -825,6 +825,13 @@ against real sandbox traffic before the flag goes on:
       when an order has several (decline then paid retry), and answers a 4xx
       (not an empty 200) for an order with no transaction — both read as
       "no payment" here.
+- [ ] Put one real sandbox callback **and** one real redirect of each kind —
+      card success, card decline, Apple Pay, refund, void — through
+      `paymob_provider.parse_webhook` / `parse_return`. The signed-field shape
+      check (`_assert_signed_shape`) rejects anything not in Paymob's
+      documented shape (e.g. `12500.0`, lowercase currency, null flags); a
+      rejected success is still recovered by the reconcile sweep, but a
+      rejected decline or refund would not be.
 - [ ] `billing_data.country` is accepted as ISO alpha-3 (`ARE`), as in
       Paymob's examples.
 - [ ] A 401/403/404 creating an intention (bad key, unknown integration id)

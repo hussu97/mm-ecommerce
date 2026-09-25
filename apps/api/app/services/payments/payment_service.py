@@ -870,6 +870,10 @@ def _record_transaction(
             for transaction in order.payment_transactions
             if transaction.gateway == gateway
             and transaction.status == PaymentTransactionStatusEnum.PENDING.value
+            # Only an attempt still waiting for its payment handle — the
+            # hosted-Checkout `cs_…` row this is for. One that already holds a
+            # different payment (an Apple Pay `pi_…`) is a different attempt.
+            and not transaction.payment_id
         ]
         if len(pending) == 1:
             _apply_to_attempt(pending[0], event, status)
