@@ -24,6 +24,9 @@ from app.models.inventory import (
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
+    PurchaseOrder,
+    PurchaseOrderItem,
+    PurchaseOrderStatusEnum,
     TransactionStatusEnum,
 )
 from app.models.inventory_v2 import (
@@ -897,6 +900,151 @@ def _apply_source_columns(
     }
 
 
+#: Purchase orders that may still turn into stock at the branch: raised but not
+#: yet received. A pending one counts — a PO can be raised and received within
+#: seconds, and a delivery typed into the report meanwhile is the same goods.
+_OPEN_PURCHASE_ORDER_STATUSES = (
+    PurchaseOrderStatusEnum.PENDING.value,
+    PurchaseOrderStatusEnum.APPROVED.value,
+    PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value,
+)
+
+
+async def _purchase_order_overlap(
+    db: AsyncSession, report: ShiftInventoryReport, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict]:
+    """
+    Per item: purchase orders that already cover a delivery the shop might type.
+
+    The report's **Received** column posts a purchase of its own, with no
+    purchase order behind it. When the same delivery is also booked on a PO —
+    received that day, or raised and waiting to be — the stock is counted twice
+    (2026-09-25: 25 kg of butter at Sharjah typed into the report *and* received
+    on PO-004481). So each line carries what the PO side already holds for its
+    item, and the register warns the moment someone types into Received for it.
+
+    ``received`` is every PO receipt of the item at this branch on the report's
+    business date, in storage units (a receipt reversed since is left out).
+    ``expected`` is every open PO for the item at the branch due by that date —
+    its delivery date, or the date it was raised when none was set — with the
+    quantity still to arrive. Informational only: nothing here blocks a report.
+    """
+    if not item_ids:
+        return {}
+    reversed_ids = (
+        select(InventoryTransaction.reverses_transaction_id)
+        .where(
+            InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+            InventoryTransaction.reverses_transaction_id.is_not(None),
+        )
+        .scalar_subquery()
+    )
+    received_rows = (
+        await db.execute(
+            select(
+                InventoryTransactionItem.item_id,
+                PurchaseOrder.reference,
+                func.sum(InventoryTransactionItem.signed_quantity),
+            )
+            .join(
+                InventoryTransaction,
+                InventoryTransaction.id == InventoryTransactionItem.transaction_id,
+            )
+            .join(
+                PurchaseOrder,
+                PurchaseOrder.id == InventoryTransaction.purchase_order_id,
+            )
+            .where(
+                InventoryTransaction.branch_id == report.branch_id,
+                InventoryTransaction.type
+                == InventoryTransactionTypeEnum.PURCHASING.value,
+                InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+                InventoryTransaction.business_date == report.business_date,
+                InventoryTransaction.id.notin_(reversed_ids),
+                PurchaseOrder.status != PurchaseOrderStatusEnum.VOIDED.value,
+                InventoryTransactionItem.item_id.in_(item_ids),
+            )
+            .group_by(InventoryTransactionItem.item_id, PurchaseOrder.reference)
+            .order_by(PurchaseOrder.reference)
+        )
+    ).all()
+
+    due_by = datetime.strptime(report.business_date, "%Y-%m-%d").date()
+    expected_rows = (
+        await db.execute(
+            select(
+                PurchaseOrderItem.item_id,
+                PurchaseOrder.reference,
+                PurchaseOrder.delivery_date,
+                PurchaseOrderItem.quantity,
+                PurchaseOrderItem.received_quantity,
+                PurchaseOrderItem.unit,
+                PurchaseOrderItem.conversion_factor,
+            )
+            .join(
+                PurchaseOrder, PurchaseOrder.id == PurchaseOrderItem.purchase_order_id
+            )
+            .where(
+                PurchaseOrder.branch_id == report.branch_id,
+                PurchaseOrder.status.in_(_OPEN_PURCHASE_ORDER_STATUSES),
+                or_(
+                    PurchaseOrder.delivery_date <= due_by,
+                    and_(
+                        PurchaseOrder.delivery_date.is_(None),
+                        PurchaseOrder.business_date <= report.business_date,
+                    ),
+                ),
+                PurchaseOrderItem.item_id.in_(item_ids),
+            )
+            .order_by(PurchaseOrder.reference)
+        )
+    ).all()
+
+    overlap: dict[uuid.UUID, dict] = {}
+    for item_id, reference, received in received_rows:
+        if received is None or Decimal(str(received)) <= 0:
+            continue
+        overlap.setdefault(item_id, {"received": [], "expected": []})[
+            "received"
+        ].append({"reference": reference, "quantity": str(quantity(received))})
+    for (
+        item_id,
+        reference,
+        delivery_date,
+        ordered,
+        received,
+        unit,
+        factor,
+    ) in expected_rows:
+        outstanding = Decimal(str(ordered or 0)) - Decimal(str(received or 0))
+        if outstanding <= 0:
+            continue
+        if unit == "ingredient":
+            outstanding = outstanding / Decimal(str(factor or 1))
+        overlap.setdefault(item_id, {"received": [], "expected": []})[
+            "expected"
+        ].append(
+            {
+                "reference": reference,
+                "quantity": str(quantity(outstanding)),
+                "delivery_date": delivery_date.isoformat() if delivery_date else None,
+            }
+        )
+    return overlap
+
+
+def _apply_purchase_order_overlap(lines, overlap: dict[uuid.UUID, dict]) -> None:
+    """Stamp each line with its PO overlap, clearing a stale one on refresh."""
+    for line in lines:
+        summary = dict(line.source_summary or {})
+        found = overlap.get(line.item_id)
+        if found:
+            summary["purchase_orders"] = found
+        else:
+            summary.pop("purchase_orders", None)
+        line.source_summary = summary
+
+
 # The report kinds that draw raw materials down, and the sibling report kinds whose
 # produced goods do the drawing.
 _CONSUMES_PRODUCTION = frozenset(
@@ -1224,6 +1372,7 @@ async def _create_report(
     # count by category and the admin review shows the same grouping — both read
     # these off the line rather than re-fetching the catalogue.
     categories = await _category_map(db, [row.item_id for row in template.items])
+    created_lines: list[ShiftInventoryReportLine] = []
     for template_item in sorted(template.items, key=lambda row: row.display_order):
         item = await db.get(InventoryItem, template_item.item_id)
         # Skip items since deactivated or deleted — a stale template line must not
@@ -1268,6 +1417,13 @@ async def _create_report(
             proposed_production_consumption=proposed.get(item.id, Decimal("0")),
         )
         db.add(report_line)
+        created_lines.append(report_line)
+    _apply_purchase_order_overlap(
+        created_lines,
+        await _purchase_order_overlap(
+            db, report, [line.item_id for line in created_lines]
+        ),
+    )
     await db.flush()
     return await load_report(db, report.id)
 
@@ -1344,6 +1500,14 @@ async def refresh_report(
             # re-enters and re-confirms after a refresh.
             "entered_columns": [],
         }
+    # A PO raised or received since the report was opened is exactly what the
+    # Received warning exists for, so the overlap is re-read with everything else.
+    _apply_purchase_order_overlap(
+        report.lines,
+        await _purchase_order_overlap(
+            db, report, [line.item_id for line in report.lines]
+        ),
+    )
     report.base_posting_sequence = latest
     await db.flush()
     return report
