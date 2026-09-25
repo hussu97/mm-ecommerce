@@ -47,7 +47,17 @@ The rules, per (item, warehouse):
    re-received correctly costs those uses at the corrected price. Reversing it
    removes its own layer first, then draws FIFO like any issue.
 6. A cost adjustment rescales what survives. Those posted before the v3
-   cutover were workarounds for the bugs this engine replaced, and are skipped.
+   cutover were workarounds for the bugs this engine replaced, and are skipped;
+   so is one that was later reversed, and its reversal — undone means never
+   applied, the same as a voided receipt.
+7. A **production restatement** re-costs one batch: from its posting on, the
+   batch is priced at the restated unit cost instead of the Σ of its recorded
+   inputs, and FIFO carries that into everything drawn from it — transfers,
+   sales, the batches it fed. It is how a batch made from an incomplete recipe
+   (an ingredient left out, or not yet priced) is corrected after the fact,
+   through the ledger rather than around it. The restatement line's own cost is
+   the revaluation it made: batch quantity × (restated − recorded). The latest
+   restatement of a batch wins; a reversed one never applied.
 
 Costs are built as small lazy expressions (:class:`Fixed`, :class:`Pending`,
 :class:`Batch`, …) and evaluated once at the end, which is what makes the
@@ -78,6 +88,7 @@ __all__ = [
     "LevelOut",
     "layer_id",
     "consumption_id",
+    "restatements_from",
 ]
 
 ZERO = Decimal("0")
@@ -96,6 +107,7 @@ WASTE_FROM_PRODUCTION = "waste_from_production"
 CONSUMPTION_FROM_ORDERS = "consumption_from_orders"
 RETURN_FROM_ORDERS = "return_from_orders"
 COST_ADJUSTMENT = "cost_adjustment"
+PRODUCTION_RESTATEMENT = "production_restatement"
 INVENTORY_COUNT = "inventory_count"
 OPENING_BALANCE = "opening_balance"
 
@@ -115,6 +127,31 @@ def consumption_id(line_id: uuid.UUID, ordinal: int) -> uuid.UUID:
 
 def _cost(value: Decimal) -> Decimal:
     return value.quantize(COST)
+
+
+def restatements_from(
+    lines: list["LedgerLine"], reversed_transactions: set[uuid.UUID]
+) -> dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, uuid.UUID]]:
+    """Rule 7's input: ``{(batch group, item): (unit cost, restating line)}``.
+
+    Read ahead of the replay because a restatement is posted after the batch it
+    re-costs but prices it from the start. Latest posting wins; a reversed
+    restatement (and a reversal line) never counts.
+    """
+    out: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, uuid.UUID]] = {}
+    for line in sorted(lines, key=lambda row: row.sort_key):
+        if (
+            line.type != PRODUCTION_RESTATEMENT
+            or line.correction_group_id is None
+            or line.reverses_transaction_id is not None
+            or line.transaction_id in reversed_transactions
+        ):
+            continue
+        out[(line.correction_group_id, line.item_id)] = (
+            Decimal(line.unit_cost),
+            line.line_id,
+        )
+    return out
 
 
 class NeedsReplay(Exception):
@@ -476,6 +513,8 @@ class LineRecord:
     #: value — evaluated at the end.
     value_mark: int = 0
     rescale: RescaleGroup | None = None
+    #: A production restatement: the batch it re-costs (rule 7).
+    restates: "Derived | None" = None
     superseded: bool = False
 
 
@@ -570,6 +609,7 @@ class CostingEngine:
     price. ``external_sends`` carries the projected cost of transfer sends posted
     in a warehouse outside this replay's scope, keyed like
     :meth:`_transfer_key`, as ``(quantity, total_cost, provisional)``.
+    ``restatements`` is :func:`restatements_from` over the replayed lines.
     """
 
     def __init__(
@@ -584,6 +624,8 @@ class CostingEngine:
         fast: bool = False,
         seeds: list[SeedState] | None = None,
         recipes: dict[uuid.UUID, list[tuple[uuid.UUID, Decimal]]] | None = None,
+        restatements: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, uuid.UUID]]
+        | None = None,
     ) -> None:
         self.cutover_sequence = cutover_sequence
         self.reversed = reversed_transactions or set()
@@ -596,6 +638,10 @@ class CostingEngine:
         #: {made item: [(ingredient, storage qty per storage unit made), …]} —
         #: its current recipe, for estimating made stock no batch accounts for.
         self.recipes = recipes or {}
+        self.restatements = restatements or {}
+        #: {batch group: its recorded (input-derived) cost}, kept for the
+        #: restatement line's revaluation when a restatement overrides it.
+        self.recorded_batches: dict[uuid.UUID, Derived] = {}
         self.states: dict[tuple[uuid.UUID, uuid.UUID], ItemState] = {}
         self.records: dict[uuid.UUID, LineRecord] = {}
         self.order: list[uuid.UUID] = []
@@ -783,6 +829,8 @@ class CostingEngine:
 
         if line.type == COST_ADJUSTMENT:
             self._cost_adjustment(state, record)
+        elif line.type == PRODUCTION_RESTATEMENT:
+            self._production_restatement(record)
         elif line.reverses_transaction_id is not None and line.reverses_line_id:
             if self.fast:
                 raise NeedsReplay("reversal")
@@ -808,6 +856,13 @@ class CostingEngine:
             return
         if self.fast:
             raise NeedsReplay("cost adjustment")
+        if (
+            line.reverses_transaction_id is not None
+            or line.transaction_id in self.reversed
+        ):
+            # Rule 6: a reversed adjustment, and the reversal itself, never applied.
+            record.superseded = True
+            return
         live = list(state.live())
         group = RescaleGroup(
             Decimal(line.unit_cost), [(layer.remaining, layer.cost) for layer in live]
@@ -822,6 +877,26 @@ class CostingEngine:
         target = Fixed(line.unit_cost, line.line_id)
         state.last_cost = target
         record.unit = target
+
+    def _production_restatement(self, record: LineRecord) -> None:
+        """Rule 7: the re-costing already happened in :meth:`_batch`; this line
+        only reports the revaluation. Moves no stock and no layer."""
+        line = record.line
+        if self.fast:
+            raise NeedsReplay("production restatement")
+        if (
+            line.reverses_transaction_id is not None
+            or line.transaction_id in self.reversed
+        ):
+            record.superseded = True
+            return
+        active = self.restatements.get((line.correction_group_id, line.item_id))
+        if active is None or active[1] != line.line_id:
+            # Overtaken by a later restatement of the same batch.
+            record.superseded = True
+            return
+        record.unit = Fixed(line.unit_cost, line.line_id)
+        record.restates = self.recorded_batches.get(line.correction_group_id)
 
     def _inflow(self, state: ItemState, record: LineRecord, quantity: Decimal) -> None:
         line = record.line
@@ -898,13 +973,14 @@ class CostingEngine:
                 raise NeedsReplay("overage priced from provisional stock")
         return self._estimate(state, line), kind, False
 
-    def _batch(self, line: LedgerLine) -> Derived | None:
+    def _batch(self, line: LedgerLine) -> Cost | None:
         group = line.correction_group_id
         if group is None:
             return None
+        restated = self.restatements.get((group, line.item_id))
         draws = self.group_draws.get(group)
         external = self.external_group_inputs.get(group)
-        if not draws and not external:
+        if not draws and not external and restated is None:
             return None
         if self.fast and any(provisional for _, _, provisional in external or []):
             raise NeedsReplay("batch made from stock still waiting on a price")
@@ -919,6 +995,12 @@ class CostingEngine:
                     )
             self.batches[group] = batch
         batch.quantity += Decimal(line.delta)
+        if restated is not None:
+            # Rule 7: priced at the restatement from the batch's own posting on;
+            # the recorded cost is kept for the restatement line's revaluation.
+            self.recorded_batches[group] = batch
+            unit_cost, restating_line = restated
+            return Fixed(unit_cost, restating_line)
         return batch
 
     def _transfer_in(self, line: LedgerLine) -> Derived | None:
@@ -1121,6 +1203,11 @@ class CostingEngine:
                     )
                 quantity = sum((draw.quantity for draw in record.draws), ZERO)
                 unit = _cost(total / quantity) if quantity > 0 else ZERO
+            elif record.restates is not None:
+                recorded = record.restates
+                unit = record.unit.resolve().unit_cost
+                total = recorded.quantity * (unit - recorded.resolve().unit_cost)
+                priced_by = line.line_id
             elif record.rescale is not None:
                 group = record.rescale
                 qty = group.total_quantity()

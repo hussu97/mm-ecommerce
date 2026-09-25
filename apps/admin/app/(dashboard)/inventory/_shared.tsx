@@ -123,6 +123,7 @@ export const MOVEMENT_LABELS: Record<string, string> = {
   opening_balance: 'Opening balance',
   internal_use: 'Internal use',
   extra_production_use: 'Extra production use',
+  production_restatement: 'Batch re-cost',
 };
 
 export const movementLabel = (type: string): string =>
@@ -230,6 +231,10 @@ export function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
       if (row.type === 'cost_adjustment') {
         return <span className="text-xs text-gray-600">Value {Number(row.total_cost) >= 0 ? '+' : ''}{formatCost(row.total_cost)}</span>;
       }
+      // A batch re-cost moves no stock either: show the cost the batch now carries.
+      if (row.type === 'production_restatement') {
+        return <div className="space-y-1">{row.items.map((line) => <div key={line.id} className="text-xs text-gray-600">{line.item_name} re-costed to {formatCost(line.unit_cost)} / unit</div>)}</div>;
+      }
       return <div className="space-y-1">{row.items.map((line) => {
         const isCount = row.type === 'inventory_count' || row.type === 'opening_balance';
         return <div key={line.id} className="text-xs"><span className={Number(line.signed_quantity) < 0 ? 'text-red-600' : 'text-green-700'}>{Number(line.signed_quantity) > 0 ? '+' : ''}{formatQuantity(line.signed_quantity ?? line.quantity)}</span> {line.item_name} <span className="text-gray-400">→ {formatQuantity(line.balance_after_quantity)}{isCount ? ' counted' : ''}</span></div>;
@@ -237,7 +242,7 @@ export function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
     } },
     { header: 'Posted', render: (row) => row.posted_at ? new Date(row.posted_at).toLocaleString() : '—' },
   ]} />{!loading && !error && (rows.length > 0 || page > 1) && <Pagination page={page} pages={hasMore ? page + 1 : page} total={end} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="movements" />}
-    {!countOnly && <p className="text-xs text-gray-400 leading-relaxed">How to read this: the ledger is the source of truth and “On hand” is a running projection of it. A green number added stock, a red one removed it; “→” is the item’s balance after that movement. A stock count posts only the difference and sets the balance to what was counted. A revaluation changes cost, not quantity.</p>}</div>;
+    {!countOnly && <p className="text-xs text-gray-400 leading-relaxed">How to read this: the ledger is the source of truth and “On hand” is a running projection of it. A green number added stock, a red one removed it; “→” is the item’s balance after that movement. A stock count posts only the difference and sets the balance to what was counted. A revaluation or a batch re-cost changes cost, not quantity.</p>}</div>;
 }
 
 // ─── Report submissions helpers ───────────────────────────────────────────────

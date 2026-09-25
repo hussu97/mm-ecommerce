@@ -41,6 +41,7 @@ const MOVEMENT_LABELS: Record<string, string> = {
   opening_balance: 'Opening balance',
   internal_use: 'Internal use',
   extra_production_use: 'Extra production use',
+  production_restatement: 'Batch re-cost',
 };
 
 function EstimateBadge() {
@@ -392,7 +393,7 @@ function HistoryTab({
                     </td>
                     <td className="py-2 text-right tabular-nums">
                       {row.superseded ? (
-                        <span className="text-gray-400" title="A pre-v3 cost adjustment — superseded by the FIFO replay.">superseded</span>
+                        <span className="text-gray-400" title="Not applied: a pre-v3 cost adjustment, a reversed entry, or a batch re-cost replaced by a later one.">superseded</span>
                       ) : (
                         <>
                           {formatCost(row.unit_cost)} {row.is_provisional && <EstimateBadge />}

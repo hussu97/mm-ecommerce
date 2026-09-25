@@ -117,6 +117,7 @@ REFERENCE_PREFIX = {
     InventoryTransactionTypeEnum.OPENING_BALANCE.value: "OPN",
     InventoryTransactionTypeEnum.INTERNAL_USE.value: "INT",
     InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value: "EPU",
+    InventoryTransactionTypeEnum.PRODUCTION_RESTATEMENT.value: "PRS",
 }
 
 
@@ -458,6 +459,12 @@ async def post_transaction(
             line.quantity = _q(level.quantity)
             line.quantity_in_storage_unit = _q(level.quantity)
             line.quantity_in_ingredient_unit = _q(Decimal(str(level.quantity)) * factor)
+            delta = Decimal("0")
+        elif (
+            transaction.type
+            == InventoryTransactionTypeEnum.PRODUCTION_RESTATEMENT.value
+        ):
+            # Re-costs a batch; its quantity is the batch's, for the record only.
             delta = Decimal("0")
         elif prevent_negative and delta < 0 and _q(level.quantity) + delta < 0:
             raise ConflictError(
@@ -1402,6 +1409,72 @@ async def adjust_cost(
         "adjusted_by": (user.display_name or user.email) if user else "system",
         "notes": notes,
     }
+
+
+async def restate_production_cost(
+    db: AsyncSession,
+    *,
+    production_transaction_id: uuid.UUID,
+    unit_cost: Decimal,
+    user: User | None = None,
+    notes: str | None = None,
+) -> InventoryTransaction:
+    """
+    Re-cost one production batch at *unit_cost* per storage unit, after the fact.
+
+    A batch is costed at what its recorded inputs cost, so one made from an
+    incomplete recipe — an ingredient left out, or one not priced yet — carries
+    too little (or, with an over-stated line, too much). Its stock has usually
+    long since been transferred and sold. This books the correction in the
+    ledger: a ``production_restatement`` linked to the batch by its
+    ``correction_group_id``, which the costing engine applies from the batch's
+    own posting on, so every transfer, sale and batch that drew from it is
+    re-priced with it. No stock moves; reversing it restores the recorded cost.
+    """
+    if unit_cost < 0:
+        raise BadRequestError("Cost cannot be negative")
+    production = await load_transaction(db, production_transaction_id)
+    if (
+        production.type != InventoryTransactionTypeEnum.PRODUCTION.value
+        or not production.is_posted
+        or production.reverses_transaction_id is not None
+    ):
+        raise BadRequestError("Only a posted production batch can be restated")
+    if production.correction_group_id is None or len(production.items) != 1:
+        raise BadRequestError(
+            f"{production.reference} is not a single-item batch and cannot be restated"
+        )
+    line = production.items[0]
+    branch = await db.get(Branch, production.branch_id)
+    transaction = InventoryTransaction(
+        reference=await next_reference(
+            db, InventoryTransactionTypeEnum.PRODUCTION_RESTATEMENT.value
+        ),
+        type=InventoryTransactionTypeEnum.PRODUCTION_RESTATEMENT.value,
+        status=TransactionStatusEnum.DRAFT.value,
+        branch_id=production.branch_id,
+        warehouse_id=production.warehouse_id,
+        business_date=await business_day_service.current_business_date(db, branch),
+        correction_group_id=production.correction_group_id,
+        source_type="production",
+        source_id=str(production.id),
+        notes=notes,
+        creator_id=user.id if user else None,
+        # Seeded in the constructor: appending after a flush would lazy-load the
+        # collection (MissingGreenlet under async).
+        items=[
+            InventoryTransactionItem(
+                item_id=line.item_id,
+                quantity=_q(Decimal(str(line.signed_quantity))),
+                unit="storage",
+                conversion_factor=Decimal("1"),
+                unit_cost=_c(unit_cost),
+            )
+        ],
+    )
+    db.add(transaction)
+    await db.flush()
+    return await post_transaction(db, transaction=transaction, user=user)
 
 
 async def open_count(

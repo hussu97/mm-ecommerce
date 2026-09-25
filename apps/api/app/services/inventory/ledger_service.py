@@ -138,6 +138,15 @@ async def reconcile_levels(
     return drifts
 
 
+#: Movements that change what stock is worth and never how much there is.
+_VALUE_ONLY_TYPES = frozenset(
+    {
+        InventoryTransactionTypeEnum.COST_ADJUSTMENT.value,
+        InventoryTransactionTypeEnum.PRODUCTION_RESTATEMENT.value,
+    }
+)
+
+
 async def reverse_transaction(
     db: AsyncSession,
     *,
@@ -169,9 +178,12 @@ async def reverse_transaction(
     if existing is not None:
         return existing
     correction_group = original.correction_group_id or uuid.uuid4()
+    # A value-only movement is undone by one of its own kind (the costing engine
+    # then treats both as never applied); anything that moved stock by a signed
+    # quantity adjustment.
     reversal_type = (
-        InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
-        if original.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
+        original.type
+        if original.type in _VALUE_ONLY_TYPES
         else InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value
     )
     reversal = InventoryTransaction(
