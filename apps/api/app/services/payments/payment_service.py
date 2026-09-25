@@ -633,7 +633,11 @@ async def handle_gateway_return(
 
     try:
         async with db.begin_nested():
-            await _dedup_and_apply(db, gateway, event)
+            # Confirmed against the gateway like a webhook's is (Paymob's
+            # refunded amount is unsigned). Inside the savepoint: a gateway that
+            # cannot be reached just now must not turn a customer's return into
+            # an error page — the webhook settles it instead.
+            await _dedup_and_apply(db, gateway, await provider.verify_event(event))
     except Exception:  # noqa: BLE001 — the webhook is the fallback; see above
         logger.critical(
             "%s return could not be applied for %s — rolled back, the webhook "
@@ -799,19 +803,44 @@ def _record_transaction(
     An event whose handles match nothing — which is every event on an order
     created before this table — is left alone rather than written onto the
     wrong row.
+
+    **The payment handle outranks the session handle.** An exact payment match
+    is looked for first, and a session match is taken only when the row has no
+    payment of its own yet or it is this same payment. A gateway session can
+    carry more than one transaction — Paymob's does — so a second, distinct
+    charge on one session would otherwise land on the row of the charge that
+    already took the money: its refund marking the *kept* payment refunded, and
+    the order then reading as unpaid with nothing left to refund against.
     """
     handles = {h for h in (event.payment_id, event.session_id) if h}
     if not handles:
         return None
 
     status = _status_for_attempt(order, event)
-    for transaction in order.payment_transactions:
-        if transaction.gateway != gateway:
-            continue
-        if not ({transaction.payment_id, transaction.session_id} & handles):
-            continue
-        _apply_to_attempt(transaction, event, status)
-        return transaction
+    rows = [t for t in order.payment_transactions if t.gateway == gateway]
+    match = None
+    if event.payment_id:
+        match = next(
+            (t for t in rows if event.payment_id in (t.payment_id, t.session_id)),
+            None,
+        )
+    if match is None and event.session_id:
+        match = next(
+            (
+                t
+                for t in rows
+                if event.session_id in (t.session_id, t.payment_id)
+                and (
+                    not t.payment_id
+                    or not event.payment_id
+                    or t.payment_id == event.payment_id
+                )
+            ),
+            None,
+        )
+    if match is not None:
+        _apply_to_attempt(match, event, status)
+        return match
 
     # Nothing on file matched the handles this event carries. When the order was
     # resolved from its own number — metadata we put there and trust — and the
@@ -1097,17 +1126,25 @@ async def _record_and_refund_duplicate(
         captured,
     )
 
-    if matched is not None:
+    if matched is not None and matched.payment_id == event.payment_id:
+        # This charge's own attempt row (a second checkout), already carrying
+        # the duplicate's handle — `_record_transaction` adopted it.
         duplicate = matched
         duplicate.status = PaymentTransactionStatusEnum.SUCCEEDED.value
-        duplicate.payment_id = duplicate.payment_id or event.payment_id
         duplicate.amount = captured
     else:
+        # A row of its own. Without a session when that session is already on
+        # file (a second transaction on one gateway session), which keeps it
+        # clear of the per-gateway session index and off the kept payment's row.
+        session_taken = any(
+            t.gateway == gateway and t.session_id == event.session_id
+            for t in order.payment_transactions
+        )
         duplicate = PaymentTransaction(
             order_id=order.id,
             gateway=gateway,
             status=PaymentTransactionStatusEnum.SUCCEEDED.value,
-            session_id=event.session_id,
+            session_id=None if session_taken else event.session_id,
             payment_id=event.payment_id,
             amount=captured,
             currency="AED",

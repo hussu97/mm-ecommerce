@@ -415,7 +415,12 @@ async def test_the_unsigned_refunded_amount_is_re_read_before_it_is_believed(
             return httpx.Response(201, json={"token": "bearer_x"})
         assert request.url.path == "/api/acceptance/transactions/192036465"
         return httpx.Response(
-            200, json={"refunded_amount_cents": 3000, "amount_cents": 12500}
+            200,
+            json={
+                "refunded_amount_cents": 3000,
+                "amount_cents": 12500,
+                "order": {"id": 217503754},
+            },
         )
 
     _transport(monkeypatch, handler)
@@ -428,9 +433,75 @@ async def test_the_unsigned_refunded_amount_is_re_read_before_it_is_believed(
     assert verified.refund_id == "paymob:txn_192036465:3000"
 
 
-async def test_verify_leaves_other_events_alone(monkeypatch):
-    _transport(monkeypatch, lambda r: pytest.fail("no network for a success"))
+def _reads(monkeypatch, record: dict):
+    def handler(request):
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(201, json={"token": "bearer_x"})
+        return httpx.Response(200, json=record)
+
+    return _transport(monkeypatch, handler)
+
+
+async def test_a_success_is_applied_only_once_paymob_confirms_it(monkeypatch):
+    _reads(monkeypatch, _obj())
     body, query = _post(_obj())
+    parsed = pm.provider.parse_webhook(body, {}, query=query)
+    assert await pm.provider.verify_event(parsed) is parsed
+
+
+async def test_a_callback_paymob_does_not_recognise_is_not_applied(monkeypatch):
+    """Paymob's own record says this transaction belongs to another order."""
+    _reads(monkeypatch, _obj(order={"id": 1}))
+    body, query = _post(_obj())
+    verified = await pm.provider.verify_event(
+        pm.provider.parse_webhook(body, {}, query=query)
+    )
+    assert verified.event_type is PaymentEventType.UNHANDLED
+    assert verified.raw_type == "mismatch"
+
+
+async def test_a_claimed_success_paymob_records_as_declined_is_not_applied(monkeypatch):
+    _reads(monkeypatch, _obj(success=False))
+    body, query = _post(_obj())
+    verified = await pm.provider.verify_event(
+        pm.provider.parse_webhook(body, {}, query=query)
+    )
+    assert verified.event_type is PaymentEventType.UNHANDLED
+
+
+async def test_digits_moved_between_order_and_owner_still_verify_but_are_caught(
+    monkeypatch,
+):
+    """
+    Paymob's HMAC has no separators, so `order=217503754, owner=302852` and
+    `order=2175037543, owner=02852` sign identically. The shape check rejects
+    the leading-zero owner; a split that survives it is caught by Paymob's own
+    record of the transaction naming the original order.
+    """
+    genuine = _obj(owner=312852)
+    _, query = _post(genuine)
+    shifted = _obj(order={"id": 2175037543}, owner=12852)
+    body = json.dumps({"type": "TRANSACTION", "obj": shifted}).encode()
+    parsed = pm.provider.parse_webhook(body, {}, query=query)  # the signature holds
+    assert parsed.session_id == "ord_2175037543"
+
+    _reads(monkeypatch, genuine)
+    verified = await pm.provider.verify_event(parsed)
+    assert verified.event_type is PaymentEventType.UNHANDLED
+
+
+def test_a_leading_zero_split_is_refused_outright():
+    genuine = _obj()
+    _, query = _post(genuine)
+    shifted = _obj(order={"id": 2175037543}, owner="02852")
+    body = json.dumps({"type": "TRANSACTION", "obj": shifted}).encode()
+    with pytest.raises(BadRequestError, match="Malformed"):
+        pm.provider.parse_webhook(body, {}, query=query)
+
+
+async def test_verify_leaves_unhandled_events_alone(monkeypatch):
+    _transport(monkeypatch, lambda r: pytest.fail("nothing to confirm"))
+    body, query = _post(_obj(pending=True, success=False))
     parsed = pm.provider.parse_webhook(body, {}, query=query)
     assert await pm.provider.verify_event(parsed) is parsed
 

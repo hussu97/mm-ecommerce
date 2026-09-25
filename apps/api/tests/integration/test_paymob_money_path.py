@@ -630,3 +630,53 @@ async def test_a_second_charge_through_apple_pay_is_given_back_and_only_it(
     assert stored.status == OrderStatusEnum.CONFIRMED
     assert Decimal(str(stored.refunded_amount or 0)) == Decimal("0")
     assert world.emails.refund.await_count == 0
+
+
+async def test_two_successes_on_one_intention_keep_the_first_and_return_the_second(
+    world,
+):
+    """
+    One Paymob intention can carry more than one transaction. If two succeed,
+    the first is the payment and the second is a duplicate — refunded against
+    its own transaction, on its own row. The row of the payment that is kept
+    must stay settled, so a later cancellation can still refund it.
+    """
+    from app.models.order import OrderStatusEnum
+    from app.services.payments import payment_service
+
+    order = await world.new_order()
+    paymob_order = await _checkout(world, order)
+    first = world.fake.pay(paymob_order)
+    assert (await _post(world, first)).status_code == 200
+    second = world.fake.pay(paymob_order)  # same intention, second success
+    response = await _post(world, second)
+    assert response.status_code == 200, response.text
+
+    stored = await world.load(order.id)
+    assert stored.status == OrderStatusEnum.CONFIRMED
+    assert world.fake.refund_posts == [
+        {"transaction_id": second["id"], "amount_cents": 12500}
+    ]
+    by_payment = {t.payment_id: t for t in stored.payment_transactions}
+    assert by_payment[f"txn_{first['id']}"].is_settled, "the kept payment stays paid"
+    assert by_payment[f"txn_{second['id']}"].status == "refunded"
+    assert payment_service._is_paid(stored)
+
+    # Paymob reports the duplicate's refund: the kept payment is untouched.
+    assert (await _post(world, dict(world.fake.txns[second["id"]]))).status_code == 200
+    stored = await world.load(order.id)
+    assert {t.payment_id: t for t in stored.payment_transactions}[
+        f"txn_{first['id']}"
+    ].is_settled
+    assert Decimal(str(stored.refunded_amount or 0)) == Decimal("0")
+
+    # And a refund of the order still goes to the payment that was kept.
+    async with world.maker() as s:
+        loaded = await s.merge(await world.load(order.id))
+        refunded = await payment_service.refund_order(s, loaded)
+        await s.commit()
+    assert refunded == Decimal("125.00")
+    assert world.fake.refund_posts[-1] == {
+        "transaction_id": first["id"],
+        "amount_cents": 12500,
+    }

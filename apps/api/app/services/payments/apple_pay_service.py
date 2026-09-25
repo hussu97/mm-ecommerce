@@ -62,18 +62,6 @@ async def _default_card_gateway(db: AsyncSession, amount: Decimal) -> str | None
     return options[0].code if options else None
 
 
-async def _stripe_is_default_card_gateway(db: AsyncSession, amount: Decimal) -> bool:
-    """
-    True when the gateway that would settle a card of *amount* is Stripe.
-
-    Reads the same `candidates()` the real payment does, so the answer tracks an
-    admin toggling gateways during an incident without anything shipping — the
-    moment Ziina is made the default, Apple Pay stops being offered.
-    """
-    options = await payment_gateway_router.candidates(db, amount)
-    return bool(options) and options[0].code == stripe_provider.code
-
-
 async def eligibility(db: AsyncSession, *, amount: Decimal | None = None) -> dict:
     """
     Whether in-page Apple Pay may be offered here at all.

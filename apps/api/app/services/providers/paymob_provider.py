@@ -53,6 +53,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 import uuid
 from decimal import Decimal
@@ -247,6 +248,64 @@ def _signed_value(fields: Mapping[str, Any], name: str, *, flat: bool) -> Any:
     if name == "order.id":
         return fields.get("order", fields.get("order_id"))
     return fields.get(name)
+
+
+#: A canonical integer: no sign, no leading zero — a zero moved off the front
+#: of one field is exactly what a re-split leaves behind.
+_DIGITS = re.compile(r"^(0|[1-9]\d*)$")
+_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$"
+)
+_CURRENCY = re.compile(r"^[A-Z]{3}$")
+_FLAGS = (
+    "error_occured",
+    "has_parent_transaction",
+    "is_3d_secure",
+    "is_auth",
+    "is_capture",
+    "is_refunded",
+    "is_standalone_payment",
+    "is_voided",
+    "pending",
+    "success",
+)
+
+
+def _assert_signed_shape(fields: Mapping[str, Any], *, flat: bool) -> None:
+    """
+    Every signed field has exactly the shape Paymob gives it.
+
+    Paymob's signature is over the fields *concatenated with no separator*, so
+    it proves the string, not where one field ends and the next begins: a
+    holder of one valid signed set (anyone who paid for one order) can move a
+    digit from `order.id` into `owner`, or from `amount_cents` into
+    `created_at`, and the signature still verifies. The moved values are
+    malformed — an id with a leading dash, a timestamp missing its year — so
+    requiring each field's own shape closes the gap without breaking the
+    scheme we have to interoperate with.
+    """
+
+    def value(name: str) -> str:
+        return _hmac_text(_signed_value(fields, name, flat=flat))
+
+    for name in ("amount_cents", "id", "integration_id", "order.id", "owner"):
+        if not _DIGITS.match(value(name)):
+            raise BadRequestError(
+                f"Malformed signed field {name!r} — signature not trusted"
+            )
+    if not _TIMESTAMP.match(value("created_at")):
+        raise BadRequestError(
+            "Malformed signed field 'created_at' — signature not trusted"
+        )
+    if not _CURRENCY.match(value("currency")):
+        raise BadRequestError(
+            "Malformed signed field 'currency' — signature not trusted"
+        )
+    for name in _FLAGS:
+        if value(name) not in ("true", "false"):
+            raise BadRequestError(
+                f"Malformed signed field {name!r} — signature not trusted"
+            )
 
 
 def _expected_hmac(values: list[Any], secret: str) -> str:
@@ -680,6 +739,7 @@ class PaymobProvider(PaymentGatewayProvider):
             [_signed_value(obj, f, flat=False) for f in _TRANSACTION_HMAC_FIELDS],
             presented,
         )
+        _assert_signed_shape(obj, flat=False)
         data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
         migs = (
             data.get("migs_order") if isinstance(data.get("migs_order"), dict) else {}
@@ -709,6 +769,7 @@ class PaymobProvider(PaymentGatewayProvider):
             [_signed_value(query, f, flat=True) for f in _TRANSACTION_HMAC_FIELDS],
             query.get("hmac"),
         )
+        _assert_signed_shape(query, flat=True)
         return self._event_from_fields(
             query,
             flat=True,
@@ -893,24 +954,72 @@ class PaymobProvider(PaymentGatewayProvider):
 
     async def verify_event(self, event: GatewayEvent) -> GatewayEvent:
         """
-        Re-read the one money figure the signature does not cover.
+        Confirm a callback against Paymob itself before anything acts on it.
 
-        `refunded_amount_cents` is outside the HMAC, so a replayed refund
-        callback could carry any number at all — and a cumulative refund figure
-        is *set* onto the order. The figure that is applied is therefore the one
-        Paymob answers when asked directly, and the event id and refund id are
-        rebuilt from it so the dedup and the "already booked" check are keyed on
-        the truth.
+        Two things the signature cannot be trusted for, and one read answers
+        both:
+
+        * **Field boundaries.** The HMAC is over the fields concatenated with no
+          separator, so a holder of one valid signed set can move digits between
+          adjacent numeric fields — `order.id` and `owner` sit side by side —
+          and still verify, naming a different Paymob order. The shape checks in
+          `_assert_signed_shape` catch most such splits; this catches the rest.
+          The transaction is read back by its id and must belong to the same
+          Paymob order, with the same outcome and amount. A mismatch is not an
+          event we act on.
+        * **The refunded amount**, which is outside the signature entirely and
+          is *set* onto the order. The figure applied is the one Paymob answers,
+          and the event and refund ids are rebuilt from it so dedup and the
+          "already booked" check are keyed on the truth.
+
+        Only for events that move money or an order: a pending, foreign,
+        child or token callback is applied to nothing and is returned as-is.
+        Raises `GatewayUnavailableError` when Paymob cannot be asked, which the
+        webhook answers with a 500 (retry) and the reconcile sweep backstops.
         """
+        if event.event_type not in (
+            PaymentEventType.SUCCEEDED,
+            PaymentEventType.FAILED,
+            PaymentEventType.REFUNDED,
+        ):
+            return event
+        txn_id = event.event_id.split(":")[2]
+        body = await self._get_transaction(txn_id)
+
+        fetched_order = _wrap(
+            _ORDER_PREFIX, _signed_value(body, "order.id", flat=False)
+        )
+        fetched_amount = _as_int(body.get("amount_cents"))
+        succeeded = _truthy(body.get("success")) and not _truthy(body.get("pending"))
+        consistent = fetched_order == event.session_id and (
+            event.event_type is not PaymentEventType.SUCCEEDED
+            or (succeeded and fetched_amount == event.amount_captured)
+        )
+        if event.event_type is PaymentEventType.FAILED and succeeded:
+            consistent = False
+        if not consistent:
+            logger.critical(
+                "Paymob callback for txn %s does not match Paymob's own record "
+                "(callback order %s, Paymob order %s, event %s) — not applied",
+                txn_id,
+                event.session_id,
+                fetched_order,
+                event.event_type.value,
+            )
+            return GatewayEvent(
+                event_id=f"paymob:txn:{txn_id}:mismatch",
+                event_type=PaymentEventType.UNHANDLED,
+                raw_type="mismatch",
+                session_id=event.session_id,
+            )
+
         if (
             event.event_type is not PaymentEventType.REFUNDED
             or event.raw_type != "refunded"
         ):
             return event
-        txn_id = _unwrap(_TXN_PREFIX, event.payment_id)
-        body = await self._get_transaction(txn_id)
         refunded = _as_int(body.get("refunded_amount_cents")) or 0
-        captured = _as_int(body.get("amount_cents")) or event.amount_captured
+        captured = fetched_amount or event.amount_captured
         return GatewayEvent(
             event_id=f"paymob:txn:{txn_id}:refunded-{refunded}",
             event_type=event.event_type,
