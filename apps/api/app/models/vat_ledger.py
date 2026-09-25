@@ -61,6 +61,11 @@ class VatCategoryEnum(str, enum.Enum):
     MARKETPLACE_MARKETING = "marketplace_marketing"
     #: Input VAT on marketplace cancellation fees.
     MARKETPLACE_CANCELLATION = "marketplace_cancellation"
+    #: Input VAT on marketplace charges no order carries, dated by statement:
+    #: noon's monthly platform and long-distance fees, Deliveroo's monthly admin
+    #: fee and its correction credits (a credit is stored negative). See
+    #: `services/aggregators/period_charges`. Widened in ``288_vat_period_charges``.
+    MARKETPLACE_PERIOD_CHARGES = "marketplace_period_charges"
 
 
 class VatLedgerEntry(Base, UUIDMixin, TimestampMixin):
@@ -68,7 +73,8 @@ class VatLedgerEntry(Base, UUIDMixin, TimestampMixin):
 
     **A cache, not a source of truth.** Every row is recomputed idempotently by
     ``app.services.vat_ledger`` from the underlying tables (orders, their fee
-    columns, order deliveries, purchase orders) — the sweep deletes a window's
+    columns, order deliveries, purchase orders, and the marketplace statement
+    lines that belong to no order) — the sweep deletes a window's
     rows and rebuilds them, so nothing here is ever hand-edited. It exists so the
     console can read a legal entity's VAT position in one cheap query instead of
     re-aggregating five source tables on every page load.

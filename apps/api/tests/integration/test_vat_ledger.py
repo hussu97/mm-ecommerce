@@ -293,3 +293,119 @@ async def test_recompute_is_idempotent(seeded):
             )
         )
     assert first == second and first > 0
+
+
+# ── statement charges no order carries ─────────────────────────────────────────
+CHARGE_DATE = "2031-01-31"  # its own day, so nothing else lands in the window
+
+
+@pytest.fixture
+async def statement_charges(engine):
+    """Live-shaped non-order statement lines on CHARGE_DATE:
+
+    * noon platform fee 156.45 and long-distance fee 109.20, both VAT-inclusive
+      (VAT is 5/105 of each: 7.45 and 5.20);
+    * Deliveroo's monthly admin fee 190.48 with its own 9.52 VAT line;
+    * a Deliveroo correction credit of 380.96 + 19.04 VAT, booked positive;
+    * and a noon ORDER line, which is the order columns' business and must not
+      be counted here.
+    """
+    from app.models.aggregator import AggregatorStatementLine
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    monthly = "Brand level monthly platform fee of AED 200"
+    credit = "Invoice correction credit"
+    lines = (
+        ("noon", None, "fee", "platform_fee", "Platform fee", "-156.45"),
+        ("noon", None, "fee", "long_distance_fee", "Long distance fee", "-109.20"),
+        ("deliveroo", None, "adjustment", "monthly_admin_fee", monthly, "-190.48"),
+        ("deliveroo", None, "vat", "commission_vat", monthly, "-9.52"),
+        (
+            "deliveroo",
+            None,
+            "adjustment",
+            "invoice_correction_credit",
+            credit,
+            "380.96",
+        ),
+        ("deliveroo", None, "vat", "commission_vat", credit, "19.04"),
+        ("noon", f"{MARKER}-order", "fee", "payment_fee", None, "-0.84"),
+    )
+    async with Session() as db:
+        for n, (channel, order_id, line_type, category, desc, amount) in enumerate(
+            lines
+        ):
+            db.add(
+                AggregatorStatementLine(
+                    channel=channel,
+                    source_key=f"{MARKER}-{tag}-{n}",
+                    statement_id=f"{MARKER}-{tag}",
+                    external_order_id=order_id,
+                    line_date=CHARGE_DATE,
+                    line_type=line_type,
+                    fee_category=category,
+                    description=desc,
+                    amount=Decimal(amount),
+                    grain="order" if order_id else "summary",
+                )
+            )
+        await db.commit()
+    yield Session
+    async with Session() as db:
+        await db.execute(
+            AggregatorStatementLine.__table__.delete().where(
+                AggregatorStatementLine.source_key.like(f"{MARKER}-{tag}-%")
+            )
+        )
+        await db.execute(
+            VatLedgerEntry.__table__.delete().where(
+                VatLedgerEntry.business_date == CHARGE_DATE
+            )
+        )
+        await db.commit()
+
+
+async def test_statement_charges_book_input_vat_on_the_marketplace_entity(
+    statement_charges,
+):
+    """The charges land as one input row on the statement date, under the entity
+    marketplace orders are booked under, with the P&L's VAT split. The order line
+    is left out, and the credit reduces the charge and its VAT:
+
+    gross 156.45 + 109.20 + 200.00 − 400.00 = 65.65
+    VAT     7.45 +   5.20 +   9.52 −  19.04 =  3.13, net 62.52
+    """
+    from app.services.orders import tax_identity_service
+
+    Session = statement_charges
+    async with Session() as db:
+        assert await vat_ledger._needs_backfill(db)  # charges, no ledger row yet
+        await vat_ledger.compute_window(db, CHARGE_DATE, CHARGE_DATE)
+        await db.commit()
+        marketplace = await tax_identity_service.resolve(
+            db, branch_id=None, source="aggregator"
+        )
+        rows = await vat_ledger.read_ledger(
+            db, date_from=CHARGE_DATE, date_to=CHARGE_DATE
+        )
+        assert not await vat_ledger._needs_backfill(db)
+
+    [row] = rows
+    assert row["legal_entity_id"] == marketplace.id
+    assert row["category"] == VatCategoryEnum.MARKETPLACE_PERIOD_CHARGES.value
+    assert row["direction"] == VatDirectionEnum.INPUT.value
+    assert row["gross_value"] == Decimal("65.65")
+    assert row["vat_amount"] == Decimal("3.13")
+    assert row["net_value"] == Decimal("62.52")
+    assert row["vat_recoverable"] is True
+    assert row["source_count"] == 6  # the order line is not one of them
+
+    # Idempotent: a rebuild of the same day writes the same single row.
+    async with Session() as db:
+        await vat_ledger.compute_window(db, CHARGE_DATE, CHARGE_DATE)
+        await db.commit()
+        again = await vat_ledger.read_ledger(
+            db, date_from=CHARGE_DATE, date_to=CHARGE_DATE
+        )
+    assert again == rows
