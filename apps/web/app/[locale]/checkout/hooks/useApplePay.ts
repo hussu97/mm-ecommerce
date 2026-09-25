@@ -99,6 +99,19 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
   //: (Stripe fires one after the sheet closes) is not read as an abandonment.
   const settledRef = useRef(false);
   const setupStarted = useRef(false);
+  //: The latest total, read when setup actually probes. Kept out of the setup
+  //: effect's dependencies on purpose: on a delivery checkout the total moves
+  //: the moment the delivery-fee preview lands — usually while setup is still
+  //: awaiting eligibility and Stripe.js — and an effect keyed on it cancelled
+  //: that in-flight setup and, with `setupStarted` already set, never ran it
+  //: again. Apple Pay then simply never appeared.
+  const amountRef = useRef(amount);
+  // Declared before the setup effect, so on any render the ref is current by
+  // the time setup reads it (effects run in order).
+  useEffect(() => {
+    amountRef.current = amount;
+  }, [amount]);
+  const hasAmount = amount > 0;
 
   const minorAmount = useCallback((value: number) => Math.round(value * 100), []);
 
@@ -107,10 +120,12 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
     // device's Apple Pay capability does not change with the amount, so there
     // is nothing to redo when the total moves — `pay()` updates the figure on
     // the sheet itself.
-    if (!enabled || setupStarted.current || amount <= 0 || !PUBLISHABLE_KEY) return;
+    if (!enabled || setupStarted.current || !hasAmount || !PUBLISHABLE_KEY) return;
     setupStarted.current = true;
+    const amount = amountRef.current;
 
     let cancelled = false;
+    let completed = false;
     (async () => {
       // Start loading Stripe.js in parallel with the eligibility round-trip.
       // The script does not depend on the answer, and js.stripe.com is the
@@ -226,13 +241,18 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
 
       stripeRef.current = stripe;
       requestRef.current = request;
+      completed = true;
       if (!cancelled) setAvailable(true);
     })();
 
     return () => {
       cancelled = true;
+      // A setup torn down before it finished (the page turning Apple Pay off
+      // and on again, a remount) must be free to run again — otherwise the
+      // option is hidden for the rest of the visit.
+      if (!completed) setupStarted.current = false;
     };
-  }, [enabled, amount, minorAmount]);
+  }, [enabled, hasAmount, minorAmount]);
 
   /**
    * Open the Apple Pay sheet for one payment.
