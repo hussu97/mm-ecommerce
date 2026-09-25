@@ -25,6 +25,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   raw_goods: 'Raw goods',
   marketplace_marketing: 'Marketplace marketing',
   marketplace_cancellation: 'Marketplace cancellation',
+  marketplace_period_charges: 'Marketplace platform & period charges',
 };
 
 const categoryLabel = (category: string): string =>

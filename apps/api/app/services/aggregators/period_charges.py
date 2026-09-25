@@ -76,10 +76,17 @@ async def period_charges(
     date_from: str,
     date_to: str,
     channels: set[str] | None = None,
+    *,
+    by_date: bool = False,
 ) -> list[PeriodCharge]:
     """
     Non-order marketplace charges whose statement line falls in
     [`date_from`, `date_to`], optionally narrowed to P&L `channels`.
+
+    One charge per (channel, category) over the window, which is what the P&L
+    shows. With `by_date`, one per (channel, category, statement date), so
+    `first_date == last_date`. The VAT ledger uses that to book each charge on
+    its own day.
     """
     ln = AggregatorStatementLine
     stmt = select(
@@ -102,8 +109,9 @@ async def period_charges(
     if channels is not None:
         rows = [r for r in rows if pnl_channel_for(r.channel) in channels]
 
-    # (channel, category) → running totals, gross (as billed) and VAT itemised.
-    groups: dict[tuple[str, str], dict] = defaultdict(
+    # (channel, category, day) → running totals, gross (as billed) and VAT
+    # itemised. `day` is the statement date under `by_date`, else one bucket.
+    groups: dict[tuple[str, str, str], dict] = defaultdict(
         lambda: {
             "gross": Decimal(0),
             "vat": Decimal(0),
@@ -116,6 +124,9 @@ async def period_charges(
     def category_of(r) -> str:
         return (r.fee_category or r.line_type or "other").lower()
 
+    def day_of(r) -> str:
+        return r.line_date if by_date else ""
+
     # An itemised VAT line (Deliveroo's monthly fee) carries the same statement
     # description as the charge it taxes, which is how it finds its charge.
     charge_for_description = {
@@ -125,18 +136,18 @@ async def period_charges(
         cost = -to_decimal(r.amount)  # a fee is booked negative
         if r.is_vat:
             category = charge_for_description.get((r.channel, r.description), "vat")
-            g = groups[(r.channel, category)]
+            g = groups[(r.channel, category, day_of(r))]
             g["vat"] += cost
         else:
             category = category_of(r)
-            g = groups[(r.channel, category)]
+            g = groups[(r.channel, category, day_of(r))]
             g["gross"] += cost
             g["description"] = g["description"] or r.description
         g["dates"].append(r.line_date)
         g["lines"] += 1
 
     out: list[PeriodCharge] = []
-    for (channel, category), g in sorted(groups.items()):
+    for (channel, category, _day), g in sorted(groups.items()):
         gross = g["gross"]
         if channel in _VAT_INCLUSIVE_CHANNELS and not g["vat"]:
             net = gross / (1 + VAT_RATE)

@@ -1,9 +1,10 @@
 """Recompute the VAT ledger cache from the tables that actually hold the money.
 
 The console needs one cheap read of a legal entity's VAT position — output VAT
-collected on sales, input VAT paid on marketplace fees, payment processing,
-courier charges and raw goods — split net / VAT / gross per category. Those
-figures live across five source tables and are expensive to re-aggregate on every
+collected on sales, input VAT paid on marketplace fees (per order, and the
+statement-level charges no order carries), payment processing, courier charges
+and raw goods — split net / VAT / gross per category. Those figures live across
+six source tables and are expensive to re-aggregate on every
 page load, so this service maintains a derived cache (`vat_ledger_entries`).
 
 It owns the arithmetic in ONE place. `compute_window` rebuilds a date range by
@@ -27,19 +28,22 @@ import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, heartbeat
 from app.core.config import settings
 from app.core.money import money, to_decimal
+from app.models.aggregator import AggregatorStatementLine
 from app.models.base import utcnow
 from app.models.inventory import PurchaseOrder, PurchaseOrderStatusEnum
 from app.models.legal_entity import LegalEntity
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
+from app.models.pos_order import OrderSourceEnum
 from app.models.vat_ledger import VatCategoryEnum, VatDirectionEnum, VatLedgerEntry
+from app.services.aggregators.period_charges import period_charges
 from app.services.orders import tax_identity_service
 from app.services.orders.order_pricing import VAT_RATE
 from app.services.pos.pos_reports._base import _COMPLETED_SALE
@@ -272,6 +276,31 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         g.gross += to_decimal(gross)
         g.count += int(count)
 
+    # --- Input: marketplace charges no order carries (statement-dated) -----
+    # noon's monthly platform and long-distance fees, Deliveroo's monthly admin
+    # fee and its correction credits: statement lines with no order, so none of
+    # the order columns above holds them. `period_charges` owns their VAT split
+    # (noon and Keeta bill VAT-inclusive, so 5/105; Deliveroo, Careem and Talabat
+    # itemise it on its own line), which is the figure the P&L reclaims. The
+    # ledger books the same numbers on the statement date. A credit arrives
+    # negative and reduces input VAT. The marketplace bills these per account,
+    # so they belong to the entity marketplace orders are booked under, the same
+    # one the P&L's entity slice keeps them for.
+    marketplace = await tax_identity_service.resolve(
+        db, branch_id=None, source=OrderSourceEnum.AGGREGATOR.value
+    )
+    for charge in await period_charges(db, date_from, date_to, by_date=True):
+        g = cell(
+            charge.first_date,
+            marketplace.id if marketplace is not None else None,
+            VatCategoryEnum.MARKETPLACE_PERIOD_CHARGES.value,
+            VatDirectionEnum.INPUT.value,
+        )
+        g.net += money(charge.amount - charge.input_vat)
+        g.vat += charge.input_vat
+        g.gross += charge.amount
+        g.count += charge.lines
+
     # --- Apply the non-registered gate to input rows -----------------------
     # An unregistered entity reclaims nothing: keep the cost visible but zero the
     # VAT and flag it non-recoverable. Output rows already carry zero VAT.
@@ -386,7 +415,10 @@ async def read_ledger(
 
 
 async def _source_date_bounds(db: AsyncSession) -> tuple[str | None, str | None]:
-    """The earliest and latest business_date across every source table."""
+    """The earliest and latest business_date across every source table.
+
+    Statement charges count too: a monthly fee can predate the first order, or
+    fall after the last one."""
     lows: list[str] = []
     highs: list[str] = []
     order_lo, order_hi = (
@@ -402,10 +434,18 @@ async def _source_date_bounds(db: AsyncSession) -> tuple[str | None, str | None]
             )
         )
     ).one()
-    for v in (order_lo, po_lo):
+    charge_lo, charge_hi = (
+        await db.execute(
+            select(
+                func.min(AggregatorStatementLine.line_date),
+                func.max(AggregatorStatementLine.line_date),
+            ).where(_no_order_line())
+        )
+    ).one()
+    for v in (order_lo, po_lo, charge_lo):
         if v:
             lows.append(v)
-    for v in (order_hi, po_hi):
+    for v in (order_hi, po_hi, charge_hi):
         if v:
             highs.append(v)
     return (min(lows) if lows else None, max(highs) if highs else None)
@@ -442,8 +482,38 @@ async def backfill_all(db: AsyncSession) -> int:
     return total
 
 
+def _no_order_line():
+    ln = AggregatorStatementLine
+    return or_(ln.external_order_id.is_(None), ln.external_order_id == "")
+
+
 async def _is_empty(db: AsyncSession) -> bool:
     return (await db.scalar(select(func.count(VatLedgerEntry.id)))) == 0
+
+
+async def _needs_backfill(db: AsyncSession) -> bool:
+    """Whether the whole history has to be rebuilt, not just the trailing window.
+
+    True for an empty cache, and for one built before statement charges were
+    booked: there are no-order statement lines but not one period-charge row.
+    Without this the hourly tick would only book the last
+    `VAT_LEDGER_WINDOW_DAYS` of them, and older months would stay out of the
+    ledger. Once the rebuild has written those rows it is False again."""
+    if await _is_empty(db):
+        return True
+    has_charges = await db.scalar(
+        select(AggregatorStatementLine.id).where(_no_order_line()).limit(1)
+    )
+    if has_charges is None:
+        return False
+    booked = await db.scalar(
+        select(VatLedgerEntry.id)
+        .where(
+            VatLedgerEntry.category == VatCategoryEnum.MARKETPLACE_PERIOD_CHARGES.value
+        )
+        .limit(1)
+    )
+    return booked is None
 
 
 async def run_forever() -> None:
@@ -467,7 +537,7 @@ async def run_forever() -> None:
         ) as db:
             if db is not None:
                 await heartbeat.beat("vat_ledger_refresh")
-                if await _is_empty(db):
+                if await _needs_backfill(db):
                     await backfill_all(db)
                 today = date.today()
                 await compute_window(
