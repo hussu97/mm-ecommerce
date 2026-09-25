@@ -671,6 +671,9 @@ class OrderAdminDetails(BaseModel):
 
     branch: OrderBranchSummary | None = None
     aggregator_payment_type: str | None = None
+    #: The customer is on the marketplace's loyalty subscription (Talabat Pro).
+    #: Null where the channel doesn't say.
+    aggregator_customer_is_member: bool | None = None
     admin_notes: str | None = None
     #: Every tender on the order, resolved to method type + name. Empty for an
     #: online/aggregator order settled through the gateway (those have no

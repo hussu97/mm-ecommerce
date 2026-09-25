@@ -1798,6 +1798,14 @@ class TalabatClient(BaseAggregatorClient):
                     cancellation_fee=fee("Avoidable cancellation fee"),
                     net_payable=fee("Payout Amount", "Estimated earnings"),
                     refund_amount=refund_amount,
+                    # "Is Subscription Order" (Y/N) is Talabat Pro. Audited
+                    # 2026-09-25 against the fee it drives: on 597 of 599 billed,
+                    # delivered "Y" orders Talabat charged its 4 AED "Loyalty
+                    # Charges - Pro Delivery Fee" (the 2 others were cash orders it
+                    # waived), and on 0 of 462 "N" orders. Anything else is unknown.
+                    customer_is_member={"Y": True, "N": False}.get(
+                        (row.get("Is Subscription Order") or "").strip().upper()
+                    ),
                     items=self._items_from_row(row, external, subtotal),
                     raw=dict(row),
                 )

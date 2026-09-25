@@ -420,8 +420,10 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: Whether this aggregator order's customer is a loyalty/subscription member
     #: — Careem Plus, Talabat Pro/VIP. Once an input to the modelled member-fee
     #: rule; now that fees are scraped from the marketplace's own statement it is
-    #: unused by the fee logic and null on every order (GrubOps sends no signal
-    #: that distinguishes a Pro order). Retained as descriptive order metadata.
+    #: unused by the fee logic and kept as descriptive order metadata. GrubOps
+    #: sends no signal for it. Talabat's export does ("Is Subscription Order"),
+    #: which promotion copies from `aggregator_order.customer_is_member`, so it is
+    #: set on Talabat orders and null on the other channels.
     aggregator_customer_is_member: Mapped[bool | None] = mapped_column(
         Boolean, nullable=True
     )

@@ -588,6 +588,9 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
 
     #: The statement this order settled on, once one is published; null until.
     statement_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The customer is on the marketplace's loyalty subscription (Talabat Pro:
+    #: the export's "Is Subscription Order"). Null where the channel doesn't say.
+    customer_is_member: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     #: The MM order this aggregator order was promoted into (or the GrubOps order

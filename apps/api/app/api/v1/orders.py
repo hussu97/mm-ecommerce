@@ -1618,6 +1618,7 @@ async def order_admin_details(
     return OrderAdminDetails(
         branch=OrderBranchSummary.model_validate(branch) if branch else None,
         aggregator_payment_type=order.aggregator_payment_type,
+        aggregator_customer_is_member=order.aggregator_customer_is_member,
         admin_notes=order.admin_notes,
         tenders=tenders,
         timeline=entries,

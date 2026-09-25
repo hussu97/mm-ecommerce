@@ -975,6 +975,7 @@ async def _build_order(
         aggregator_driver_name=agg.driver_name or None,
         aggregator_driver_phone=agg.driver_phone or None,
         aggregator_driver_status=agg.driver_status or None,
+        aggregator_customer_is_member=agg.customer_is_member,
         locale="en",
         delivery_method="delivery",
         order_type="delivery",
@@ -1111,6 +1112,14 @@ def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
         order.aggregator_driver_phone = agg.driver_phone
     if not order.aggregator_driver_status and agg.driver_status:
         order.aggregator_driver_status = agg.driver_status
+    # Loyalty membership (Talabat Pro): the marketplace's own flag wins, since
+    # GrubOps sends none. Unlike the fill-only fields above it may correct a
+    # stored value, but a channel that doesn't say (None) never clears one.
+    if (
+        agg.customer_is_member is not None
+        and order.aggregator_customer_is_member != agg.customer_is_member
+    ):
+        order.aggregator_customer_is_member = agg.customer_is_member
 
 
 async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -> None:

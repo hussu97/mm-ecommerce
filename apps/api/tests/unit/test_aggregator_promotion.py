@@ -64,6 +64,7 @@ def _agg(**over):
         marketing_fee=None,
         net_payable=None,
         refund_amount=None,
+        customer_is_member=None,
         raw=None,
     )
     base.update(over)
@@ -81,6 +82,7 @@ def _mm_order(**over):
         aggregator_driver_name=None,
         aggregator_driver_phone=None,
         aggregator_driver_status=None,
+        aggregator_customer_is_member=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -1332,6 +1334,19 @@ def test_fill_scraped_contact_skips_masked_values():
     assert order.shipping_address_snapshot is None
     assert order.aggregator_driver_name is None
     assert order.aggregator_driver_phone is None
+
+
+def test_fill_scraped_contact_copies_the_marketplace_loyalty_flag():
+    """Talabat's "Is Subscription Order" reaches the MM order, including a
+    GrubOps-owned one (GrubOps sends no Pro signal). The marketplace's flag
+    corrects a stored value, and a channel that doesn't say never clears one."""
+    order = _mm_order()
+    promote._fill_scraped_contact(order, _agg(customer_is_member=True))
+    assert order.aggregator_customer_is_member is True
+    promote._fill_scraped_contact(order, _agg(customer_is_member=False))
+    assert order.aggregator_customer_is_member is False
+    promote._fill_scraped_contact(order, _agg(customer_is_member=None))
+    assert order.aggregator_customer_is_member is False
 
 
 def test_fill_scraped_contact_fills_real_values():

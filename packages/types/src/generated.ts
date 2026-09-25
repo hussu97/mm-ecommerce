@@ -16916,6 +16916,8 @@ export interface components {
         OrderAdminDetails: {
             /** Admin Notes */
             admin_notes?: string | null;
+            /** Aggregator Customer Is Member */
+            aggregator_customer_is_member?: boolean | null;
             /** Aggregator Payment Type */
             aggregator_payment_type?: string | null;
             branch?: components["schemas"]["OrderBranchSummary"] | null;

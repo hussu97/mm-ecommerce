@@ -21423,6 +21423,17 @@
             ],
             "title": "Admin Notes"
           },
+          "aggregator_customer_is_member": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Customer Is Member"
+          },
           "aggregator_payment_type": {
             "anyOf": [
               {
