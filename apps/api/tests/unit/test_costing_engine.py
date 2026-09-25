@@ -20,6 +20,7 @@ from app.services.inventory.costing_engine import (
     Projection,
     SeedLayer,
     SeedState,
+    restatements_from,
 )
 
 D = Decimal
@@ -103,14 +104,14 @@ class Ledger:
 
 
 def replay(ledger: Ledger, lines=None, cutover: int | None = None) -> Projection:
+    lines = ledger.lines if lines is None else lines
     engine = CostingEngine(
         cutover_sequence=cutover,
         reversed_transactions=ledger.reversed(),
         po_prices=ledger.po_prices(),
+        restatements=restatements_from(lines, ledger.reversed()),
     )
-    for line in sorted(
-        ledger.lines if lines is None else lines, key=lambda row: row.sort_key
-    ):
+    for line in sorted(lines, key=lambda row: row.sort_key):
         engine.apply(line)
     return engine.project()
 
@@ -928,6 +929,103 @@ def test_pre_cutover_cost_adjustment_is_superseded():
     assert projection.levels[(item, WH)].average_cost == D("9")
 
 
+def test_reversed_cost_adjustment_and_its_reversal_never_applied():
+    item = uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("purchasing", "10", "1", item=item, po=True)
+    adjustment = ledger.add("cost_adjustment", "0", "9", item=item, ref="cad")
+    sale = ledger.add("consumption_from_orders", "-2", item=item)
+    reversal = ledger.add("cost_adjustment", "0", "1", item=item, reverses="cad")
+    projection = replay(ledger, cutover=0)
+    # Undone means never applied: the sale in between takes the PO price too.
+    assert projection.line_costs[sale.line_id].total_cost == D("2")
+    assert projection.levels[(item, WH)].average_cost == D("1")
+    assert projection.line_costs[adjustment.line_id].superseded
+    assert projection.line_costs[reversal.line_id].superseded
+
+
+def _restated_bake(ledger: Ledger, flour, cake, group):
+    """10 cakes baked from 100 g of flour @0.5 (a recipe that left out the
+    butter): recorded at 5 a cake, two sent to a store and one sold there."""
+    transfer = str(uuid.uuid4())
+    ledger.add("purchasing", "500", "0.5", item=flour, po=True)
+    ledger.add("consumption_from_production", "-100", item=flour, group=group)
+    batch = ledger.add("production", "10", item=cake, group=group, ref="batch")
+    ledger.add(
+        "transfer_send", "-2", item=cake, source_type="transfer", source_id=transfer
+    )
+    ledger.add(
+        "transfer_receive",
+        "2",
+        item=cake,
+        wh=WH2,
+        source_type="transfer",
+        source_id=transfer,
+    )
+    sale = ledger.add("consumption_from_orders", "-1", item=cake, wh=WH2)
+    return batch, sale
+
+
+def test_a_production_restatement_reprices_the_batch_and_what_drew_from_it():
+    flour, cake, group = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    batch, sale = _restated_bake(ledger, flour, cake, group)
+    assert replay(ledger).line_costs[sale.line_id].total_cost == D("5")
+    restatement = ledger.add("production_restatement", "0", "8", item=cake, group=group)
+    projection = replay(ledger)
+    # Priced at 8 from the bake itself, through the transfer, into the sale.
+    assert projection.line_costs[batch.line_id].unit_cost == D("8")
+    assert projection.line_costs[sale.line_id].total_cost == D("8")
+    assert not projection.line_costs[sale.line_id].is_provisional
+    assert projection.levels[(cake, WH)].average_cost == D("8")
+    assert projection.levels[(cake, WH2)].average_cost == D("8")
+    # The restatement line reports the revaluation: 10 × (8 − 5).
+    line = projection.line_costs[restatement.line_id]
+    assert line.total_cost == D("30") and line.unit_cost == D("8")
+    # Its inputs are untouched: the flour was drawn at what it cost.
+    assert projection.levels[(flour, WH)].average_cost == D("0.5")
+    assert_invariant(projection)
+
+
+def test_the_latest_restatement_of_a_batch_wins():
+    flour, cake, group = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    _, sale = _restated_bake(ledger, flour, cake, group)
+    first = ledger.add("production_restatement", "0", "8", item=cake, group=group)
+    second = ledger.add("production_restatement", "0", "6", item=cake, group=group)
+    projection = replay(ledger)
+    assert projection.line_costs[sale.line_id].total_cost == D("6")
+    assert projection.line_costs[first.line_id].superseded
+    assert projection.line_costs[second.line_id].total_cost == D("10")  # 10 × (6 − 5)
+
+
+def test_a_reversed_restatement_restores_the_recorded_cost():
+    flour, cake, group = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    _, sale = _restated_bake(ledger, flour, cake, group)
+    ledger.add(
+        "production_restatement", "0", "8", item=cake, group=group, ref="restate"
+    )
+    ledger.add(
+        "production_restatement", "0", "8", item=cake, group=group, reverses="restate"
+    )
+    projection = replay(ledger)
+    assert projection.line_costs[sale.line_id].total_cost == D("5")
+    assert projection.levels[(cake, WH)].average_cost == D("5")
+
+
+def test_a_batch_with_no_recorded_inputs_can_be_restated():
+    cake, group = uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("production", "4", item=cake, group=group)
+    sale = ledger.add("consumption_from_orders", "-1", item=cake)
+    restatement = ledger.add("production_restatement", "0", "3", item=cake, group=group)
+    projection = replay(ledger)
+    assert projection.line_costs[sale.line_id].total_cost == D("3")
+    assert not projection.line_costs[sale.line_id].is_provisional
+    assert projection.line_costs[restatement.line_id].total_cost == D("12")
+
+
 def test_shift_report_receipt_is_not_a_price_signal():
     item = uuid.uuid4()
     ledger = Ledger()
@@ -1130,6 +1228,19 @@ def test_fast_path_refuses_a_receipt_that_prices_waiting_stock():
     )
     with pytest.raises(NeedsReplay):
         engine.apply(receipt)
+
+
+def test_fast_path_refuses_a_production_restatement():
+    flour, cake, group = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    _restated_bake(ledger, flour, cake, group)
+    restatement = ledger.add("production_restatement", "0", "8", item=cake, group=group)
+    before = replay(ledger, ledger.lines[:-1])
+    engine = CostingEngine(
+        cutover_sequence=None, fast=True, seeds=seeds_from(before, [(cake, WH)])
+    )
+    with pytest.raises(NeedsReplay):
+        engine.apply(restatement)
 
 
 @pytest.mark.parametrize("seed", range(30))

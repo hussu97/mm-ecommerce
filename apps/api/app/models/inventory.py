@@ -80,10 +80,16 @@ class InventoryTransactionTypeEnum(str, enum.Enum):
     # the shop on the raw-materials/packaging report as an extra deduction, distinct
     # from the recipe-driven CONSUMPTION_FROM_PRODUCTION so it stays reportable apart.
     EXTRA_PRODUCTION_USE = "extra_production_use"
+    # Re-costs one production batch (linked by ``correction_group_id``) at a
+    # stated unit cost, for a batch whose recorded inputs were incomplete. Moves
+    # no stock; the costing engine re-prices the batch and everything drawn from
+    # it (rule 7 in ``costing_engine``).
+    PRODUCTION_RESTATEMENT = "production_restatement"
 
 
 #: Direction each transaction type moves stock in the branch it is posted to.
-#: Cost adjustments change value without changing quantity, hence 0.
+#: Cost adjustments and production restatements change value without changing
+#: quantity, hence 0.
 TRANSACTION_SIGN: dict[str, int] = {
     InventoryTransactionTypeEnum.PURCHASING.value: 1,
     InventoryTransactionTypeEnum.TRANSFER_RECEIVE.value: 1,
@@ -102,6 +108,7 @@ TRANSACTION_SIGN: dict[str, int] = {
     InventoryTransactionTypeEnum.INTERNAL_USE.value: -1,
     InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value: -1,
     InventoryTransactionTypeEnum.COST_ADJUSTMENT.value: 0,
+    InventoryTransactionTypeEnum.PRODUCTION_RESTATEMENT.value: 0,
 }
 
 

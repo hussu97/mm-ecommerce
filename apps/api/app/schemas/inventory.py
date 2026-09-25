@@ -27,6 +27,7 @@ TransactionTypeLiteral = Literal[
     "waste_from_production",
     "cost_adjustment",
     "inventory_count",
+    "production_restatement",
 ]
 
 #: The subset an operator may post by hand through `POST /inventory/transactions`.

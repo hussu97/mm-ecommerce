@@ -59,6 +59,7 @@ from app.services.inventory.costing_engine import (
     Projection,
     SeedLayer,
     SeedState,
+    restatements_from,
 )
 
 logger = logging.getLogger(__name__)
@@ -645,6 +646,7 @@ async def replay(
         po_prices=await _po_prices(db, reversed_),
         external_sends=await _external_sends(db, lines, warehouse_ids),
         recipes=await _recipes(db),
+        restatements=restatements_from(lines, reversed_),
     )
     for line in lines:
         engine.apply(line)
