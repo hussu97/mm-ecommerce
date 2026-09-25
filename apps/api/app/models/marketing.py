@@ -173,6 +173,10 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
             "NOT (auto_branch_ids && coupon_branch_ids)",
             name="ck_promotions_branch_modes_disjoint",
         ),
+        CheckConstraint(
+            "usage_limit IS NULL OR usage_limit > 0",
+            name="ck_promotions_usage_limit_positive",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -261,6 +265,12 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
     max_uses_per_order: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="1"
     )
+    #: How many completed orders may carry this promotion in total, across every
+    #: branch that runs it. Null = unlimited. A completed order is a sale that
+    #: stands (`pos_reports._base._COMPLETED_SALE`: a closed counter check), so a
+    #: draft, an open check or a void never uses one up. Once the count reaches
+    #: the limit, `auto_promotion_service` stops offering the promotion.
+    usage_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )

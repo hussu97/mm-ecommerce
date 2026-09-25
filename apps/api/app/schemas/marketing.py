@@ -170,6 +170,9 @@ class PromotionCreate(ScheduleFields):
     sources: list[SourceLiteral] = Field(default_factory=list)
     priority: int = Field(100, ge=0, le=10000)
     max_uses_per_order: int = Field(1, ge=1, le=100)
+    #: How many completed orders may use it in total, across branches. Null =
+    #: unlimited.
+    usage_limit: int | None = Field(None, ge=1)
     #: Compatibility flag. The write path stores `bool(auto_branch_ids)`
     #: whatever is sent; name the branches in `auto_branch_ids` instead.
     auto_apply: bool = False
@@ -229,6 +232,8 @@ class PromotionUpdate(BaseModel):
     sources: list[SourceLiteral] | None = None
     priority: int | None = Field(None, ge=0, le=10000)
     max_uses_per_order: int | None = Field(None, ge=1, le=100)
+    #: Send `null` to make it unlimited again; leave it out to keep it.
+    usage_limit: int | None = Field(None, ge=1)
     #: Compatibility flag: `false` turns the promotion off at every auto
     #: branch; `true` needs `auto_branch_ids`. Stored as `bool(auto_branch_ids)`.
     auto_apply: bool | None = None
@@ -301,6 +306,7 @@ class PromotionResponse(ORMModel):
     sources: list[str]
     priority: int
     max_uses_per_order: int
+    usage_limit: int | None = None
     auto_apply: bool
     auto_branch_ids: list[uuid.UUID] = Field(default_factory=list)
     coupon_branch_ids: list[uuid.UUID] = Field(default_factory=list)
@@ -319,6 +325,18 @@ class PromotionResponse(ORMModel):
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class PromotionUsageResponse(BaseModel):
+    """How much of a promotion's usage limit completed orders have used."""
+
+    promotion_id: uuid.UUID
+    #: Completed orders that carried it, across every branch.
+    used: int
+    #: The limit; null = unlimited.
+    usage_limit: int | None
+    #: `used >= usage_limit`: it is no longer offered anywhere.
+    exhausted: bool
 
 
 class TimedEventCreate(ScheduleFields):

@@ -911,3 +911,58 @@ class TestCouponBuildGate:
         from app.core.pos_builds import build_at_least
 
         assert build_at_least(build, minimum) is ok
+
+
+# ─── Usage limit ──────────────────────────────────────────────────────────────
+
+
+def _used(monkeypatch, counts: dict):
+    """Pretend `counts` completed orders already carry each promotion."""
+
+    async def fake_counts(db, promotion_ids=None):
+        return {pid: n for pid, n in counts.items() if pid in (promotion_ids or [])}
+
+    monkeypatch.setattr(auto_promotion_service, "usage_counts", fake_counts)
+
+
+class TestUsageLimit:
+    async def test_a_promotion_under_its_limit_still_applies(self, monkeypatch):
+        promo = _promo(usage_limit=4)
+        _used(monkeypatch, {promo.id: 3})
+        order = _order()
+        await auto_promotion_service.sync_auto_discounts(_db([promo]), order)
+        assert len(_auto_discounts(order)) == 1
+
+    async def test_a_used_up_promotion_is_no_longer_applied(self, monkeypatch):
+        promo = _promo(usage_limit=4)
+        _used(monkeypatch, {promo.id: 4})
+        order = _order()
+        await auto_promotion_service.sync_auto_discounts(_db([promo]), order)
+        assert _auto_discounts(order) == []
+
+    async def test_a_used_up_coupon_falls_back_to_auto(self, monkeypatch):
+        auto = _promo()  # unlimited
+        coupon = _coupon(usage_limit=1)
+        _used(monkeypatch, {coupon.id: 1})
+        order = _order(coupon_id=coupon.id)
+        await auto_promotion_service.sync_auto_discounts(_db([auto, coupon]), order)
+        assert [r.reference_id for r in _auto_discounts(order)] == [auto.id]
+
+    async def test_an_open_check_loses_it_once_the_limit_is_reached(self, monkeypatch):
+        promo = _promo(usage_limit=4)
+        order = _order()
+        _used(monkeypatch, {promo.id: 3})
+        await auto_promotion_service.sync_auto_discounts(_db([promo]), order)
+        assert len(_auto_discounts(order)) == 1
+        _used(monkeypatch, {promo.id: 4})  # another till completes the 4th
+        await auto_promotion_service.sync_auto_discounts(_db([promo]), order)
+        assert _auto_discounts(order) == []
+
+    async def test_unlimited_promotions_never_query_the_count(self, monkeypatch):
+        async def boom(*a, **k):  # pragma: no cover — must not be reached
+            raise AssertionError("counted an unlimited promotion")
+
+        monkeypatch.setattr(auto_promotion_service, "usage_counts", boom)
+        order = _order()
+        await auto_promotion_service.sync_auto_discounts(_db([_promo()]), order)
+        assert len(_auto_discounts(order)) == 1
