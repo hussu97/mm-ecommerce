@@ -833,6 +833,8 @@ export const promotionsApi = {
   list: () => api.get<Promotion[]>('/promotions'),
   create: (data: object) => api.post<Promotion>('/promotions', data),
   update: (id: string, data: object) => api.put<Promotion>(`/promotions/${id}`, data),
+  /** Completed orders that carried each promotion, against its usage limit. */
+  usage: () => api.get<Schemas['PromotionUsageResponse'][]>('/promotions/usage'),
 };
 
 // ─── Counter sync (local-first counter checkout) ──────────────────────────────
