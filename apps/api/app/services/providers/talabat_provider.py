@@ -1755,6 +1755,21 @@ class TalabatClient(BaseAggregatorClient):
                 if reversal > 0 and (status or "").strip().lower() != "cancelled"
                 else None
             )
+            # Talabat bills an order the day after the sale, and until then the
+            # export ships every fee column, and the payout, as a literal 0.00. That
+            # is "not billed yet", not "free". Booked as 0 it stamped the order with
+            # no fee, so its Profit % read ~100% with no "fees pending" flag. It
+            # also let a later export overwrite fees already stored, since ingest
+            # only preserves None. The row says when it is billed: "Payment type"
+            # (Cash / Online) is blank until billing and filled on every billed row,
+            # cancellations included (prod, 1,097 orders, 2026-09-25). So until then
+            # the fees are None (unknown). A billed 0, such as a cash order's
+            # payment fee or a non-Pro order's marketing fee, stays 0.
+            billed = bool((row.get("Payment type") or "").strip())
+
+            def fee(*columns: str) -> Decimal | None:
+                return _money(_first(row, *columns)) if billed else None
+
             orders.append(
                 StandardOrder(
                     external_order_id=external,
@@ -1766,8 +1781,8 @@ class TalabatClient(BaseAggregatorClient):
                     currency="AED",
                     gross_sales=subtotal,
                     net_sales=subtotal,
-                    commission_amount=_money(row.get("Commission")),
-                    payment_fee=_money(row.get("Online Payment Fee")),
+                    commission_amount=fee("Commission"),
+                    payment_fee=fee("Online Payment Fee"),
                     # The "Marketing Fees" column is the TALABAT PRO fee: a flat
                     # AED 4 the merchant pays on every Talabat Pro customer's order
                     # (funding their free delivery), 0 otherwise. It is a real
@@ -1775,15 +1790,13 @@ class TalabatClient(BaseAggregatorClient):
                     # percentage payment fee — carried on `marketing_fee` so the take
                     # and `OrderEconomics.net` both account for it. (The flat 4 also
                     # marks a Pro order — a cleaner signal than the delivery-fee proxy.)
-                    marketing_fee=_money(row.get("Marketing Fees Total")),
+                    marketing_fee=fee("Marketing Fees Total"),
                     # Talabat direct delivery: the vendor CSV carries no delivery
                     # fee column at all, so it stays unknown (None) rather than 0.
                     delivery_fee=None,
                     vat_amount=_money(_first(row, "Tax Amount", "Tax Charge")),
-                    cancellation_fee=_money(row.get("Avoidable cancellation fee")),
-                    net_payable=_money(
-                        _first(row, "Payout Amount", "Estimated earnings")
-                    ),
+                    cancellation_fee=fee("Avoidable cancellation fee"),
+                    net_payable=fee("Payout Amount", "Estimated earnings"),
                     refund_amount=refund_amount,
                     items=self._items_from_row(row, external, subtotal),
                     raw=dict(row),

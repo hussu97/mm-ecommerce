@@ -358,6 +358,7 @@ def test_orders_from_csv_delivered_order_has_full_status_events():
         [
             {
                 "Order ID": "TB-1001",
+                "Payment type": "Online",
                 "Store ID": "711571",
                 "Order status": "Delivered",
                 "Subtotal": "50.00",
@@ -402,6 +403,7 @@ def test_orders_from_csv_cancelled_order_sets_cancellation_fee():
         [
             {
                 "Order ID": "TB-2002",
+                "Payment type": "Online",
                 "Store ID": "728173",
                 "Order status": "Cancelled",
                 "Subtotal": "40.00",
@@ -443,6 +445,7 @@ def test_orders_from_csv_maps_talabat_pro_fee_to_marketing_fee():
         [
             {
                 "Order ID": "TB-3003",
+                "Payment type": "Online",
                 "Store ID": "728173",
                 "Order status": "Delivered",
                 "Subtotal": "40.00",
@@ -464,6 +467,60 @@ def test_orders_from_csv_maps_talabat_pro_fee_to_marketing_fee():
     assert order.marketing_fee == Decimal("4.00")
     assert order.commission_amount == Decimal("12.60")
     assert order.payment_fee == Decimal("0.84")
+
+
+# A delivered order exported before Talabat bills it (the day after the sale):
+# every fee column and the payout ship as 0.00 and "Payment type" is blank. Shape
+# from prod rows on 2026-09-24.
+_UNBILLED_ROW = {
+    "Order ID": "TB-5005",
+    "Store ID": "711571",
+    "Order status": "Delivered",
+    "Payment type": "",
+    "Payment method": "",
+    "Subtotal": "40.00",
+    "Order Items": "1 Cake",
+    "Commission": "0.00",
+    "Online Payment Fee": "0.00",
+    "Marketing Fees Total": "0.00",
+    "Avoidable cancellation fee": "0.00",
+    "Payout Amount": "0.00",
+    "Order received at": "2026-09-24 19:00",
+    "Delivered at": "2026-09-24 19:30",
+}
+
+
+def test_orders_from_csv_unbilled_order_has_unknown_fees_not_zero():
+    """Before billing, the 0.00s mean "not billed yet", not "free". They parse as
+    None, so the order's fees stay pending (the P&L's "*") instead of reading as
+    a ~100% margin. None also means ingest keeps any fees already stored, instead
+    of a later export zeroing them."""
+    client = TalabatClient()
+    order = client._orders_from_csv(_csv_from_rows([_UNBILLED_ROW]))[0]
+    assert order.gross_sales == Decimal("40.00")  # the sale itself is known
+    assert order.commission_amount is None
+    assert order.payment_fee is None
+    assert order.marketing_fee is None
+    assert order.cancellation_fee is None
+    assert order.net_payable is None
+
+
+def test_orders_from_csv_billed_zero_fees_stay_zero():
+    """Once billed ("Payment type" filled), a 0.00 is a real zero: a cash order
+    has no online payment fee, and a non-Pro order has no marketing fee."""
+    client = TalabatClient()
+    row = {
+        **_UNBILLED_ROW,
+        "Payment type": "Cash",
+        "Payment method": "Cash",
+        "Commission": "12.60",
+        "Payout Amount": "27.40",
+    }
+    order = client._orders_from_csv(_csv_from_rows([row]))[0]
+    assert order.commission_amount == Decimal("12.60")
+    assert order.payment_fee == Decimal("0.00")
+    assert order.marketing_fee == Decimal("0.00")
+    assert order.net_payable == Decimal("27.40")
 
 
 def test_orders_from_csv_absent_cancellation_fee_column_is_none():
