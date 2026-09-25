@@ -100,7 +100,6 @@ def _order(
         refunded_amount=Decimal(refunded),
         refunded_at=None,
         payment_method=payment_method,
-        currency="AED",
         payment_transactions=[],
     )
 

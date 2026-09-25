@@ -929,12 +929,11 @@ async def _record_and_refund_duplicate(
     )
     logger.critical(
         "DOUBLE PAYMENT on order %s: already paid, but %s reports a second "
-        "successful charge %s for %s %s — recording and auto-refunding it.",
+        "successful charge %s for AED %s — recording and auto-refunding it.",
         order.order_number,
         gateway,
         event.payment_id,
         captured,
-        order.currency or "AED",
     )
 
     duplicate = PaymentTransaction(
@@ -944,7 +943,7 @@ async def _record_and_refund_duplicate(
         session_id=event.session_id,
         payment_id=event.payment_id,
         amount=captured,
-        currency=order.currency or "AED",
+        currency="AED",
         raw_status=event.raw_type[:60],
     )
     order.payment_transactions.append(duplicate)
@@ -1465,9 +1464,8 @@ async def refund_order(
     order.refunded_at = order.refunded_at or utcnow()
     attempt.refund_id = result.refund_id
     logger.info(
-        "Refunded %s %s for %s (%s, %s)",
+        "Refunded AED %s for %s (%s, %s)",
         result.amount,
-        order.currency or "AED",
         order.order_number,
         result.refund_id,
         result.status,
@@ -1547,9 +1545,8 @@ async def issue_admin_refund(
     )
     _record_refund_slice(order, attempt, result)
     logger.info(
-        "Admin refunded %s %s for %s (%s, %s) — %s still refundable",
+        "Admin refunded AED %s for %s (%s, %s) — %s still refundable",
         result.amount,
-        order.currency or "AED",
         order.order_number,
         result.refund_id,
         result.status,
@@ -1581,6 +1578,14 @@ def _record_refund_slice(
     acknowledging a refund this path already booked, rather than a dashboard one
     it must still record (see `_refund_already_recorded`). Mirrors the shape of
     `_record_and_refund_duplicate`.
+
+    **No `payment_id` on the row.** It used to copy the attempt's, and
+    `uq_payment_transactions_gateway_payment` is unique on `(gateway,
+    payment_id)` — so the first admin refund on any order raised at flush,
+    *after* the gateway had already sent the money back, and the request rolled
+    the record of it away. The row is found by `refund_id` and `order_id`, never
+    by payment handle, and leaving the handle on the attempt alone also keeps a
+    later webhook quoting it from matching a slice instead of the attempt.
     """
     order.refunded_amount = money(to_decimal(order.refunded_amount) + result.amount)
     order.refunded_at = order.refunded_at or utcnow()
@@ -1589,10 +1594,9 @@ def _record_refund_slice(
             order_id=order.id,
             gateway=attempt.gateway,
             status=PaymentTransactionStatusEnum.REFUNDED.value,
-            payment_id=attempt.payment_id,
             refund_id=result.refund_id,
             amount=result.amount,
-            currency=order.currency or "AED",
+            currency="AED",
             raw_status="admin.refund",
         )
     )
