@@ -70,7 +70,6 @@ def order():
         order_number="MM-20260808-001",
         email="c@example.com",
         total=Decimal("125.00"),
-        currency="AED",
         status=OrderStatusEnum.CONFIRMED,
         payment_provider="stripe",
         payment_method="card",
