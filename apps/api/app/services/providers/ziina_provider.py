@@ -285,7 +285,13 @@ class ZiinaProvider(PaymentGatewayProvider):
             return None
         return body.get("redirect_url") or None
 
-    def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
+    def parse_webhook(
+        self,
+        payload: bytes,
+        headers: Mapping[str, str],
+        *,
+        query: Mapping[str, str] | None = None,
+    ) -> GatewayEvent:
         """Verify `X-Hmac-Signature` and translate `{event, data}` into ours."""
         self._verify_signature(payload, headers)
 
@@ -406,6 +412,7 @@ class ZiinaProvider(PaymentGatewayProvider):
         amount: Decimal,
         idempotency_key: str,
         test_mode: bool = False,
+        expected_prior_refunded: Decimal | None = None,
     ) -> GatewayRefund:
         """
         Refund part or all of a Ziina payment intent.

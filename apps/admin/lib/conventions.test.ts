@@ -194,9 +194,10 @@ describe('the Refund button never offers what the server refuses', () => {
       'status' | 'source' | 'payment_provider'
     >;
 
-  it('offers a refund only on a delivered website order paid via stripe/ziina', () => {
+  it('offers a refund only on a delivered website order paid via stripe/ziina/paymob', () => {
     expect(canRefund(order('delivered', 'online', 'stripe'))).toBe(true);
     expect(canRefund(order('delivered', 'online', 'ziina'))).toBe(true);
+    expect(canRefund(order('delivered', 'online', 'paymob'))).toBe(true);
     // Wrong provider, source, or a cash order — none refundable here.
     expect(canRefund(order('delivered', 'online', 'cod'))).toBe(false);
     expect(canRefund(order('delivered', 'aggregator', 'stripe'))).toBe(false);
@@ -215,7 +216,7 @@ describe('the Refund button never offers what the server refuses', () => {
     const py = readFileSync(ORDERS_ROUTE, 'utf8');
     expect(py).toContain('async def refund_order_admin');
     expect(py).toContain('order.source != OrderSourceEnum.ONLINE.value');
-    expect(py).toContain('order.payment_provider not in ("stripe", "ziina")');
+    expect(py).toContain('order.payment_provider not in ("stripe", "ziina", "paymob")');
     expect(py).toContain('order.status != OrderStatusEnum.DELIVERED');
   });
 });

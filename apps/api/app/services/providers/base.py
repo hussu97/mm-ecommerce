@@ -202,18 +202,53 @@ class PaymentGatewayProvider(ABC):
         """
 
     @abstractmethod
-    def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
+    def parse_webhook(
+        self,
+        payload: bytes,
+        headers: Mapping[str, str],
+        *,
+        query: Mapping[str, str] | None = None,
+    ) -> GatewayEvent:
         """
         Verify the signature on an incoming webhook and translate it.
 
         Takes the whole header mapping rather than one signature string because
         gateways disagree about how many headers the proof is spread across, and
         a parameter list that assumes one of them is an interface that has to
-        change for the second gateway.
+        change for the second gateway. The query string is passed for the same
+        reason, one gateway further on: Paymob puts its signature there
+        (`?hmac=`), in neither the body nor a header.
 
         Raises `BadRequestError` on a bad signature or an unreadable body —
         both of which are permanent, and neither of which a retry fixes.
         """
+
+    async def verify_event(self, event: GatewayEvent) -> GatewayEvent:
+        """
+        Confirm, against the gateway itself, whatever the signature did not cover.
+
+        Most gateways sign the whole body, and for them the parsed event already
+        is the truth — the default returns it unchanged. One that signs only
+        some fields (Paymob) re-reads the unsigned figure an event would act on,
+        so a replayed signature cannot smuggle in a number of its own. Async and
+        separate from `parse_webhook` because it is a network call, made only
+        for the events that need it.
+        """
+        return event
+
+    async def fetch_outcome(self, attempt) -> GatewayEvent | None:
+        """
+        Ask the gateway what became of one *attempt*, for reconciliation.
+
+        The backstop under a webhook that never arrived: a gateway whose retry
+        policy is undocumented, or a deploy that was down for every retry, leaves
+        a paid order at `created` with nothing to tell us. A gateway that can be
+        asked returns the same `GatewayEvent` its webhook would have produced —
+        same `event_id`, so the two dedupe — and None when there is nothing to
+        say yet. The default is None: a gateway not wired for it is simply never
+        reconciled this way, which is today's behaviour for Stripe and Ziina.
+        """
+        return None
 
     def minimum_amount(self) -> Decimal | None:
         """
@@ -249,9 +284,16 @@ class PaymentGatewayProvider(ABC):
         amount: Decimal,
         idempotency_key: str,
         test_mode: bool = False,
+        expected_prior_refunded: Decimal | None = None,
     ) -> GatewayRefund:
         """
         Send *amount* back to the card that paid `payment_id`.
+
+        `expected_prior_refunded` is what our books say had already gone back on
+        this payment before this call — read by the caller from columns a
+        rollback restores. A gateway with its own idempotency (Stripe, Ziina)
+        ignores it; one without (Paymob) compares it with its own record to tell
+        a retry of a refund that already landed from a new one.
 
         `idempotency_key` is not optional and not decoration. This is called from
         a status transition that a webhook, a retry or two admins on two laptops

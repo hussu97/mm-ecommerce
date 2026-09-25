@@ -2770,6 +2770,11 @@
           "eligible": {
             "title": "Eligible",
             "type": "boolean"
+          },
+          "paymob_apple_pay": {
+            "default": false,
+            "title": "Paymob Apple Pay",
+            "type": "boolean"
           }
         },
         "required": [
@@ -25060,7 +25065,7 @@
         "type": "object"
       },
       "PaymentMethodEnum": {
-        "description": "What the customer chose, which is not what processed it.\n\n`CARD` is the whole of the card estate \u2014 a customer who paid by card on\nStripe and one who paid by card on Ziina made the same choice and should\nread the same way on their order, in the admin, and in every breakdown.\nThe gateway lives on `orders.payment_provider`.\n\n`STRIPE` is the value this column held for every card order written before\nthe split, kept as an accepted alias so an in-flight checkout and a retry of\nan old order both still work. Nothing new is written with it.",
+        "description": "What the customer chose, which is not what processed it.\n\n`CARD` is the whole of the card estate \u2014 a customer who paid by card on\nStripe, one who paid on Ziina and one who paid on Paymob made the same\nchoice and should read the same way on their order, in the admin, and in\nevery breakdown.\nThe gateway lives on `orders.payment_provider`.\n\n`STRIPE` is the value this column held for every card order written before\nthe split, kept as an accepted alias so an in-flight checkout and a retry of\nan old order both still work. Nothing new is written with it.",
         "enum": [
           "card",
           "cod",
@@ -25491,6 +25496,53 @@
           "order_status"
         ],
         "title": "PaymentStatusResponse",
+        "type": "object"
+      },
+      "PaymobApplePaySessionRequest": {
+        "properties": {
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_number"
+        ],
+        "title": "PaymobApplePaySessionRequest",
+        "type": "object"
+      },
+      "PaymobApplePaySessionResponse": {
+        "description": "What the browser mounts Paymob's Pixel Apple Pay button with.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "client_secret": {
+            "title": "Client Secret",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "public_key": {
+            "title": "Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "public_key",
+          "client_secret",
+          "amount",
+          "currency",
+          "order_number"
+        ],
+        "title": "PaymobApplePaySessionResponse",
         "type": "object"
       },
       "PermissionCatalogue": {
@@ -63730,7 +63782,7 @@
     },
     "/api/v1/orders/{order_number}/refund": {
       "post": {
-        "description": "Hand money back on a delivered website order, in part or in full.\n\nOnly for an order MM took the money on itself \u2014 a website order paid by card\nthrough Stripe or Ziina. A counter sale is refunded on the till and an\naggregator order was paid at the marketplace, so neither is refundable here.\nThe order must be `delivered`: a live order is cancelled instead (which\nrefunds it), and a settled one has already been dealt with.\n\nThe amount is capped at what is still refundable (the goods not yet returned)\ninside `issue_admin_refund`. When a refund brings that to zero the order is\nfully refunded and moves to `cancelled` \u2014 money-only, since the goods were\ndelivered \u2014 and the customer is emailed; a partial stays quiet, matching how\na partial refund has always been handled.",
+        "description": "Hand money back on a delivered website order, in part or in full.\n\nOnly for an order MM took the money on itself \u2014 a website order paid by card\nthrough Stripe, Ziina or Paymob. A counter sale is refunded on the till and an\naggregator order was paid at the marketplace, so neither is refundable here.\nThe order must be `delivered`: a live order is cancelled instead (which\nrefunds it), and a settled one has already been dealt with.\n\nThe amount is capped at what is still refundable (the goods not yet returned)\ninside `issue_admin_refund`. When a refund brings that to zero the order is\nfully refunded and moves to `cancelled` \u2014 money-only, since the goods were\ndelivered \u2014 and the customer is emailed; a partial stays quiet, matching how\na partial refund has always been handled.",
         "operationId": "refund_order_admin_api_v1_orders__order_number__refund_post",
         "parameters": [
           {
@@ -64392,6 +64444,53 @@
           }
         ],
         "summary": "Create Apple Pay Intent",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/api/v1/payments/apple-pay/paymob-session": {
+      "post": {
+        "description": "Mint a Paymob intention so the browser can draw Paymob's Apple Pay button.\n\nOwner-only, and refused unless Paymob is the active card gateway and has an\nApple Pay integration. Settles through the ordinary Paymob webhook, like\nevery Paymob card payment \u2014 this endpoint writes no order status of its own.",
+        "operationId": "create_paymob_apple_pay_session_api_v1_payments_apple_pay_paymob_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymobApplePaySessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymobApplePaySessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Paymob Apple Pay Session",
         "tags": [
           "Payments"
         ]
@@ -73890,7 +73989,7 @@
         "operationId": "list_webhook_logs_api_v1_webhook_logs_get",
         "parameters": [
           {
-            "description": "lalamove | noon_send | stripe | ziina",
+            "description": "lalamove | noon_send | stripe | ziina | paymob",
             "in": "query",
             "name": "provider",
             "required": false,
@@ -73903,12 +74002,12 @@
                   "type": "null"
                 }
               ],
-              "description": "lalamove | noon_send | stripe | ziina",
+              "description": "lalamove | noon_send | stripe | ziina | paymob",
               "title": "Provider"
             }
           },
           {
-            "description": "status | tracking | payments | webhooks",
+            "description": "status | tracking | payments | webhooks | payments_return",
             "in": "query",
             "name": "endpoint",
             "required": false,
@@ -73921,7 +74020,7 @@
                   "type": "null"
                 }
               ],
-              "description": "status | tracking | payments | webhooks",
+              "description": "status | tracking | payments | webhooks | payments_return",
               "title": "Endpoint"
             }
           },

@@ -16,7 +16,7 @@ import { readZone } from '@/lib/location/branch-cookie';
 import 'client-only';
 
 import { analytics, normalisePath } from './analytics';
-import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, OrderPreview, PickupBranch, TrackResult, ApplePayEligibility, ApplePayIntent, CustomOrderEnquiryCreate, CustomOrderEnquiryResponse, EnquiryImageUploadResponse } from './types';
+import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, OrderPreview, PickupBranch, TrackResult, ApplePayEligibility, ApplePayIntent, PaymobApplePaySession, CustomOrderEnquiryCreate, CustomOrderEnquiryResponse, EnquiryImageUploadResponse } from './types';
 import { API_BASE } from './api-base';
 
 export { API_BASE };
@@ -568,6 +568,19 @@ export const paymentsApi = {
    */
   createApplePayIntent: (orderNumber: string) =>
     api.post<ApplePayIntent>('/payments/apple-pay/intent', {
+      order_number: orderNumber,
+    }),
+
+  /**
+   * Open an Apple-Pay-only payment intention for an order, for the gateway
+   * whose Apple Pay button is drawn by its own embedded SDK rather than by
+   * Stripe.js (`usePaymobApplePay`). That SDK needs the intention's secret
+   * *before* it can draw the button, so this is called after the order is
+   * written and before the customer's second tap. Settled, like every card
+   * payment, by the gateway's webhook — nothing here marks anything paid.
+   */
+  createPaymobApplePaySession: (orderNumber: string) =>
+    api.post<PaymobApplePaySession>('/payments/apple-pay/paymob-session', {
       order_number: orderNumber,
     }),
 };

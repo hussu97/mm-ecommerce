@@ -6142,7 +6142,7 @@ export interface paths {
          * @description Hand money back on a delivered website order, in part or in full.
          *
          *     Only for an order MM took the money on itself — a website order paid by card
-         *     through Stripe or Ziina. A counter sale is refunded on the till and an
+         *     through Stripe, Ziina or Paymob. A counter sale is refunded on the till and an
          *     aggregator order was paid at the marketplace, so neither is refundable here.
          *     The order must be `delivered`: a live order is cancelled instead (which
          *     refunds it), and a settled one has already been dealt with.
@@ -6342,6 +6342,30 @@ export interface paths {
          *     endpoint writes no order status of its own.
          */
         post: operations["create_apple_pay_intent_api_v1_payments_apple_pay_intent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payments/apple-pay/paymob-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Paymob Apple Pay Session
+         * @description Mint a Paymob intention so the browser can draw Paymob's Apple Pay button.
+         *
+         *     Owner-only, and refused unless Paymob is the active card gateway and has an
+         *     Apple Pay integration. Settles through the ordinary Paymob webhook, like
+         *     every Paymob card payment — this endpoint writes no order status of its own.
+         */
+        post: operations["create_paymob_apple_pay_session_api_v1_payments_apple_pay_paymob_session_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10437,6 +10461,11 @@ export interface components {
         ApplePayEligibilityResponse: {
             /** Eligible */
             eligible: boolean;
+            /**
+             * Paymob Apple Pay
+             * @default false
+             */
+            paymob_apple_pay: boolean;
         };
         /** ApplePayIntentRequest */
         ApplePayIntentRequest: {
@@ -18155,8 +18184,9 @@ export interface components {
          * @description What the customer chose, which is not what processed it.
          *
          *     `CARD` is the whole of the card estate — a customer who paid by card on
-         *     Stripe and one who paid by card on Ziina made the same choice and should
-         *     read the same way on their order, in the admin, and in every breakdown.
+         *     Stripe, one who paid on Ziina and one who paid on Paymob made the same
+         *     choice and should read the same way on their order, in the admin, and in
+         *     every breakdown.
          *     The gateway lives on `orders.payment_provider`.
          *
          *     `STRIPE` is the value this column held for every card order written before
@@ -18284,6 +18314,27 @@ export interface components {
             payment_method: string | null;
             /** Payment Provider */
             payment_provider: string | null;
+        };
+        /** PaymobApplePaySessionRequest */
+        PaymobApplePaySessionRequest: {
+            /** Order Number */
+            order_number: string;
+        };
+        /**
+         * PaymobApplePaySessionResponse
+         * @description What the browser mounts Paymob's Pixel Apple Pay button with.
+         */
+        PaymobApplePaySessionResponse: {
+            /** Amount */
+            amount: string;
+            /** Client Secret */
+            client_secret: string;
+            /** Currency */
+            currency: string;
+            /** Order Number */
+            order_number: string;
+            /** Public Key */
+            public_key: string;
         };
         /** PermissionCatalogue */
         PermissionCatalogue: {
@@ -36411,6 +36462,39 @@ export interface operations {
             };
         };
     };
+    create_paymob_apple_pay_session_api_v1_payments_apple_pay_paymob_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymobApplePaySessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymobApplePaySessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_payment_session_api_v1_payments_create_session_post: {
         parameters: {
             query?: never;
@@ -41603,9 +41687,9 @@ export interface operations {
     list_webhook_logs_api_v1_webhook_logs_get: {
         parameters: {
             query?: {
-                /** @description lalamove | noon_send | stripe | ziina */
+                /** @description lalamove | noon_send | stripe | ziina | paymob */
                 provider?: string | null;
-                /** @description status | tracking | payments | webhooks */
+                /** @description status | tracking | payments | webhooks | payments_return */
                 endpoint?: string | null;
                 /** @description Their word for it */
                 event_type?: string | null;

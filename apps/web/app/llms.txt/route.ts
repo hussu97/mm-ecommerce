@@ -69,7 +69,7 @@ export async function GET() {
 - Price range: AED 15 – AED 200
 
 ${offer ? `## Offers\n- ${offer}\n\n` : ''}## Payment
-- Card online: Visa, Mastercard and Apple Pay, via Stripe
+- Card online: Visa, Mastercard and Apple Pay
 - Cash is accepted on **pickup orders only** — there is no cash on delivery
 - Tabby and Tamara (buy now, pay later) are not live yet
 

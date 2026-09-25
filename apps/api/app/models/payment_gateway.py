@@ -30,6 +30,7 @@ class PaymentGatewayEnum(str, enum.Enum):
 
     STRIPE = "stripe"
     ZIINA = "ziina"
+    PAYMOB = "paymob"
 
 
 class PaymentMethodEnum(str, enum.Enum):
@@ -37,8 +38,9 @@ class PaymentMethodEnum(str, enum.Enum):
     What the customer chose, which is not what processed it.
 
     `CARD` is the whole of the card estate — a customer who paid by card on
-    Stripe and one who paid by card on Ziina made the same choice and should
-    read the same way on their order, in the admin, and in every breakdown.
+    Stripe, one who paid on Ziina and one who paid on Paymob made the same
+    choice and should read the same way on their order, in the admin, and in
+    every breakdown.
     The gateway lives on `orders.payment_provider`.
 
     `STRIPE` is the value this column held for every card order written before
@@ -63,8 +65,8 @@ class PaymentGateway(Base, UUIDMixin, TimestampMixin):
     before the router will pick a gateway, and they fail independently on
     purpose: the row is `is_active` (an operator said so), the provider is
     *configured* (credentials actually exist in this environment), and the order
-    total is inside `[min_amount, max_amount]`. Production ships Ziina present,
-    inactive and unconfigured — three locks on a door that is only there so it
+    total is inside `[min_amount, max_amount]`. Production ships Ziina and
+    Paymob present, inactive and unconfigured — three locks on a door that is only there so it
     can be opened later, on purpose, by someone who means it.
     """
 
@@ -100,7 +102,7 @@ class PaymentGateway(Base, UUIDMixin, TimestampMixin):
 
     #: The smallest total this gateway will accept, in AED.
     #:
-    #: Both processors refuse under 2.00 and both refuse it *at the gateway*,
+    #: Every processor here refuses under 2.00 and refuses it *at the gateway*,
     #: which turns a 1.50 order into an opaque 400 at the last screen of
     #: checkout. Held here so the refusal happens with a sentence the customer
     #: can act on, and so a processor changing its floor is an edit.
@@ -111,11 +113,12 @@ class PaymentGateway(Base, UUIDMixin, TimestampMixin):
 
     # ── what the processor keeps ──────────────────────────────────────────────
     #
-    # Both currently charge 2.9% + AED 1, which is why those are the defaults,
-    # but they are a commercial term rather than a constant: rates move with
-    # volume and a renegotiation should be an edit in the console, not a deploy.
-    # Per gateway rather than one setting, because the whole point of having two
-    # is that they can differ.
+    # Stripe and Ziina both charge 2.9% + AED 1, which is why those are the
+    # defaults (Paymob's row carries them too until its signed pricing is set at
+    # go-live), but they are a commercial term rather than a constant: rates move
+    # with volume and a renegotiation should be an edit in the console, not a
+    # deploy. Per gateway rather than one setting, because the whole point of
+    # having more than one is that they can differ.
     #
     # This is an *estimate*, and the admin says so. The real figure for a Stripe
     # charge is on its balance transaction, which does not exist until the charge
@@ -139,7 +142,8 @@ class PaymentGateway(Base, UUIDMixin, TimestampMixin):
     #:
     #: Ziina takes this per payment intent (`test: true`) rather than per key,
     #: so it has to be a value we send rather than a credential we hold. Stripe
-    #: reads it from the key itself and ignores this.
+    #: and Paymob read it from the key (and Paymob's integration id) itself and
+    #: ignore this.
     test_mode: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )

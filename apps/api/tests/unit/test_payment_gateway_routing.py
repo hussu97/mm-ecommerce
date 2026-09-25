@@ -90,7 +90,9 @@ class _FakeProvider(PaymentGatewayProvider):
             checkout_url=f"https://{self.code}.example/pay",
         )
 
-    def parse_webhook(self, payload, headers):  # pragma: no cover — unused here
+    def parse_webhook(
+        self, payload, headers, *, query=None
+    ):  # pragma: no cover — unused here
         raise NotImplementedError
 
 
@@ -183,6 +185,76 @@ class TestZiinaIsNotLiveInProduction:
         chosen = await router.select_gateway(db, Decimal("100.00"))
 
         assert chosen.code == "stripe"
+
+
+_PAYMOB_MIGRATION_PATH = _MIGRATION_PATH.with_name("291_paymob_gateway.py")
+
+#: Everything `PaymobProvider.is_configured` requires, set to something real.
+_PAYMOB_CREDS = {
+    "PAYMOB_SECRET_KEY": "egy_sk_live_x",
+    "PAYMOB_PUBLIC_KEY": "egy_pk_live_x",
+    "PAYMOB_API_KEY": "api_key_x",
+    "PAYMOB_HMAC_SECRET": "hmac_x",
+    "PAYMOB_CARD_INTEGRATION_ID": 12345,
+    "PAYMOB_CALLBACK_BASE_URL": "https://api.meltingmomentscakes.com",
+}
+
+
+class TestPaymobIsNotLiveInProduction:
+    def test_paymob_is_unconfigured_by_default(self, monkeypatch):
+        """
+        The same posture as Ziina, with more to be present before it holds.
+
+        The default `Settings` configure nothing, the credentials without the
+        flag are not a decision, and the flag with any one credential missing
+        is a gateway that could charge and not settle.
+        """
+        from app.core.config import Settings
+        from app.services.providers.paymob_provider import provider as paymob
+
+        defaults = Settings(_env_file=None)
+        for name in ("PAYMOB_ENABLED", *_PAYMOB_CREDS):
+            monkeypatch.setattr(settings, name, getattr(defaults, name))
+        assert not paymob.is_configured()
+
+        # Every credential, and the flag still off: not enough.
+        for name, value in _PAYMOB_CREDS.items():
+            monkeypatch.setattr(settings, name, value)
+        assert not paymob.is_configured()
+
+        # The flag on with any single credential missing: still not enough.
+        monkeypatch.setattr(settings, "PAYMOB_ENABLED", True)
+        for name in _PAYMOB_CREDS:
+            monkeypatch.setattr(settings, name, getattr(defaults, name))
+            assert not paymob.is_configured(), f"configured without {name}"
+            monkeypatch.setattr(settings, name, _PAYMOB_CREDS[name])
+
+        # All of it, deliberately, and only then.
+        assert paymob.is_configured()
+
+    def test_the_migration_seeds_paymob_inactive(self):
+        """
+        The row ships switched off, behind Stripe and Ziina.
+
+        Read out of the migration source, which is what runs against the live
+        database. Priority 3 means activating it without touching priorities
+        makes it a standby, never the primary.
+        """
+        source = _PAYMOB_MIGRATION_PATH.read_text()
+        upgrade = source[source.index("def upgrade") : source.index("def downgrade")]
+
+        assert 'code="paymob"' in upgrade
+        assert "is_active=False" in upgrade
+        assert "priority=3" in upgrade
+        assert "ON CONFLICT (code) DO NOTHING" in upgrade
+
+    def test_the_migration_never_deletes_a_used_paymob_row(self):
+        source = _PAYMOB_MIGRATION_PATH.read_text()
+        downgrade = source[source.index("def downgrade") :]
+
+        assert "code = 'paymob'" in downgrade
+        assert "NOT EXISTS" in downgrade
+        assert "payment_transactions" in downgrade
 
 
 # ── selection ─────────────────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ LOOP_NAMES = (
     "grubops_reconcile",
     "grubops_orders",
     "aggregator_ingest",
+    "payment_reconcile",
 )
 
 #: Kept well past the slowest loop's tick (hourly) so a stamp is read back as a

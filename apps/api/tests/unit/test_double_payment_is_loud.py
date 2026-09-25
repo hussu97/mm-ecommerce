@@ -50,8 +50,11 @@ class _StubProvider:
             )
         )
 
-    def parse_webhook(self, payload, headers):
+    def parse_webhook(self, payload, headers, *, query=None):
         return self._event
+
+    async def verify_event(self, event):
+        return event
 
 
 def _make_event(**kw) -> GatewayEvent:
@@ -154,3 +157,42 @@ async def test_a_redelivery_of_the_same_charge_is_a_quiet_no_op(
     assert len(order.payment_transactions) == 1
     provider.refund.assert_not_awaited()
     assert "DOUBLE PAYMENT" not in caplog.text
+
+
+async def test_a_second_charge_through_a_second_open_checkout_is_refunded(
+    db, order, monkeypatch, caplog
+):
+    """
+    The shape the redelivery check used to miss. The customer paid on checkout
+    A, then also paid on a second checkout B left open in another tab. B's
+    success matches B's own pending row, and `_record_transaction` settles it
+    *before* the duplicate check runs — so reading "what is settled" afterwards
+    saw B's payment already there and waved the second charge through as a
+    redelivery. The check now reads what was settled before this event, and the
+    second charge is refunded on B's own row rather than a new one (a new row
+    would repeat B's session and violate the per-gateway session index).
+    """
+    second_checkout = _Attempt(session_id="cs_2")
+    order.payment_transactions.append(second_checkout)
+    provider = _StubProvider(
+        _make_event(
+            order_number="MM-20260808-001",
+            payment_id="pi_2",
+            amount_captured=12500,
+        )
+    )
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router, "PROVIDERS", {"stripe": provider}
+    )
+
+    with caplog.at_level("CRITICAL"):
+        await payment_service.handle_webhook(db, "stripe", b"{}", {})
+
+    assert len(order.payment_transactions) == 2, "no new row — B is the record"
+    provider.refund.assert_awaited_once()
+    assert provider.refund.await_args.kwargs["payment_id"] == "pi_2"
+    assert second_checkout.payment_id == "pi_2"
+    assert second_checkout.refund_id == "re_dup_1"
+    assert second_checkout.status == PaymentTransactionStatusEnum.REFUNDED.value
+    assert order.payment_id == "pi_1", "the order keeps the charge it was paid with"
+    assert "DOUBLE PAYMENT" in caplog.text

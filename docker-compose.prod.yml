@@ -30,6 +30,24 @@ x-api-environment: &api-environment
   ZIINA_API_URL: ${ZIINA_API_URL:-https://api-v2.ziina.com/api}
   ZIINA_TEST_MODE: ${ZIINA_TEST_MODE:-false}
   ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
+  # ── Paymob (the third card gateway) ────────────────────────────────
+  # Present and switched off, exactly like Ziina and for the same reasons.
+  # `PAYMOB_ENABLED` defaults false here as well as in `Settings` — two
+  # falses, so neither file alone can turn it on by accident. The two
+  # integration ids are ints: their default is `0`, never empty, or
+  # pydantic refuses "" at import and the container does not start.
+  PAYMOB_ENABLED: ${PAYMOB_ENABLED:-false}
+  PAYMOB_API_URL: ${PAYMOB_API_URL:-https://uae.paymob.com}
+  PAYMOB_CHECKOUT_URL: ${PAYMOB_CHECKOUT_URL:-https://uae.paymob.com/unifiedcheckout}
+  PAYMOB_SECRET_KEY: ${PAYMOB_SECRET_KEY:-}
+  PAYMOB_PUBLIC_KEY: ${PAYMOB_PUBLIC_KEY:-}
+  PAYMOB_API_KEY: ${PAYMOB_API_KEY:-}
+  PAYMOB_HMAC_SECRET: ${PAYMOB_HMAC_SECRET:-}
+  PAYMOB_CARD_INTEGRATION_ID: ${PAYMOB_CARD_INTEGRATION_ID:-0}
+  PAYMOB_APPLE_PAY_INTEGRATION_ID: ${PAYMOB_APPLE_PAY_INTEGRATION_ID:-0}
+  PAYMOB_CALLBACK_BASE_URL: ${PAYMOB_CALLBACK_BASE_URL:-}
+  PAYMOB_TIMEOUT_SECONDS: ${PAYMOB_TIMEOUT_SECONDS:-10}
+  PAYMOB_CHECKOUT_EXPIRY_SECONDS: ${PAYMOB_CHECKOUT_EXPIRY_SECONDS:-86400}
   RESEND_API_KEY: ${RESEND_API_KEY}
   FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
   GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
@@ -250,6 +268,19 @@ x-pos-environment: &pos-environment
   ZIINA_API_URL: ${ZIINA_API_URL:-https://api-v2.ziina.com/api}
   ZIINA_TEST_MODE: ${ZIINA_TEST_MODE:-false}
   ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
+  # Paymob: same defaults, same reason.
+  PAYMOB_ENABLED: ${PAYMOB_ENABLED:-false}
+  PAYMOB_API_URL: ${PAYMOB_API_URL:-https://uae.paymob.com}
+  PAYMOB_CHECKOUT_URL: ${PAYMOB_CHECKOUT_URL:-https://uae.paymob.com/unifiedcheckout}
+  PAYMOB_SECRET_KEY: ${PAYMOB_SECRET_KEY:-}
+  PAYMOB_PUBLIC_KEY: ${PAYMOB_PUBLIC_KEY:-}
+  PAYMOB_API_KEY: ${PAYMOB_API_KEY:-}
+  PAYMOB_HMAC_SECRET: ${PAYMOB_HMAC_SECRET:-}
+  PAYMOB_CARD_INTEGRATION_ID: ${PAYMOB_CARD_INTEGRATION_ID:-0}
+  PAYMOB_APPLE_PAY_INTEGRATION_ID: ${PAYMOB_APPLE_PAY_INTEGRATION_ID:-0}
+  PAYMOB_CALLBACK_BASE_URL: ${PAYMOB_CALLBACK_BASE_URL:-}
+  PAYMOB_TIMEOUT_SECONDS: ${PAYMOB_TIMEOUT_SECONDS:-10}
+  PAYMOB_CHECKOUT_EXPIRY_SECONDS: ${PAYMOB_CHECKOUT_EXPIRY_SECONDS:-86400}
   RESEND_API_KEY: ${RESEND_API_KEY}
   FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
   GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}

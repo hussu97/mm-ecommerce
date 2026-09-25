@@ -131,6 +131,9 @@ importers:
       next:
         specifier: ^16.0.0
         version: 16.2.3(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      paymob-pixel:
+        specifier: 1.2.7
+        version: 1.2.7
       react:
         specifier: ^19.0.0
         version: 19.2.4
@@ -3862,6 +3865,9 @@ packages:
   pathval@2.0.1:
     resolution: {integrity: sha512-//nshmD55c46FuFw26xV/xFAaB5HF9Xdap7HJBBnrKdAd6/GxDBaNA1870O79+9ueg61cZLSVc+OaFlfmObYVQ==}
     engines: {node: '>= 14.16'}
+
+  paymob-pixel@1.2.7:
+    resolution: {integrity: sha512-Yz4JOEQhPcYvOLVIDdJH4xEWQRb1wHS3jiG6aadnSeQsHL/wfD54DTO5bSlFG3/jxpROO5qv5J3F8sKTtR1GoQ==}
 
   pg-int8@1.0.1:
     resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
@@ -8539,6 +8545,8 @@ snapshots:
   pathe@2.0.3: {}
 
   pathval@2.0.1: {}
+
+  paymob-pixel@1.2.7: {}
 
   pg-int8@1.0.1: {}
 

@@ -234,6 +234,19 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
             )
         )
 
+    # Card payments whose webhook never arrived, found by asking the gateway.
+    # Same lifespan reasons as its neighbours. Started only where a gateway
+    # that can be asked (`fetch_outcome` — Paymob) is configured, which in
+    # production today is none; its heartbeat then reads null, "not running".
+    from app.services.payments import payment_reconcile_service
+
+    if payment_reconcile_service.enabled():
+        background.append(
+            spawn_tracked(
+                payment_reconcile_service.run_forever(), name="payment_reconcile"
+            )
+        )
+
     # The business-day sweeper. Same lifespan reasons as its neighbours —
     # no cron here, an advisory lock so a second copy is harmless. Hourly
     # it closes any trading day that rolled past its cut-off without an

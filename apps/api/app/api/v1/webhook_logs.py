@@ -71,10 +71,10 @@ class PaginatedWebhookLogs(BaseModel):
 @router.get("", response_model=PaginatedWebhookLogs)
 async def list_webhook_logs(
     provider: str | None = Query(
-        None, description="lalamove | noon_send | stripe | ziina"
+        None, description="lalamove | noon_send | stripe | ziina | paymob"
     ),
     endpoint: str | None = Query(
-        None, description="status | tracking | payments | webhooks"
+        None, description="status | tracking | payments | webhooks | payments_return"
     ),
     event_type: str | None = Query(None, description="Their word for it"),
     order_number: str | None = Query(None, description="Search by order number"),

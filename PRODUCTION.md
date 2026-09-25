@@ -35,6 +35,7 @@ the five-place checklist in `CLAUDE.md` points at. Jump straight there.
     - [pos.meltingmomentscakes.com](#posmeltingmomentscakescom)
     - [Stripe](#stripe)
     - [Ziina (second card gateway — **not live**)](#ziina-second-card-gateway--not-live)
+    - [Paymob (third card gateway — **not live**)](#paymob-third-card-gateway--not-live)
     - [Email (Resend)](#email-resend)
     - [Cloudflare R2 (media storage)](#cloudflare-r2-media-storage)
     - [BNPL — Tabby](#bnpl--tabby)
@@ -424,6 +425,12 @@ actually do it once `crontab -l` was found empty.
    > the storefront and hard-coded in `app/layout.tsx`; a stale value here once
    > pointed the tracker at a 404 and stopped analytics dead. If the project
    > still has one set, remove it.
+   > `PAYMOB_APPLE_DOMAIN_ASSOCIATION` — **leave unset in production.** The
+   > Apple Pay domain association file Paymob issues for its Apple Pay
+   > integration, served by the storefront so Apple can verify the domain. It
+   > only matters once Paymob's Apple Pay is being signed off, and whether it
+   > can coexist with Stripe's own Apple Pay domain verification is on the
+   > Paymob go-live checklist in Step 13c. Server-only (no `NEXT_PUBLIC_`).
    > Sentry env vars (`NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`) are added separately — see **Step 11c**.
 5. Click **Deploy** and note the preview URL (e.g. `melting-moments-cakes-web.vercel.app`)
 6. Once confirmed working, go to **Settings → Domains** → add `meltingmomentscakes.com`
@@ -746,6 +753,102 @@ boot if the flag is on and either secret is missing), register the webhook at
 row in the admin. To make Ziina the *primary*, give it a lower priority number
 than Stripe; to keep it purely as a standby, leave the priorities alone and it
 will only be reached when Stripe cannot produce a session.
+
+#### Paymob (third card gateway — **not live**)
+
+Paymob is built, wired and switched off, for the same reason Ziina is: a Stripe
+incident should be a row flip in **Admin → Payment Gateways**, not a release.
+It also carries Apple Pay through its own integration. Leaving every secret
+below unset is the supported production state: the gateway row ships inactive
+(migration `291`), `PAYMOB_ENABLED` defaults false in three separate files, and
+the provider reports itself unconfigured unless every credential the money path
+needs is present — so the toggle is visible on production and cannot do
+anything.
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `PAYMOB_ENABLED` | `false` | The master switch. Leave false until Paymob is signed off. |
+| `PAYMOB_SECRET_KEY` | *(unset)* | Paymob dashboard → Settings → Account info. Sent as `Authorization: Token …` for intentions and refunds |
+| `PAYMOB_PUBLIC_KEY` | *(unset)* | Same page. Public; rides on the hosted checkout URL |
+| `PAYMOB_API_KEY` | *(unset)* | Same page. Minted into the Bearer token the transaction reads (inquiry, refund read-back) need — not the secret key |
+| `PAYMOB_HMAC_SECRET` | *(unset)* | Same page. Verifies `?hmac=` on every callback and on the customer's return redirect |
+| `PAYMOB_CARD_INTEGRATION_ID` | *(unset)* | Dashboard → Developers → Payment integrations. **Live** id in production — test and live ids differ, and a callback from an id not configured here is ignored |
+| `PAYMOB_APPLE_PAY_INTEGRATION_ID` | *(unset)* | Optional. Unset (`0`) means no Apple Pay through Paymob |
+| `PAYMOB_CALLBACK_BASE_URL` | *(unset)* | `https://api.meltingmomentscakes.com` — each intention's `notification_url` and `redirection_url` are built from it |
+| `PAYMOB_API_URL` | *(unset)* | Defaults to `https://uae.paymob.com` |
+| `PAYMOB_CHECKOUT_URL` | *(unset)* | Defaults to `https://uae.paymob.com/unifiedcheckout` (the documented form; it redirects to `uae.checkout.paymob.com`) |
+| `PAYMOB_TIMEOUT_SECONDS` | *(unset)* | Defaults to `10` |
+| `PAYMOB_CHECKOUT_EXPIRY_SECONDS` | *(unset)* | Defaults to `86400` (24h, like Stripe's session; inside the 48h stale-checkout sweep) |
+
+There is no webhook to register in the Paymob dashboard: every intention names
+its own callback. They land at
+`https://api.meltingmomentscakes.com/api/v1/payments/webhooks/paymob`, and the
+customer's browser returns through
+`https://api.meltingmomentscakes.com/api/v1/payments/paymob/return`.
+
+**To go live on Paymob later**, in this order: work through the sandbox
+checklist below, set the six required secrets (`PAYMOB_SECRET_KEY`,
+`PAYMOB_PUBLIC_KEY`, `PAYMOB_API_KEY`, `PAYMOB_HMAC_SECRET`,
+`PAYMOB_CARD_INTEGRATION_ID`, `PAYMOB_CALLBACK_BASE_URL`), set
+`PAYMOB_ENABLED=true`, deploy (the API refuses to boot if the flag is on and any
+of the six is missing), set Paymob's real `fee_percent` / `fee_fixed` on its
+`payment_gateways` row, then activate the row in the admin. Priorities work as
+they do for Ziina: a lower number than Stripe makes Paymob the primary; leaving
+them alone keeps it as a standby reached only when the gateways ahead of it
+cannot produce a session.
+
+**Paymob go-live checklist (sandbox).** Each of these is a place the provider
+was written from documentation that is silent or ambiguous. Confirm every one
+against real sandbox traffic before the flag goes on:
+
+- [ ] HMAC verifies on real callbacks — including a wallet / Apple Pay payment
+      whose `source_data.*` fields are null (the docs never show one).
+- [ ] `client_secret` expiry and reuse behave as `expiration` says — a page
+      opened after expiry refuses to pay, and one secret cannot pay twice.
+- [ ] `GET /v1/intention/element/{public_key}/{client_secret}/` exists and
+      answers with `status` / `confirmed` (the abandoned-cart resume lookup
+      depends on it).
+- [ ] `refunded_amount_cents` on the transaction GET updates synchronously
+      after a refund POST (the refund read-back relies on it).
+- [ ] Multiple partial refunds on one transaction work
+      (`can_process_multiple_refunds`).
+- [ ] Refund/void callback shape: which object arrives — the parent with
+      `is_refunded`/`is_voided`, the child with `has_parent_transaction`, or
+      both. Either is handled (a child is resolved through its parent, read
+      back from Paymob), but confirm, and confirm `is_refunded` is set on a
+      *partial* refund too.
+- [ ] The refund POST's reply: `amount_cents` is this refund's own amount
+      (it is capped at the request either way), and whether a refund that is
+      still `pending` already counts in the parent's `refunded_amount_cents`
+      (the retry-safety read-back relies on it).
+- [ ] Transaction inquiry by Paymob order id returns the *latest* transaction
+      when an order has several (decline then paid retry), and answers a 4xx
+      (not an empty 200) for an order with no transaction — both read as
+      "no payment" here.
+- [ ] Put one real sandbox callback **and** one real redirect of each kind —
+      card success, card decline, Apple Pay, refund, void — through
+      `paymob_provider.parse_webhook` / `parse_return`. The signed-field shape
+      check (`_assert_signed_shape`) rejects anything not in Paymob's
+      documented shape (e.g. `12500.0`, lowercase currency, null flags); a
+      rejected success is still recovered by the reconcile sweep, but a
+      rejected decline or refund would not be.
+- [ ] `billing_data.country` is accepted as ISO alpha-3 (`ARE`), as in
+      Paymob's examples.
+- [ ] A 401/403/404 creating an intention (bad key, unknown integration id)
+      fails over to the next gateway — confirm Paymob does not also use those
+      codes for faults in the order itself.
+- [ ] Real decline `acq_response_code` values match the provisional ISO-8583
+      map in `paymob_provider._ACQ_FAILURE_REASONS`.
+- [ ] `notification_url` is honoured for the Apple Pay integration id, not
+      only the card one.
+- [ ] The canonical hosted checkout URL form
+      (`{PAYMOB_CHECKOUT_URL}/?publicKey=…&clientSecret=…`) is the one Paymob
+      intends merchants to use.
+- [ ] Paymob's Apple Pay domain association file can be served alongside
+      Stripe's Apple Pay without breaking it (see `PAYMOB_APPLE_DOMAIN_ASSOCIATION`
+      in Step 10).
+- [ ] Real `fee_percent` / `fee_fixed` from the signed Paymob pricing are set on
+      the `payment_gateways` row (migration `291` leaves the column defaults).
 
 #### Email (Resend)
 

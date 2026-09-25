@@ -25,6 +25,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.models.order import OrderStatusEnum
 from app.models.payment_transaction import (
@@ -41,6 +42,7 @@ from app.services.payments.payment_service import (
     _load_order,
 )
 from app.services.providers.base import GatewayUnavailableError
+from app.services.providers.paymob_provider import provider as paymob_provider
 from app.services.providers.stripe_provider import provider as stripe_provider
 
 logger = logging.getLogger(__name__)
@@ -54,16 +56,10 @@ logger = logging.getLogger(__name__)
 _ELIGIBILITY_PROBE_AMOUNT = Decimal("2.00")
 
 
-async def _stripe_is_default_card_gateway(db: AsyncSession, amount: Decimal) -> bool:
-    """
-    True when the gateway that would settle a card of *amount* is Stripe.
-
-    Reads the same `candidates()` the real payment does, so the answer tracks an
-    admin toggling gateways during an incident without anything shipping — the
-    moment Ziina is made the default, Apple Pay stops being offered.
-    """
+async def _default_card_gateway(db: AsyncSession, amount: Decimal) -> str | None:
+    """The code of the gateway that would settle a card of *amount*, or None."""
     options = await payment_gateway_router.candidates(db, amount)
-    return bool(options) and options[0].code == stripe_provider.code
+    return options[0].code if options else None
 
 
 async def eligibility(db: AsyncSession, *, amount: Decimal | None = None) -> dict:
@@ -77,7 +73,19 @@ async def eligibility(db: AsyncSession, *, amount: Decimal | None = None) -> dic
     it to the devices that can.
     """
     probe = amount if amount and amount > 0 else _ELIGIBILITY_PROBE_AMOUNT
-    return {"eligible": await _stripe_is_default_card_gateway(db, probe)}
+    default = await _default_card_gateway(db, probe)
+    return {
+        # Stripe's in-page Apple Pay, and only Stripe's. Bundles already in
+        # customers' browsers read this flag as "draw the Stripe.js sheet", so
+        # it can never start meaning "some gateway can do Apple Pay": a Paymob
+        # default turning it on would draw a Stripe sheet whose intent the
+        # server then refuses — after the customer has authorised the payment.
+        "eligible": default == stripe_provider.code,
+        # Paymob's, through its Pixel button. A separate flag so only a bundle
+        # that knows how to draw Pixel ever acts on it.
+        "paymob_apple_pay": default == paymob_provider.code
+        and bool(settings.PAYMOB_APPLE_PAY_INTEGRATION_ID),
+    }
 
 
 def _intent_attempt(order, payment_id: str) -> PaymentTransaction | None:
@@ -180,6 +188,89 @@ async def create_intent(db: AsyncSession, order_number: str, user: User) -> dict
 
     return {
         "client_secret": intent.client_secret,
+        "amount": f"{total:.2f}",
+        "currency": "AED",
+        "order_number": order.order_number,
+    }
+
+
+async def create_paymob_session(
+    db: AsyncSession, order_number: str, user: User
+) -> dict:
+    """
+    Mint a Paymob intention offering only Apple Pay, for the in-page Pixel button.
+
+    Paymob's Apple Pay button is drawn by its Pixel SDK against an intention's
+    client secret, so the intention — and therefore the order — has to exist
+    before the button can appear. That is why this is a second tap where
+    Stripe's is one: the customer places the order, and then presses Pixel's
+    own Apple Pay button, which opens the sheet.
+
+    The guards are `create_intent`'s, gateway aside: the caller owns the order,
+    it is not cancelled or already paid, a `payment_failed` order is reset for
+    a retry, there is something to charge, and Paymob is the active card
+    gateway for this amount. The money path is the ordinary one — the attempt is
+    recorded against its Paymob order id exactly as a hosted Paymob checkout's
+    is, so the webhook (or the signed return, or the reconcile sweep) settles
+    it. This writes no order status of its own.
+
+    A new intention per call, the way Ziina mints a new intent per retry.
+    Deliberately not written onto `order.payment_id`: the hosted checkout's
+    handle, if there is one, stays the order's, and nothing here reads as paid.
+    """
+    order = await _load_order(db, order_number)
+    _assert_may_act_on(order, user.id, admin=user.is_admin)
+
+    if order.status == OrderStatusEnum.CANCELLED:
+        raise BadRequestError("Cannot pay for a cancelled order")
+
+    if order.status == OrderStatusEnum.PAYMENT_FAILED:
+        await order_lifecycle.transition(db, order, OrderStatusEnum.CREATED)
+        await db.flush()
+
+    if _is_paid(order):
+        raise BadRequestError("Order has already been paid")
+
+    total = Decimal(str(order.total))
+    if total <= Decimal("0.00"):
+        raise BadRequestError("This order has nothing to pay")
+
+    if await _default_card_gateway(db, total) != paymob_provider.code or not (
+        settings.PAYMOB_APPLE_PAY_INTEGRATION_ID
+    ):
+        raise BadRequestError("Apple Pay is unavailable for this order right now")
+
+    try:
+        session, client_secret = await paymob_provider.create_apple_pay_intention(order)
+    except GatewayUnavailableError as exc:
+        raise BadRequestError(
+            "Apple Pay is temporarily unavailable. Please try again shortly."
+        ) from exc
+
+    transaction = PaymentTransaction(
+        order_id=order.id,
+        gateway=paymob_provider.code,
+        amount=total,
+        currency="AED",
+        status=PaymentTransactionStatusEnum.PENDING.value,
+        session_id=session.session_id,
+        raw_status=session.raw_status,
+    )
+    order.payment_transactions.append(transaction)
+    db.add(transaction)
+
+    order.payment_method = CARD
+    order.payment_provider = paymob_provider.code
+    await db.flush()
+
+    logger.info(
+        "Paymob Apple Pay intention created: order=%s session=%s",
+        order.order_number,
+        session.session_id,
+    )
+    return {
+        "public_key": settings.PAYMOB_PUBLIC_KEY,
+        "client_secret": client_secret,
         "amount": f"{total:.2f}",
         "currency": "AED",
         "order_number": order.order_number,

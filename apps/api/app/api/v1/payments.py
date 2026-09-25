@@ -4,14 +4,20 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.limiter import limiter
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.user import User
+from app.schemas.payment import (
+    PaymobApplePaySessionRequest,
+    PaymobApplePaySessionResponse,
+)
 from app.services.payments import apple_pay_service, payment_service
 from app.services.webhook_log_service import Recorder
 
@@ -67,8 +73,13 @@ class PaymentStatusResponse(BaseModel):
 class ApplePayEligibilityResponse(BaseModel):
     #: Whether in-page Apple Pay may be offered: Stripe is the active card
     #: gateway. The browser's own "can this device do Apple Pay" check is the
-    #: client's to make on top of this.
+    #: client's to make on top of this. Never widened to other gateways —
+    #: bundles already shipped read it as "draw the Stripe.js sheet".
     eligible: bool
+    #: Paymob's in-page Apple Pay (its Pixel button): Paymob is the active card
+    #: gateway and has an Apple Pay integration. A separate flag so only a
+    #: bundle that knows how to draw Pixel ever acts on it.
+    paymob_apple_pay: bool = False
 
 
 class ApplePayIntentRequest(BaseModel):
@@ -230,7 +241,7 @@ async def process_gateway_webhook(
     try:
         try:
             result = await payment_service.handle_webhook(
-                db, gateway, payload, request.headers
+                db, gateway, payload, request.headers, dict(request.query_params)
             )
         except NotFoundError as e:
             # Re-raised as itself: the shared AppError handler renders the same
@@ -320,6 +331,95 @@ async def gateway_webhook(
     that does not exist is how a misconfigured URL looks healthy for a month.
     """
     return await process_gateway_webhook(gateway.lower(), request, db, mount="payments")
+
+
+@router.post(
+    "/apple-pay/paymob-session",
+    response_model=PaymobApplePaySessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("20/minute")
+async def create_paymob_apple_pay_session(
+    request: Request,
+    data: PaymobApplePaySessionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Mint a Paymob intention so the browser can draw Paymob's Apple Pay button.
+
+    Owner-only, and refused unless Paymob is the active card gateway and has an
+    Apple Pay integration. Settles through the ordinary Paymob webhook, like
+    every Paymob card payment — this endpoint writes no order status of its own.
+    """
+    with acting_as(
+        StatusSourceEnum.CHECKOUT.value,
+        actor_id=current_user.id,
+        actor_label=current_user.email,
+        note="apple_pay",
+    ):
+        result = await apple_pay_service.create_paymob_session(
+            db, data.order_number, current_user
+        )
+    return PaymobApplePaySessionResponse(**result)
+
+
+@router.get("/paymob/return", include_in_schema=False)
+# Generous on purpose: this is a customer who has just paid, arriving from
+# Paymob's page. A 429 here strands them on an error with their money taken.
+@limiter.limit("120/minute")
+async def paymob_return(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Where Paymob sends the customer back to, whatever happened on its page.
+
+    Paymob has one `redirection_url` for every outcome and appends the signed
+    transaction to it, so this verifies that signature, settles whatever it
+    proves (the same event the webhook would carry, deduplicated against it),
+    and sends the customer on to the confirmation page or back to the payment
+    step. A signature that does not verify sends them to the checkout and
+    touches nothing.
+
+    Public, because the customer's browser is the caller. The only thing an
+    anonymous caller can reach is a redirect, and the only order it can name is
+    the one inside a signature Paymob made.
+    """
+    query = dict(request.query_params)
+    recorder = Recorder("paymob", "payments_return", request=request)
+    # The signature is left out of the log: it is a bearer credential for this
+    # exact redirect, and the log is read by more people than need it.
+    recorder.payload = {k: v for k, v in query.items() if k != "hmac"}
+    target = f"{settings.WEB_URL}/checkout"
+    try:
+        try:
+            target, recorder.order_number = await payment_service.handle_gateway_return(
+                db, "paymob", query
+            )
+        except (BadRequestError, NotFoundError) as e:
+            if "signature" in str(e).lower():
+                recorder.signature_valid = False
+            recorder.http_status = 303
+            recorder.finish(error=str(e))
+            logger.warning("Paymob return not honoured: %s", e)
+        else:
+            recorder.signature_valid = True
+            recorder.matched = True
+            recorder.http_status = 303
+            recorder.finish(
+                result={
+                    "redirect": "confirmation"
+                    if "/confirmation" in target
+                    else "payment",
+                    "external_id": query.get("id"),
+                }
+            )
+            # Committed here rather than by `get_db` on the way out (CLAUDE.md
+            # rule 2): the customer is about to load the confirmation page, which
+            # reads this order, and it must not be able to get there before the
+            # payment it is showing has been written.
+            await db.commit()
+    finally:
+        await recorder.save()
+    return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/{order_number}/status", response_model=PaymentStatusResponse)

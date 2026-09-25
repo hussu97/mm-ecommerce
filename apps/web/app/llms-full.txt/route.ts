@@ -68,7 +68,7 @@ export async function GET() {
 - Store pickup from Sharjah is free
 
 ${offer ? `### Offers\n- ${offer}\n\n` : ''}### Payment Methods
-- Card online: Visa, Mastercard, Apple Pay (via Stripe)
+- Card online: Visa, Mastercard, Apple Pay
 - Cash is accepted on pickup orders only. There is no cash on delivery.
 - Tabby and Tamara (buy now, pay later) are not live yet
 

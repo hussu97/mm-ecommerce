@@ -123,8 +123,13 @@ const nextConfig: NextConfig = {
               // mm-product-images) and the media CDN. Cloudflare R2 was retired
               // — no product URL points at it — so its hosts are gone from here.
               "img-src 'self' data: blob: https://storage.googleapis.com https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com https://*.clarity.ms https://c.bing.com",
-              "connect-src 'self' https://api.meltingmomentscakes.com https://cloud.umami.is https://maps.googleapis.com https://*.ingest.sentry.io https://*.ingest.de.sentry.io https://*.clarity.ms https://c.bing.com https://api.stripe.com",
-              "frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com",
+              // `uae.paymob.com` is the embedded Apple Pay SDK's API (intention
+              // data, Apple's merchant validation, the pay call), and
+              // `uae.checkout.paymob.com` the page it frames and prefetches. The
+              // SDK itself is bundled from npm (`paymob-pixel`), so it needs no
+              // script-src entry.
+              "connect-src 'self' https://api.meltingmomentscakes.com https://cloud.umami.is https://maps.googleapis.com https://*.ingest.sentry.io https://*.ingest.de.sentry.io https://*.clarity.ms https://c.bing.com https://api.stripe.com https://uae.paymob.com",
+              "frame-src https://challenges.cloudflare.com https://js.stripe.com https://hooks.stripe.com https://uae.checkout.paymob.com",
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",

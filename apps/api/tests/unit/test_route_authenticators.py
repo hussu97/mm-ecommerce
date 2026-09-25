@@ -101,6 +101,9 @@ PUBLIC: set[tuple[str, str]] = {
     ("POST", "/webhooks/stripe"),
     ("POST", "/webhooks/ziina"),
     ("POST", "/webhooks/{gateway}"),
+    # The customer's browser returning from Paymob's hosted page. It can only
+    # redirect, and it acts only on a transaction Paymob signed.
+    ("GET", "/paymob/return"),
     ("POST", "/lalamove"),
     ("POST", "/noon-send"),
     ("POST", "/noon-send/tracking"),

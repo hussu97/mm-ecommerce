@@ -374,6 +374,7 @@ class StripeProvider(PaymentGatewayProvider):
         amount: Decimal,
         idempotency_key: str,
         test_mode: bool = False,
+        expected_prior_refunded: Decimal | None = None,
     ) -> GatewayRefund:
         """
         Refund part or all of a Payment Intent.
@@ -419,7 +420,13 @@ class StripeProvider(PaymentGatewayProvider):
             raw_status=raw_status,
         )
 
-    def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
+    def parse_webhook(
+        self,
+        payload: bytes,
+        headers: Mapping[str, str],
+        *,
+        query: Mapping[str, str] | None = None,
+    ) -> GatewayEvent:
         """
         Verify a Stripe webhook and translate it into a `GatewayEvent`.
 

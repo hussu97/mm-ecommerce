@@ -26,10 +26,13 @@ class _Provider:
     def __init__(self, event: GatewayEvent | Exception):
         self._event = event
 
-    def parse_webhook(self, payload, headers):
+    def parse_webhook(self, payload, headers, *, query=None):
         if isinstance(self._event, Exception):
             raise self._event
         return self._event
+
+    async def verify_event(self, event):
+        return event
 
 
 @pytest.fixture
@@ -65,6 +68,8 @@ def db():
     # The dedup INSERT ... ON CONFLICT: rowcount 1 means "not seen before".
     session.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
     session.flush = AsyncMock()
+    # `_handle_refund` locks and re-reads the order before touching money.
+    session.refresh = AsyncMock()
     return session
 
 

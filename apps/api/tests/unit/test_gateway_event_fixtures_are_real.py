@@ -31,6 +31,7 @@ from pathlib import Path
 import stripe
 
 from app.core.config import settings
+from app.services.providers import paymob_provider as pmp
 from app.services.providers import stripe_provider as sp
 from app.services.providers import ziina_provider as zp
 from app.services.providers.base import GatewayEvent
@@ -166,6 +167,56 @@ def _ziina_shapes(shapes: dict[str, set[frozenset[str]]]) -> None:
         _record(shapes, event)
 
 
+def _paymob_shapes(shapes: dict[str, set[frozenset[str]]]) -> None:
+    """Every transaction shape Paymob's callback parser emits, signed for real."""
+    saved = (settings.PAYMOB_HMAC_SECRET, settings.PAYMOB_CARD_INTEGRATION_ID)
+    settings.PAYMOB_HMAC_SECRET = "paymob_guard_secret"
+    settings.PAYMOB_CARD_INTEGRATION_ID = 11
+    base = {
+        "id": 1,
+        "amount_cents": 100,
+        "created_at": "2026-09-25T00:00:00",
+        "currency": "AED",
+        "error_occured": False,
+        "has_parent_transaction": False,
+        "integration_id": 11,
+        "is_3d_secure": True,
+        "is_auth": False,
+        "is_capture": False,
+        "is_refunded": False,
+        "is_standalone_payment": True,
+        "is_voided": False,
+        "order": {"id": 2},
+        "owner": 3,
+        "pending": False,
+        "source_data": {"pan": "2346", "sub_type": "MasterCard", "type": "card"},
+        "success": True,
+        "refunded_amount_cents": 0,
+        "data": {"message": "x", "acq_response_code": "05"},
+    }
+    variants = [
+        {},
+        {"success": False},
+        {"pending": True, "success": False},
+        {"is_refunded": True, "refunded_amount_cents": 50},
+        {"is_voided": True},
+        {"has_parent_transaction": True},
+    ]
+    try:
+        for over in variants:
+            obj = {**base, **over}
+            values = [
+                pmp._signed_value(obj, f, flat=False)
+                for f in pmp._TRANSACTION_HMAC_FIELDS
+            ]
+            signature = pmp._expected_hmac(values, settings.PAYMOB_HMAC_SECRET)
+            payload = json.dumps({"type": "TRANSACTION", "obj": obj}).encode()
+            event = pmp.provider.parse_webhook(payload, {}, query={"hmac": signature})
+            _record(shapes, event)
+    finally:
+        settings.PAYMOB_HMAC_SECRET, settings.PAYMOB_CARD_INTEGRATION_ID = saved
+
+
 def _present(event: GatewayEvent) -> frozenset[str]:
     return frozenset(f for f in _TRACKED if getattr(event, f) is not None)
 
@@ -177,6 +228,7 @@ def _record(shapes: dict[str, set[frozenset[str]]], event: GatewayEvent) -> None
 def _emittable_shapes() -> dict[str, set[frozenset[str]]]:
     shapes = _stripe_shapes()
     _ziina_shapes(shapes)
+    _paymob_shapes(shapes)
     return shapes
 
 

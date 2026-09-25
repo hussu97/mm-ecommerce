@@ -773,7 +773,7 @@ async def refund_order_admin(
     Hand money back on a delivered website order, in part or in full.
 
     Only for an order MM took the money on itself — a website order paid by card
-    through Stripe or Ziina. A counter sale is refunded on the till and an
+    through Stripe, Ziina or Paymob. A counter sale is refunded on the till and an
     aggregator order was paid at the marketplace, so neither is refundable here.
     The order must be `delivered`: a live order is cancelled instead (which
     refunds it), and a settled one has already been dealt with.
@@ -806,9 +806,9 @@ async def refund_order_admin(
 
     if order.source != OrderSourceEnum.ONLINE.value:
         raise BadRequestError("Only website orders can be refunded here")
-    if order.payment_provider not in ("stripe", "ziina"):
+    if order.payment_provider not in ("stripe", "ziina", "paymob"):
         raise BadRequestError(
-            "Only card orders paid via Stripe or Ziina can be refunded here"
+            "Only card orders paid via Stripe, Ziina or Paymob can be refunded here"
         )
     if order.status != OrderStatusEnum.DELIVERED:
         raise ConflictError("Only a delivered order can be refunded here")

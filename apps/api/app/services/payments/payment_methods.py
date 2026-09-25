@@ -25,11 +25,11 @@ COD = PaymentMethodEnum.COD.value
 #:
 #: `stripe` is what the checkout posted and what every card order written before
 #: the method/gateway split still carries, so it turns up from a browser holding
-#: the previous bundle *and* from a retry of an old order. `ziina` is here for
-#: symmetry — nothing sends it today, and if a future client ever names a
-#: gateway where a method belongs, it should be read as the method rather than
-#: honoured as a routing request.
-_CARD_ALIASES = frozenset({"card", "stripe", "ziina"})
+#: the previous bundle *and* from a retry of an old order. `ziina` and `paymob`
+#: are here for symmetry — nothing sends them today, and if a future client ever
+#: names a gateway where a method belongs, it should be read as the method rather
+#: than honoured as a routing request.
+_CARD_ALIASES = frozenset({"card", "stripe", "ziina", "paymob"})
 
 
 def normalise_method(value: str | None) -> str:

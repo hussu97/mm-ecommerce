@@ -384,7 +384,7 @@ class _EchoGateway:
     def __init__(self):
         self._n = 0
 
-        async def _refund(*, payment_id, amount, idempotency_key):
+        async def _refund(*, payment_id, amount, idempotency_key, **_):
             self._n += 1
             return GatewayRefund(
                 refund_id=f"re_{self._n}", amount=amount, status="completed"
@@ -516,6 +516,9 @@ async def test_a_ziina_refund_webhook_after_an_admin_refund_does_not_double_coun
     order.payment_provider = "ziina"
 
     class _RecordedDb:
+        async def refresh(self, *_a, **_k):
+            return None
+
         async def execute(self, _stmt):
             class _Result:
                 def first(self_inner):
