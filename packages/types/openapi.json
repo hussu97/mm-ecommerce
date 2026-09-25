@@ -30316,6 +30316,18 @@
             ],
             "title": "Type",
             "type": "string"
+          },
+          "usage_limit": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Limit"
           }
         },
         "required": [
@@ -30517,6 +30529,17 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "usage_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Limit"
           }
         },
         "required": [
@@ -30944,9 +30967,58 @@
               }
             ],
             "title": "Type"
+          },
+          "usage_limit": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Limit"
           }
         },
         "title": "PromotionUpdate",
+        "type": "object"
+      },
+      "PromotionUsageResponse": {
+        "description": "How much of a promotion's usage limit completed orders have used.",
+        "properties": {
+          "exhausted": {
+            "title": "Exhausted",
+            "type": "boolean"
+          },
+          "promotion_id": {
+            "format": "uuid",
+            "title": "Promotion Id",
+            "type": "string"
+          },
+          "usage_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Limit"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "promotion_id",
+          "used",
+          "usage_limit",
+          "exhausted"
+        ],
+        "title": "PromotionUsageResponse",
         "type": "object"
       },
       "PurchaseOrderCreate": {
@@ -70487,6 +70559,37 @@
           }
         ],
         "summary": "Create Item",
+        "tags": [
+          "Marketing"
+        ]
+      }
+    },
+    "/api/v1/promotions/usage": {
+      "get": {
+        "description": "Completed orders that carried each live promotion, against its limit.",
+        "operationId": "promotion_usage_api_v1_promotions_usage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PromotionUsageResponse"
+                  },
+                  "title": "Response Promotion Usage Api V1 Promotions Usage Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Promotion Usage",
         "tags": [
           "Marketing"
         ]

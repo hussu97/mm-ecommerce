@@ -235,6 +235,7 @@ describe('F-ADM pagination — every DataTable list carries the control', () => 
     ['app/(dashboard)/inventory/templates/page.tsx', 'report templates per branch — a few config rows'],
     ['app/(dashboard)/inventory/transfers/page.tsx', 'transfer templates per branch — config rows'],
     ['components/inventory/RecipeEditor.tsx', "an editor's ingredient rows, not a list screen"],
+    ['app/(dashboard)/promo-codes/CounterPromotions.tsx', 'counter promotions — a handful of standing offers'],
   ].map(([p, why]) => [p.split('/').join(sep), why]));
 
   it('a DataTable page renders <Pagination> or is a documented bounded list', () => {

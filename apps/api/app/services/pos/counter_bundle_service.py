@@ -77,6 +77,7 @@ from app.schemas.pos_counter import (
 from app.services.catalog import availability_service, menu_group_service
 from app.services.orders import tax_identity_service
 from app.services.pos import (
+    auto_promotion_service,
     business_day_service,
     counter_pricing,
     promotion_rules,
@@ -163,7 +164,11 @@ async def _counter_promotions(
 ) -> list[BundlePromotion]:
     """Every counter promotion that runs at the branch in some mode, best
     first — the rows `auto_promotion_service.available_at` lists, without its
-    live-now reading (the register evaluates the schedule at sale time)."""
+    live-now reading (the register evaluates the schedule at sale time).
+
+    A promotion whose usage limit is used up is left out. The bundle is rebuilt
+    and re-hashed on every fetch, so the tills drop it within one refresh (60s)
+    of the sale that used it up, with no change to the pricing engine."""
     rows = list(
         (
             await db.execute(
@@ -176,6 +181,7 @@ async def _counter_promotions(
         .scalars()
         .all()
     )
+    rows = await auto_promotion_service.without_exhausted(db, rows)
     ranked: list[tuple[tuple, Promotion, str]] = []
     for promo in rows:
         rule = promotion_rules.rule_from(promo)

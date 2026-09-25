@@ -8254,6 +8254,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/promotions/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Promotion Usage
+         * @description Completed orders that carried each live promotion, against its limit.
+         */
+        get: operations["promotion_usage_api_v1_promotions_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/promotions/{item_id}": {
         parameters: {
             query?: never;
@@ -19892,6 +19912,8 @@ export interface components {
              * @enum {string}
              */
             type: "basic" | "advanced";
+            /** Usage Limit */
+            usage_limit?: number | null;
         };
         /** PromotionResponse */
         PromotionResponse: {
@@ -19970,6 +19992,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Usage Limit */
+            usage_limit?: number | null;
         };
         /** PromotionUpdate */
         PromotionUpdate: {
@@ -20031,6 +20055,25 @@ export interface components {
             trigger_value?: number | string | null;
             /** Type */
             type?: ("basic" | "advanced") | null;
+            /** Usage Limit */
+            usage_limit?: number | null;
+        };
+        /**
+         * PromotionUsageResponse
+         * @description How much of a promotion's usage limit completed orders have used.
+         */
+        PromotionUsageResponse: {
+            /** Exhausted */
+            exhausted: boolean;
+            /**
+             * Promotion Id
+             * Format: uuid
+             */
+            promotion_id: string;
+            /** Usage Limit */
+            usage_limit: number | null;
+            /** Used */
+            used: number;
         };
         /** PurchaseOrderCreate */
         PurchaseOrderCreate: {
@@ -39546,6 +39589,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promotion_usage_api_v1_promotions_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromotionUsageResponse"][];
                 };
             };
         };

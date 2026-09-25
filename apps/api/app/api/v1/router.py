@@ -64,6 +64,7 @@ from .item_mappings import router as item_mappings_router
 from .marketing import (
     discounts_router,
     pos_promotions_router,
+    promotion_usage_router,
     promotions_router,
     timed_events_router,
 )
@@ -256,6 +257,10 @@ api_router.include_router(
 
 # ─── Marketing ────────────────────────────────────────────────────────────────
 api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
+# Usage first: `/promotions/usage` must not fall through to `/promotions/{id}`.
+api_router.include_router(
+    promotion_usage_router, prefix="/promotions", tags=["Marketing"]
+)
 api_router.include_router(promotions_router, prefix="/promotions", tags=["Marketing"])
 api_router.include_router(
     pos_promotions_router, prefix="/pos/promotions", tags=["POS Promotions"]

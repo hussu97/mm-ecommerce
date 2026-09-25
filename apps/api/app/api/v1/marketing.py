@@ -6,11 +6,12 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
 from app.core.exceptions import UnprocessableError
-from app.core.permissions import require
+from app.core.permissions import require, require_any
 from app.models import (
     Discount,
     Promotion,
@@ -25,6 +26,7 @@ from app.schemas.marketing import (  # noqa: F401 — re-exported for older impo
     PromotionCreate,
     PromotionResponse,
     PromotionUpdate,
+    PromotionUsageResponse,
     TimedEventCreate,
     TimedEventResponse,
     TimedEventUpdate,
@@ -118,6 +120,34 @@ promotions_router = build_crud_router(
 )
 
 
+#: Usage against each promotion's limit, mounted at `/promotions` AHEAD of the
+#: CRUD router so `/promotions/usage` isn't read as `/promotions/{id}`.
+promotion_usage_router = APIRouter()
+
+
+@promotion_usage_router.get("/usage", response_model=list[PromotionUsageResponse])
+async def promotion_usage(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_any("pos.register.access", "admin.settings.manage")),
+):
+    """Completed orders that carried each live promotion, against its limit."""
+    promos = list(
+        (await db.execute(select(Promotion).where(Promotion.deleted_at.is_(None))))
+        .scalars()
+        .all()
+    )
+    used = await auto_promotion_service.usage_counts(db, [p.id for p in promos])
+    return [
+        PromotionUsageResponse(
+            promotion_id=p.id,
+            used=used.get(p.id, 0),
+            usage_limit=p.usage_limit,
+            exhausted=bool(p.usage_limit) and used.get(p.id, 0) >= p.usage_limit,
+        )
+        for p in promos
+    ]
+
+
 #: The register's view of counter promotions, mounted at `/pos/promotions` on
 #: both the POS app and the main API.
 pos_promotions_router = APIRouter()
@@ -165,6 +195,7 @@ timed_events_router = build_crud_router(
 __all__ = [
     "discounts_router",
     "pos_promotions_router",
+    "promotion_usage_router",
     "promotions_router",
     "timed_events_router",
 ]

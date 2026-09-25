@@ -27,6 +27,7 @@ from .inventory_v2 import pos_manager_read_router as inventory_v2_manager_read_r
 from .marketing import (
     discounts_router,
     pos_promotions_router,
+    promotion_usage_router,
     promotions_router,
     timed_events_router,
 )
@@ -97,6 +98,10 @@ pos_api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Ta
 
 # ─── Money off ────────────────────────────────────────────────────────────────
 pos_api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
+# Usage first: `/promotions/usage` must not fall through to `/promotions/{id}`.
+pos_api_router.include_router(
+    promotion_usage_router, prefix="/promotions", tags=["Marketing"]
+)
 pos_api_router.include_router(
     promotions_router, prefix="/promotions", tags=["Marketing"]
 )

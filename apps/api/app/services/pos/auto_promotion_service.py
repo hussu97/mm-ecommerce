@@ -39,6 +39,16 @@ Two invariants it respects, both inherited from how `recalculate` prices:
   fights the person at the till.
 * **Closed checks are frozen.** A closed/void order's discounts are history;
   this only touches an order still open.
+
+A promotion with a `usage_limit` stops being offered once that many completed
+orders carry it, across every branch (`usage_counts`). The count is read from
+the orders themselves, so a void never uses one up and nothing needs
+decrementing. It gates what is *offered*: the server's re-price, the coupon
+list and the register's pricing bundle all leave an exhausted promotion out.
+An order is counted only once it completes, so a check still open when the
+last use goes, or a till that has not refreshed its bundle yet (it does so
+every minute), can take the promotion one past its limit. That order's printed
+receipt still stands.
 """
 
 from __future__ import annotations
@@ -48,7 +58,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.marketing import Promotion
@@ -60,6 +70,7 @@ from app.models.pos_order import (
 )
 from app.models.product import Product
 from app.services.pos import business_day_service, counter_pricing, promotion_rules
+from app.services.pos.pos_reports._base import _COMPLETED_SALE
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +174,50 @@ async def _fetch_promotions(
     )
 
 
+async def usage_counts(
+    db: AsyncSession, promotion_ids: list[uuid.UUID] | None = None
+) -> dict[uuid.UUID, int]:
+    """Completed orders that carry each promotion, across every branch.
+
+    One per order, however many lines a category-scoped promotion discounted. A
+    completed order is a sale that stands (`_COMPLETED_SALE`): a draft, an open
+    check or a void doesn't count. Narrowed to `promotion_ids` when given.
+    Promotions no order carries yet are absent (read them as 0).
+    """
+    stmt = (
+        select(OrderDiscount.reference_id, func.count(func.distinct(Order.id)))
+        .join(Order, Order.id == OrderDiscount.order_id)
+        .where(
+            OrderDiscount.source == DiscountSourceEnum.PROMOTION.value,
+            OrderDiscount.reference_id.is_not(None),
+            _COMPLETED_SALE,
+        )
+        .group_by(OrderDiscount.reference_id)
+    )
+    if promotion_ids is not None:
+        if not promotion_ids:
+            return {}
+        stmt = stmt.where(OrderDiscount.reference_id.in_(promotion_ids))
+    return {pid: int(n) for pid, n in (await db.execute(stmt)).all()}
+
+
+async def exhausted_ids(db: AsyncSession, promos: list[Promotion]) -> set[uuid.UUID]:
+    """The promotions among `promos` whose usage limit is used up."""
+    limited = {p.id: p.usage_limit for p in promos if p.usage_limit}
+    if not limited:
+        return set()
+    used = await usage_counts(db, list(limited))
+    return {pid for pid, cap in limited.items() if used.get(pid, 0) >= cap}
+
+
+async def without_exhausted(
+    db: AsyncSession, promos: list[Promotion]
+) -> list[Promotion]:
+    """`promos` less the ones whose usage limit is used up."""
+    spent = await exhausted_ids(db, promos)
+    return [p for p in promos if p.id not in spent]
+
+
 async def _local_clock(db: AsyncSession, at: datetime | None) -> datetime:
     """The shop's wall clock at `at` (default: now) — what schedules read."""
     tz = await business_day_service.resolve_timezone(db)
@@ -243,8 +298,12 @@ async def sync_auto_discounts(
         rules = list(ctx.promotions)
         local = (at or datetime.now(ctx.zone)).astimezone(ctx.zone)
     else:
+        # The bundle path above is left alone on purpose. A synced counter sale
+        # is re-priced with exactly the promotions its till priced it with, and
+        # the bundle already left out any whose limit was used up at the time.
         if promos is None:
             promos = await _fetch_promotions(db, order, coupon_id)
+        promos = await without_exhausted(db, promos)
         rules = _rules(promos)
         local = await _local_clock(db, at)
     chosen = promotion_rules.choose(
@@ -298,6 +357,7 @@ async def available_at(
         .scalars()
         .all()
     )
+    rows = await without_exhausted(db, rows)
     local = await _local_clock(db, at)
     out: list[tuple[Promotion, promotion_rules.Mode, bool, tuple]] = []
     for promo in rows:
