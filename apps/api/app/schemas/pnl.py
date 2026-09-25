@@ -134,8 +134,6 @@ class PnlPeriodChargeRow(BaseModel):
     first_date: str
     last_date: str
     lines: int
-    #: The statement fee less what its orders already carry (noon).
-    is_true_up: bool
 
 
 class PnlVatSummary(BaseModel):

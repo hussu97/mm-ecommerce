@@ -380,15 +380,6 @@ export default function ProfitLossPage() {
                     <li key={`${c.channel}-${c.category}`} className="flex justify-between gap-3 text-gray-600">
                       <span>
                         {CHANNEL_LABEL[c.channel] ?? c.channel} · {c.description ?? c.category}
-                        {c.is_true_up && (
-                          <span
-                            className="text-gray-400"
-                            title="The statement's fee less what its orders already carry"
-                          >
-                            {' '}
-                            (not on orders)
-                          </span>
-                        )}
                         <span className="block text-[11px] text-gray-400">
                           {c.first_date === c.last_date ? c.first_date : `${c.first_date} → ${c.last_date}`}
                         </span>

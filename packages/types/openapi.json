@@ -26067,10 +26067,6 @@
             "title": "Input Vat",
             "type": "number"
           },
-          "is_true_up": {
-            "title": "Is True Up",
-            "type": "boolean"
-          },
           "last_date": {
             "title": "Last Date",
             "type": "string"
@@ -26088,8 +26084,7 @@
           "input_vat",
           "first_date",
           "last_date",
-          "lines",
-          "is_true_up"
+          "lines"
         ],
         "title": "PnlPeriodChargeRow",
         "type": "object"

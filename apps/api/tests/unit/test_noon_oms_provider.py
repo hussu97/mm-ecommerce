@@ -249,12 +249,20 @@ class TestOrderFromOms:
         o = _CLIENT._order_from_oms(_OMS_ORDER_SINGLE_MOD)
         assert o.delivery_fee == Decimal("3.9")
 
-    def test_oms_payment_fee_is_grossed_to_vat_inclusive(self):
-        """noon's OMS `orderPostpaidFee` is reported VAT-EXCLUSIVE, like the
-        settled RMS payment fee, so it is grossed up by 5% to land VAT-inclusive
-        on the order (see _fee_incl_vat)."""
-        o = _CLIENT._order_from_oms({**_OMS_ORDER_SINGLE_MOD, "orderPostpaidFee": 1.0})
-        assert o.payment_fee == Decimal("1.05")  # 1.0 * 1.05
+    def test_oms_postpaid_fee_is_not_the_merchant_payment_fee(self):
+        """OMS `orderPostpaidFee` is the flat 2 AED cash-on-delivery surcharge the
+        CUSTOMER pays (it is inside `orderPaymentAmount`), not noon's 2% fee to the
+        merchant. So an OMS order's payment fee is unknown (None) until it settles.
+        None also means the ingest keeps the settled value when the order is
+        re-pulled, instead of overwriting it."""
+        o = _CLIENT._order_from_oms(
+            {
+                **_OMS_ORDER_SINGLE_MOD,
+                "paymentMethodCode": "postpaid",
+                "orderPostpaidFee": 2.0,
+            }
+        )
+        assert o.payment_fee is None
 
     def test_returns_none_for_missing_order_nr(self):
         assert _CLIENT._order_from_oms({"orderSubtotal": 10}) is None

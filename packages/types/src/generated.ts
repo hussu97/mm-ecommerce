@@ -18482,8 +18482,6 @@ export interface components {
             first_date: string;
             /** Input Vat */
             input_vat: number;
-            /** Is True Up */
-            is_true_up: boolean;
             /** Last Date */
             last_date: string;
             /** Lines */
