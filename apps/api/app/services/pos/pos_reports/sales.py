@@ -254,19 +254,28 @@ async def sales_by_dimension(
             column = func.coalesce(Order.closer_id, till_lateral.c.user_id)
 
     # What the group cost us, beside what it took. Every dimension here groups
-    # whole orders, so the two stamped fee columns sum cleanly against the same
+    # whole orders, so the stamped fee columns sum cleanly against the same
     # rows — which is the entire point of `order_fees` storing them: a manager
     # can now see that a channel took the most and kept the least without
-    # anybody exporting a spreadsheet.
+    # anybody exporting a spreadsheet. All four of them, the same set
+    # `order_pnl.line_columns` and the dashboard sum: commission + payment alone
+    # left out Talabat's Pro fee and Keeta's merchant-funded promotion
+    # (`marketing_fee`) and a charged cancellation's fee.
     #
     # `sum` over a nullable column skips the nulls, so a channel whose rate is
     # not configured contributes its orders to `net_sales` and nothing to
     # `fees`. That understates the cost rather than inventing one, and
     # `fees_known` below is what lets the client say so instead of implying the
     # margin is real.
-    fees = func.coalesce(
-        func.sum(func.coalesce(Order.aggregator_fee, 0)), 0
-    ) + func.coalesce(func.sum(func.coalesce(Order.payment_fee, 0)), 0)
+    def _fee_total(col):
+        return func.coalesce(func.sum(func.coalesce(col, 0)), 0)
+
+    fees = (
+        _fee_total(Order.aggregator_fee)
+        + _fee_total(Order.payment_fee)
+        + _fee_total(Order.marketing_fee)
+        + _fee_total(Order.cancellation_fee)
+    )
     # How many of the orders in this group actually carry a costed fee. Equal to
     # the order count when every one is priced; lower when some are not.
     fees_known = func.count(Order.payment_fee)

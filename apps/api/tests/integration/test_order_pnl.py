@@ -8,8 +8,8 @@ arithmetic has to change a number a human can check. Pins:
 * which orders count — a sale, a charged cancellation, and not an uncharged one;
 * COGS from the FIFO projection, and blank (not zero) when no stock was drawn;
 * the report equals the sum of its orders to the fils;
-* period charges: an itemised-VAT monthly fee, and noon's statement fee
-  booked only as the true-up over what its orders already carry.
+* period charges: an itemised-VAT monthly fee, and noon's VAT-inclusive
+  monthly platform fee with its VAT taken out as 5/105.
 """
 
 from __future__ import annotations
@@ -238,8 +238,9 @@ async def world(engine):
                 )
             )
         # Period charges on the day: Deliveroo's monthly fee with its VAT on its
-        # own line, and noon's statement payment fee of 2.94 — of which order D
-        # already carries 0.84, so the true-up is 2.10 (2.00 + 0.10 VAT).
+        # own line, and noon's monthly platform fee of 156.45 VAT-inclusive
+        # (149.00 + 7.45 VAT, the live invoice). noon's payment and cancellation
+        # fees are per order (order D carries its own), never a period charge.
         monthly = "Brand level monthly platform fee of AED 200"
         for n, (channel, category, line_type, amount, desc, sid) in enumerate(
             (
@@ -253,7 +254,14 @@ async def world(engine):
                 ),
                 ("deliveroo", "commission_vat", "vat", "-9.52", monthly, None),
                 ("deliveroo", "net_payable", "net_payable", "-200.00", monthly, None),
-                ("noon", "payment_fee", "fee", "-2.94", "Payment fee", f"NOON-{tag}"),
+                (
+                    "noon",
+                    "platform_fee",
+                    "fee",
+                    "-156.45",
+                    "Platform fee",
+                    f"NOON-{tag}",
+                ),
             )
         ):
             db.add(
@@ -467,7 +475,7 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
     assert by_channel["talabat"].pc3 == D("2.20")  # 23.20 − 21.00
 
 
-async def test_period_charges_book_the_fee_and_the_noon_true_up(engine, world):
+async def test_period_charges_book_the_monthly_fees_with_their_vat(engine, world):
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
         charges = {
@@ -477,10 +485,10 @@ async def test_period_charges_book_the_fee_and_the_noon_true_up(engine, world):
         }
     monthly = charges[("deliveroo", "monthly_admin_fee")]
     assert monthly.amount == D("200.00") and monthly.input_vat == D("9.52")
-    true_up = charges[("noon_food", "payment_fee")]
-    assert true_up.is_true_up
-    assert true_up.amount == D("2.10")  # 2.94 invoiced − 0.84 on order D
-    assert true_up.input_vat == D("0.10")
+    platform = charges[("noon_food", "platform_fee")]
+    assert platform.amount == D("156.45")
+    assert platform.input_vat == D("7.45")  # 156.45 × 5/105
+    assert ("noon_food", "payment_fee") not in charges
 
 
 async def test_an_entity_slice_keeps_period_charges_only_for_the_marketplace_entity(

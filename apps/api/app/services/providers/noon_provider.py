@@ -48,6 +48,20 @@ page. A block is an auth failure, never a transient retry.
 Money is `Decimal | None`: None means "noon did not say", not zero. `commission_amount`
 is derived from `fees_exc_vat` minus the itemised fees; None when `fees_exc_vat`
 is absent. Every RMS record keeps its `raw`; OMS items keep their source order.
+
+**Which fees are per order, and their VAT.** Every merchant fee noon bills per
+order is itemised on the RMS order row, VAT-exclusive: `lead_generation_fee`
+(the commission), `payment_fee` (2% of the order, every payment method) and
+`cancellation_fee` (on an outlet-caused cancellation), plus
+`long_distance_fee_mp` / `discount_service_fee` / `delivery_discount_fee`, zero on
+every order so far. `total_vat` is the 5% VAT **on those fees** (e.g. fees 10.80
+→ 0.54) — not the sale's VAT. The statement's Tax Invoice (`statement/overview`)
+is exactly those per-order rows summed, so the payment and cancellation fees are
+booked on the order and never again as statement-level charges. Only two
+charges are genuinely statement-level: the monthly platform fee and the monthly
+long-distance fee, which the order rows never carry. We store every fee
+VAT-inclusive (×1.05, `_fee_incl_vat`), and consumers take the VAT back out as
+5/105.
 """
 
 from __future__ import annotations
@@ -985,9 +999,14 @@ class NoonClient(BaseAggregatorClient):
             gross_sales=gross,
             net_sales=gross,
             commission_amount=None,
-            # VAT-inclusive, like the settled RMS payment fee: noon's OMS
-            # `orderPostpaidFee` is reported ex-VAT too (see `_fee_incl_vat`).
-            payment_fee=_fee_incl_vat(_abs(_num(order.get("orderPostpaidFee")))),
+            # Unknown until the order settles, like commission. OMS carries no
+            # merchant payment fee: its `orderPostpaidFee` is the flat 2 AED
+            # cash-on-delivery surcharge the CUSTOMER pays (it is inside
+            # `orderPaymentAmount`), not noon's 2% charge to the merchant. Booking
+            # it here costed COD orders 2.10 and prepaid ones 0. It was also
+            # re-pulled hourly, overwriting the settled fee. The RMS row is the
+            # only source (`_order_from`, `backfill_order_economics_from_statement`).
+            payment_fee=None,
             delivery_fee=_abs(_num(order.get("orderDeliveryFeeOutlet"))),
             vat_amount=None,
             cancellation_fee=None,
@@ -1366,6 +1385,29 @@ class NoonClient(BaseAggregatorClient):
         ("delivery_discount_fee", "deliveryDiscountFee"),
     )
 
+    #: The non-commission fees an RMS order row itemises, booked as per-order
+    #: statement lines: (snake, camel, fee_category, keep_zero). Payment and
+    #: cancellation keep an explicit zero, because
+    #: `backfill_order_economics_from_statement` makes the statement's figure the
+    #: order's, and "the statement says 0" has to be able to clear a wrong
+    #: provisional value. The rest have been zero on every order so far. They are
+    #: booked only when non-zero, so a fee noon starts charging per order shows up
+    #: in the Fees & VAT roll-up instead of disappearing inside
+    #: `_commission_from`'s subtraction.
+    _ORDER_FEE_LINES: tuple[tuple[str, str, str, bool], ...] = (
+        ("payment_fee", "paymentFee", "payment_fee", True),
+        ("cancellation_fee", "cancellationFee", "cancellation_fee", True),
+        ("long_distance_fee_mp", "longDistanceFeeMp", "long_distance_fee", False),
+        ("discount_service_fee", "discountServiceFee", "discount_service_fee", False),
+        (
+            "delivery_discount_fee",
+            "deliveryDiscountFee",
+            "delivery_discount_fee",
+            False,
+        ),
+        ("delivery_fee", "deliveryFee", "delivery_fee", False),
+    )
+
     @staticmethod
     def _commission_from(row: dict[str, Any]) -> Decimal | None:
         """The real commission, backed out of the statement: `fees_exc_vat` less
@@ -1396,40 +1438,54 @@ class NoonClient(BaseAggregatorClient):
             return Decimal(0)
         return _money(value * (Decimal(1) + _FEE_VAT_RATE))
 
-    #: Merchant-charged lines on noon's Tax Invoice that the PER-ORDER settlement
-    #: feed never carries — `_statement_lines_from_order_row` emits only gross,
-    #: commission, net and the sale VAT, so these fees were missing from the fee
-    #: roll-up entirely, understating noon's take. `feeName` → the `fee_category` we
-    #: book each under (as a summary-grain line, VAT-inclusive `priceInclVat`).
-    #:
-    #: Deliberately EXCLUDED: "Order Value" (gross) and "Lead generation fee" (the
-    #: commission, already captured per order — booking it here too would double-
-    #: count), and "Delivery fee" — noon does NOT bill the merchant for delivery
-    #: (it is `0` on the order feed and has no line on the tax invoice; the customer
-    #: pays it), so it is not a merchant cost.
+    #: The Tax Invoice lines that are genuinely statement-level: no order row
+    #: carries them, so they are booked as summary-grain lines with no order id.
+    #: Keyed on the lower-cased `feeName` (noon has served "Long Distance Fee" and
+    #: "Long distance fee"), valued as the `fee_category` we book. Both known ones
+    #: are monthly and land on the month-end statement: the platform fee (149 + 5%
+    #: VAT) and the long-distance fee, which noon bills as one monthly total even
+    #: though every order row's `long_distance_fee_mp` is 0.
     _OVERVIEW_SUMMARY_FEES: dict[str, str] = {
-        "Platform fee": "platform_fee",
-        "Payment fee": "payment_fee",
-        "Long Distance Fee": "long_distance_fee",
-        "Cancellation fee": "cancellation_fee",
-        "Manual fee": "manual_fee",
+        "platform fee": "platform_fee",
+        "long distance fee": "long_distance_fee",
+        "manual fee": "manual_fee",
+    }
+
+    #: The Tax Invoice lines that are the per-order rows summed. They are not
+    #: booked again, since every order already carries its share (see
+    #: `_statement_lines_from_order_row`), and booking them made them look like
+    #: period charges. They are only checked against the order rows: `feeName` →
+    #: the order-row column(s) they total, VAT-exclusive. "Order Value" is the gross
+    #: sale, not a fee.
+    _OVERVIEW_ORDER_LEVEL_FEES: dict[str, tuple[str, ...]] = {
+        "lead generation fee": ("lead_generation_fee", "leadGenerationFee"),
+        "payment fee": ("payment_fee", "paymentFee"),
+        "cancellation fee": ("cancellation_fee", "cancellationFee"),
+        "order value": (),
     }
 
     async def _overview_summary_lines(
-        self, session: LoadedSession, statement_id: str
+        self,
+        session: LoadedSession,
+        statement_id: str,
+        order_rows: list[dict[str, Any]] | None = None,
     ) -> list[StandardStatementLine]:
-        """The merchant-charged fees from a statement's Tax Invoice overview that
-        the per-order settlement feed never carries — the platform fee, payment
-        fee, long-distance fee, cancellation fee and any manual fee
-        (`_OVERVIEW_SUMMARY_FEES`). Delivery is not among them: noon does not bill
-        the merchant for it.
+        """The statement-level charges on a statement's Tax Invoice overview
+        (`_OVERVIEW_SUMMARY_FEES`): the platform fee, the long-distance fee and any
+        manual fee. Delivery is not among them, because noon does not bill the
+        merchant for it.
 
-        The overview reports each fee VAT-exclusive plus its VAT; we book the
-        VAT-inclusive amount (`priceInclVat` — what the merchant actually pays) as
-        one summary-grain line per fee, with no order id, matching how noon's
-        commission is stored VAT-inclusive. Signed as booked (a fee is negative).
-        Keyed on the statement + category so a re-fetch upserts rather than
-        duplicates.
+        The overview reports each fee VAT-exclusive plus its VAT. We book the
+        VAT-inclusive amount (`priceInclVat`, what the merchant actually pays) as
+        one summary-grain line per fee with no order id, the same basis as the
+        per-order fee lines. Signed as booked (a fee is negative). Keyed on
+        statement + category, so a re-fetch upserts instead of duplicating.
+
+        The order-level lines (commission, payment, cancellation) are not booked.
+        They are compared with the statement's own order rows (`order_rows`), and
+        a mismatch or an unknown fee name is logged. That way a fee noon starts
+        billing at statement level, or stops itemising per order, shows up in the
+        logs instead of disappearing quietly.
         """
         url = f"{_STATEMENT_OVERVIEW_URL}/{statement_id}"
         payload = await self.request_json(
@@ -1444,10 +1500,26 @@ class NoonClient(BaseAggregatorClient):
         for entry in data.get("lines") or []:
             if not isinstance(entry, dict):
                 continue
-            category = self._OVERVIEW_SUMMARY_FEES.get(str(entry.get("feeName")))
-            if category is None:
+            fee_name = str(entry.get("feeName") or "").strip()
+            key = fee_name.lower()
+            if key in self._OVERVIEW_ORDER_LEVEL_FEES:
+                self._check_order_level_fee(
+                    statement_id, fee_name, entry, order_rows, key
+                )
                 continue
+            category = self._OVERVIEW_SUMMARY_FEES.get(key)
             amount = _num(entry.get("priceInclVat"))
+            if category is None:
+                if amount:
+                    logger.warning(
+                        "noon statement %s: unknown tax-invoice fee %r (%s) — not "
+                        "booked; map it in _OVERVIEW_SUMMARY_FEES or "
+                        "_OVERVIEW_ORDER_LEVEL_FEES",
+                        statement_id,
+                        fee_name,
+                        amount,
+                    )
+                continue
             if amount is None or amount == 0:
                 continue
             lines.append(
@@ -1458,13 +1530,42 @@ class NoonClient(BaseAggregatorClient):
                     line_date=period_end,
                     line_type="fee",
                     fee_category=category,
-                    description=_str_or_none(entry.get("feeName")),
+                    description=fee_name,
                     amount=amount,
                     currency=currency,
                     grain=STATEMENT_GRAIN_SUMMARY,
                 )
             )
         return lines
+
+    def _check_order_level_fee(
+        self,
+        statement_id: str,
+        fee_name: str,
+        entry: dict[str, Any],
+        order_rows: list[dict[str, Any]] | None,
+        key: str,
+    ) -> None:
+        """Warn when a Tax Invoice fee differs from its order rows' total.
+
+        Compared VAT-exclusive: noon rounds VAT once on the invoice but once per
+        order on the rows, so only the ex-VAT figures tie out exactly."""
+        columns = self._OVERVIEW_ORDER_LEVEL_FEES[key]
+        invoiced = _num(entry.get("priceExclVat"))
+        if not columns or invoiced is None or order_rows is None:
+            return
+        on_orders = sum(
+            (_num(_first(r, *columns)) or Decimal(0) for r in order_rows), Decimal(0)
+        )
+        if abs(abs(invoiced) - abs(on_orders)) > Decimal("0.05"):
+            logger.warning(
+                "noon statement %s: tax-invoice %r is %s ex-VAT but its order "
+                "rows total %s — part of it is not on any order",
+                statement_id,
+                fee_name,
+                invoiced,
+                on_orders,
+            )
 
     # ── finance (statements + payouts as distinct wallet tabs) ──────────────
     async def fetch_statements(
@@ -1498,6 +1599,7 @@ class NoonClient(BaseAggregatorClient):
         # Per-order settlement lines for the in-window statements. Best-effort:
         # a failure here must not lose the summaries we already have.
         lines_note: str | None = None
+        raw_by_stmt: dict[str, list[dict]] = {}
         if by_id:
             try:
                 order_rows = await self._post_tabular(
@@ -1506,7 +1608,6 @@ class NoonClient(BaseAggregatorClient):
                     {"statementNrList": list(by_id.keys())},
                 )
                 grouped: dict[str, list[StandardStatementLine]] = {}
-                raw_by_stmt: dict[str, list[dict]] = {}
                 for row in order_rows:
                     stmt_ref = _str_or_none(
                         _first(row, "statement_nr", "statementNr", "reference_nr")
@@ -1559,17 +1660,20 @@ class NoonClient(BaseAggregatorClient):
                 )
                 logger.warning("noon statement-line fetch failed: %s", exc)
 
-        # noon bills a periodic PLATFORM fee at the STATEMENT level, not per order —
-        # it appears only on the statement's Tax Invoice overview, never in the
-        # per-order settlement feed, so the per-order lines above and per-order
-        # reconciliation both miss it. Pull the overview for each in-window
-        # statement and attach any non-order fee as a summary-grain line. The index
+        # noon bills its monthly platform and long-distance fees at the STATEMENT
+        # level, not per order. They appear only on the statement's Tax Invoice
+        # overview, never in the per-order settlement feed, so the per-order lines
+        # above and per-order reconciliation both miss them. Pull the overview for
+        # each in-window statement, attach those as summary-grain lines, and check
+        # the order-level fees on it against the order rows. The index
         # is by statement id (positions are stable across the `replace`s above), and
         # each fetch is isolated so one bad overview never drops the rest.
         idx_by_ref = {s.statement_id: i for i, s in enumerate(statements)}
         for stmt_ref in by_id:
             try:
-                summary_lines = await self._overview_summary_lines(session, stmt_ref)
+                summary_lines = await self._overview_summary_lines(
+                    session, stmt_ref, raw_by_stmt.get(stmt_ref)
+                )
             except (AggregatorAuthError, AggregatorUnavailableError) as exc:
                 logger.warning("noon overview fetch failed for %s: %s", stmt_ref, exc)
                 continue
@@ -1706,13 +1810,17 @@ class NoonClient(BaseAggregatorClient):
         line_date = _parse_date(_first(row, "order_date", "orderDate", "business_date"))
         line_date_iso = line_date.isoformat() if line_date else None
         currency = _first(row, "currency", "currencyCode") or "AED"
-        # (label, line_type, fee_category, value). NO VAT line: `total_vat` is the
-        # customer's SALE VAT (output VAT the merchant collects and remits), NOT a
-        # fee noon charges — booking it as a "vat" line made the Fees & VAT roll-up
-        # count it toward the take. noon's fees are all VAT-INCLUSIVE (commission via
-        # `_commission_from`, the tax-invoice fees via `priceInclVat`), so the fee
-        # VAT is derived from them (noon is in `_VAT_INCLUSIVE_FEE_CHANNELS`), not
-        # taken from the sale VAT.
+        # (label, line_type, fee_category, value). Every merchant fee noon bills
+        # for this order gets its own line, VAT-INCLUSIVE and signed as booked (a
+        # fee is negative, like every other channel's). The commission comes from
+        # `_commission_from`, the rest from `_ORDER_FEE_LINES`. Together they are
+        # the order's share of the Tax Invoice's commission, payment and
+        # cancellation fees. There is no separate VAT line: the fee lines already
+        # include it, and consumers take it back out as 5/105 (noon is in
+        # `_VAT_INCLUSIVE_FEE_CHANNELS`). `total_vat` is that same fee VAT
+        # (5% of `fees_exc_vat`), NOT the sale's VAT, so booking it as well would
+        # count the VAT twice.
+        commission = NoonClient._commission_from(row)
         candidates: list[tuple[str, str, str | None, Decimal | None]] = [
             (
                 "net_payable",
@@ -1726,8 +1834,18 @@ class NoonClient(BaseAggregatorClient):
                 None,
                 _num(_first(row, "order_value", "orderValue", "item_value")),
             ),
-            ("commission", "fee", "commission", NoonClient._commission_from(row)),
+            (
+                "commission",
+                "fee",
+                "commission",
+                -commission if commission else commission,
+            ),
         ]
+        for snake, camel, category, keep_zero in NoonClient._ORDER_FEE_LINES:
+            fee = _fee_incl_vat(_abs(_num(_first(row, snake, camel))))
+            if fee is None or (fee == 0 and not keep_zero):
+                continue
+            candidates.append((category, "fee", category, -fee))
         lines: list[StandardStatementLine] = []
         for label, line_type, fee_category, amount in candidates:
             if amount is None:

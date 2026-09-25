@@ -88,6 +88,9 @@ from app.services.aggregators.normalized import (
     StandardStatement,
 )
 from app.services.aggregators.statement_categories import (
+    is_cancellation_fee_or_vat as is_cancellation_fee_line,
+)
+from app.services.aggregators.statement_categories import (
     is_commission_or_vat as is_commission_or_vat_line,
 )
 from app.services.aggregators.statement_categories import (
@@ -98,6 +101,9 @@ from app.services.aggregators.statement_categories import (
 )
 from app.services.aggregators.statement_categories import (
     is_net as is_net_line,
+)
+from app.services.aggregators.statement_categories import (
+    is_payment_fee_or_vat as is_payment_fee_line,
 )
 from app.services.aggregators.statement_categories import (
     is_vat as is_vat_line,
@@ -982,6 +988,16 @@ async def backfill_order_economics_from_statement(
     Talabat orders (see that predicate); the earlier decision to skip it rested on a
     stale premise that the noon line was ex-VAT, which the data disproves.
 
+    The order's VAT-inclusive ``payment_fee`` and ``cancellation_fee`` come from the
+    statement's ``payment_fee`` / ``cancellation_fee`` lines, and here the
+    statement always wins, zero included. For noon these are the only real source:
+    the OMS feed's ``orderPostpaidFee`` is the customer's cash-on-delivery
+    surcharge, not the merchant's fee. Before this, settled noon orders carried
+    about 30% of what the Tax Invoice billed, and the rest looked like a
+    statement-level "period charge". Only noon itemises those two categories per
+    order. Careem and Talabat book theirs as ``payment_handling`` on the order feed,
+    so they are unaffected.
+
     Matches the order the same way the rest of the settlement join does
     (`_order_matches_line_ids`, so Deliveroo's `drn_id` resolves), and writes only
     when a value actually changes — so a daily re-ingest does not needlessly bump
@@ -997,6 +1013,10 @@ async def backfill_order_economics_from_statement(
                 func.sum(ln.amount)
                 .filter(is_commission_or_vat_line(ln))
                 .label("commission"),
+                func.sum(ln.amount).filter(is_payment_fee_line(ln)).label("payment"),
+                func.sum(ln.amount)
+                .filter(is_cancellation_fee_line(ln))
+                .label("cancellation"),
             )
             .where(
                 ln.channel == channel,
@@ -1009,7 +1029,7 @@ async def backfill_order_economics_from_statement(
     ).all()
 
     updated = 0
-    for external_order_id, gross, net, commission in rows:
+    for external_order_id, gross, net, commission, payment, cancellation in rows:
         values: dict[str, Any] = {}
         changed = []
         # Settlement wins over the provisional order-feed net.
@@ -1040,6 +1060,16 @@ async def backfill_order_economics_from_statement(
                 changed.append(
                     and_(gap, AggregatorOrder.commission_amount.is_distinct_from(cv))
                 )
+        # Payment / cancellation fee (VAT-inclusive magnitude): the settled
+        # statement is authoritative, zero included (see the docstring).
+        for column, amount in (
+            (AggregatorOrder.payment_fee, payment),
+            (AggregatorOrder.cancellation_fee, cancellation),
+        ):
+            if amount is not None:
+                v = abs(Decimal(str(amount)))
+                values[column.key] = v
+                changed.append(column.is_distinct_from(v))
         if not values:
             continue
         result = await db.execute(

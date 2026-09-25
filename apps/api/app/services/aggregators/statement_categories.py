@@ -58,6 +58,21 @@ def is_commission_or_vat(col=AggregatorStatementLine):
     return _fc(col).in_(["commission", "commission_vat"])
 
 
+def is_payment_fee_or_vat(col=AggregatorStatementLine):
+    """The per-order payment fee and its own VAT — the pair that sums to the
+    VAT-INCLUSIVE `aggregator_order.payment_fee`. noon books one `payment_fee`
+    line per order, already VAT-inclusive. Keys on these two categories only, so
+    Careem/Talabat `payment_handling` lines (already on the order feed) are
+    untouched."""
+    return _fc(col).in_(["payment_fee", "payment_fee_vat"])
+
+
+def is_cancellation_fee_or_vat(col=AggregatorStatementLine):
+    """The per-order cancellation fee and its own VAT, summing to the
+    VAT-INCLUSIVE `aggregator_order.cancellation_fee` (noon: one inclusive line)."""
+    return _fc(col).in_(["cancellation_fee", "cancellation_fee_vat"])
+
+
 def is_gross(col=AggregatorStatementLine):
     """The order's gross sale line (the customer-facing subtotal)."""
     return or_(
@@ -81,8 +96,7 @@ def is_other_revenue(col=AggregatorStatementLine):
     already includes it, so treating it as a fee would double-count and inflate the
     take. Two ways a line is inbound: a known credit category, OR any `adjustment`
     line with a POSITIVE amount (Deliveroo's adjustment category is free text, so
-    key off the sign — safe because only noon books fees positive and noon emits no
-    adjustment lines)."""
+    key off the sign — safe because every channel books its fees negative)."""
     return or_(
         _fc(col).in_(["merchant_compensation", "adjustment_increase"]),
         (_lt(col) == "adjustment") & (col.amount > 0),

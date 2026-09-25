@@ -88,7 +88,6 @@ async def profit_and_loss(
                 first_date=c.first_date,
                 last_date=c.last_date,
                 lines=c.lines,
-                is_true_up=c.is_true_up,
             )
             for c in report.period_charges
         ],

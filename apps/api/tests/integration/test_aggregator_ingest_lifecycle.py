@@ -503,6 +503,53 @@ async def test_settlement_backfill_commission_noon_single_incl_line(db):
     assert agg.commission_amount == Decimal("10.50")
 
 
+async def test_settlement_backfill_makes_noon_statement_fees_the_orders(db):
+    """noon itemises the payment and cancellation fee per order on its statement
+    (VAT-inclusive, negative as booked), and the statement wins, zero included.
+    The provisional value it replaces was OMS `orderPostpaidFee`, the customer's
+    2 AED cash-on-delivery surcharge, grossed to 2.10. That was not the merchant's
+    fee. A second order whose statement says 0 has its wrong value cleared."""
+    branch_id = await _branch(db)
+    stmt = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    cod = await _agg_order(
+        db,
+        channel="noon",
+        branch_id=branch_id,
+        gross_sales=Decimal("40.00"),
+        payment_fee=Decimal("2.10"),
+    )
+    cancelled = await _agg_order(
+        db,
+        channel="noon",
+        branch_id=branch_id,
+        gross_sales=Decimal("0"),
+        payment_fee=Decimal("0.00"),
+    )
+    for oid, category, amount in (
+        (cod.external_order_id, "payment_fee", "-0.84"),
+        (cod.external_order_id, "cancellation_fee", "0"),
+        (cancelled.external_order_id, "payment_fee", "-0.84"),
+        (cancelled.external_order_id, "cancellation_fee", "-0.84"),
+    ):
+        await _stmt_line(
+            db,
+            channel="noon",
+            statement_id=stmt,
+            external_order_id=oid,
+            fee_category=category,
+            amount=amount,
+        )
+    assert await ingest.backfill_order_economics_from_statement(db, "noon", stmt) == 2
+    await db.refresh(cod)
+    await db.refresh(cancelled)
+    assert cod.payment_fee == Decimal("0.84")  # 40 × 2% × 1.05, not 2.10
+    assert cod.cancellation_fee == Decimal("0")
+    assert cancelled.payment_fee == Decimal("0.84")
+    assert cancelled.cancellation_fee == Decimal("0.84")
+    # Idempotent: nothing changes on a re-ingest, so promote is not re-triggered.
+    assert await ingest.backfill_order_economics_from_statement(db, "noon", stmt) == 0
+
+
 async def test_settlement_backfill_never_overwrites_sales_feed_commission(db):
     """A commission already stamped by the sales feed is a gap-fill no-op — the
     statement never clobbers it (they are equal by construction anyway)."""
