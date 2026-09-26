@@ -340,6 +340,26 @@ async def test_two_renders_are_byte_identical(monkeypatch):
     assert ORDER_ID.hex.encode() in first
 
 
+@needs_weasyprint
+@pytest.mark.asyncio
+async def test_rendering_pins_the_font_timestamp(monkeypatch):
+    """fontTools stamps each embedded font subset's `head` table with "now"
+    unless SOURCE_DATE_EPOCH is set, so on production two renders a second
+    apart differed in their font bytes (the head table's modified date and
+    checksum, and nothing else). This fontTools build does not restamp, so
+    the pin itself is what is asserted."""
+
+    async def fake_load(db, order):
+        return _sources(payment_type="card")
+
+    monkeypatch.setattr(inv, "_load_sources", fake_load)
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    await inv.render_invoice_pdf(None, _order())
+    import os
+
+    assert os.environ["SOURCE_DATE_EPOCH"] == inv._FONT_TIMESTAMP_EPOCH
+
+
 # ── send ──────────────────────────────────────────────────────────────────────
 
 

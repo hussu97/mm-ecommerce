@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -383,9 +384,20 @@ def _pdf_identifier(order: Order) -> bytes:
     return order.id.hex.encode("ascii")
 
 
+#: The moment fontTools stamps into each embedded font subset's `head` table.
+#: Left alone it is "now", to the second — so two renders a second apart
+#: differ in their font bytes (seen on production, where a render takes longer
+#: than on a laptop). fontTools honours the reproducible-builds variable, and a
+#: font's modified date means nothing on an invoice, so it is pinned for the
+#: process. Harmless to the other PDFs this process renders (the menu).
+_FONT_TIMESTAMP_EPOCH = "1767225600"  # 2026-01-01T00:00:00Z
+
+
 def _write_pdf(html: str, identifier: bytes) -> bytes:
     """WeasyPrint layout. Pure CPU; runs in a worker thread."""
     from weasyprint import HTML
+
+    os.environ.setdefault("SOURCE_DATE_EPOCH", _FONT_TIMESTAMP_EPOCH)
 
     return HTML(string=html, base_url=str(_TEMPLATES_DIR)).write_pdf(
         pdf_identifier=identifier
