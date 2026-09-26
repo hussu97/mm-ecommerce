@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
+import { productsApi, categoriesApi, bulkApi, exportApi } from '@/lib/api';
 import type { Category, Product, SalesChannel } from '@/lib/types';
 import { PRODUCT_LABEL_LABELS } from '@/lib/types';
 import { ChannelBadges } from '@/components/products/SalesChannels';
@@ -33,6 +33,7 @@ export default function ProductsPage() {
   const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
+  const [exportingCosts, setExportingCosts] = useState(false);
   // This page used to fire a request per keystroke with nothing dropping the
   // stale responses; the debounce plus the hook's sequence guard fix both.
   const debouncedSearch = useDebouncedValue(search);
@@ -199,6 +200,17 @@ export default function ProductsPage() {
     }
   }
 
+  const handleExportCosts = async () => {
+    setExportingCosts(true);
+    try {
+      await exportApi.productCosts();
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not export product costs');
+    } finally {
+      setExportingCosts(false);
+    }
+  };
+
   const categoryOptions = categories.map(c => ({ value: c.slug, label: `${c.name} (${c.product_count})` }));
 
   return (
@@ -210,12 +222,19 @@ export default function ProductsPage() {
           <h1 className="font-display text-2xl text-gray-800">Products</h1>
           <p className="text-xs text-gray-400 font-body mt-0.5">{total} {activeTab}</p>
         </div>
-        <Link href="/products/new">
-          <Button>
-            <span className="material-icons text-[14px]">add</span>
-            New Product
+        <div className="flex items-center gap-2">
+          {/* The whole catalogue's cost vs price and the recipes behind it. */}
+          <Button variant="outline" loading={exportingCosts} onClick={handleExportCosts}>
+            <span className="material-icons text-[14px]">download</span>
+            Export costs
           </Button>
-        </Link>
+          <Link href="/products/new">
+            <Button>
+              <span className="material-icons text-[14px]">add</span>
+              New Product
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Filters */}
