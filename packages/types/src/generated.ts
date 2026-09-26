@@ -39035,7 +39035,7 @@ export interface operations {
                 search?: string | null;
                 /** @description Filter featured products */
                 featured?: boolean | null;
-                /** @description Sort order: newest|oldest|price_asc|price_desc|name|category */
+                /** @description Sort order: newest|oldest|price_asc|price_desc|name|category; staff with catalogue.recipes.read also cost_asc|cost_desc|cost_pct_asc|cost_pct_desc */
                 sort?: string;
                 page?: number;
                 per_page?: number;

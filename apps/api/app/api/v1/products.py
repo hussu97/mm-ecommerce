@@ -21,7 +21,7 @@ from app.core.deps import (
     get_optional_user,
 )
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
-from app.core.permissions import require, require_any
+from app.core.permissions import ensure, require, require_any
 from app.models.branch import Branch
 from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import ModifierOption
@@ -99,7 +99,11 @@ async def list_products(
     featured: bool | None = Query(None, description="Filter featured products"),
     sort: str = Query(
         "newest",
-        description="Sort order: newest|oldest|price_asc|price_desc|name|category",
+        description=(
+            "Sort order: newest|oldest|price_asc|price_desc|name|category; staff "
+            "with catalogue.recipes.read also cost_asc|cost_desc|cost_pct_asc|"
+            "cost_pct_desc"
+        ),
     ),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=2000),
@@ -128,6 +132,13 @@ async def list_products(
     if not is_catalogue_staff:
         include_inactive = False
         is_active = True
+    if sort in product_cost_service.COST_SORTS:
+        # Inline, not a route dependency: only these sort values need it, and
+        # an ordering by cost discloses cost, so it takes the permission that
+        # reads it (`/products/costs`). The storefront never sends them.
+        if viewer is None:
+            raise ForbiddenError("Staff access is required to sort by cost")
+        ensure(viewer, "catalogue.recipes.read")
 
     items, total = await product_service.get_all(
         db,

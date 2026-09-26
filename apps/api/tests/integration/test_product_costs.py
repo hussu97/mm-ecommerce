@@ -23,7 +23,7 @@ from app.models.inventory import InventoryItem, Warehouse
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
 from app.models.user import User
-from app.services.catalog import product_cost_service
+from app.services.catalog import product_cost_service, product_service
 from app.services.inventory import recipe_service
 from app.services.inventory.recipe_service import RecipeLineInput
 from tests.integration._stock import seed_stock
@@ -206,3 +206,62 @@ async def test_a_page_costs_a_fixed_number_of_queries(db):
     # warehouses, the recipe catalogue and one ingredient-cost query: a
     # constant, measured at 13.
     assert 0 < small <= 15, statements
+
+
+async def _names_for(db, sort, ids):
+    """The console list's order for *sort*, narrowed to the test's products."""
+    items, _ = await product_service.get_all(
+        db,
+        search=None,
+        sort=sort,
+        per_page=2000,
+        include_inactive=True,
+        channel="all",
+        staff=True,
+    )
+    return [p.name for p in items if p.id in ids]
+
+
+async def test_the_list_sorts_by_cost_and_cost_share(db):
+    w = await _world(db)
+    ids = {w[k].id for k in ("plain", "boxed", "bare", "orphan")}
+    # Headline figures — an options product sorts by its cheapest option:
+    #   Brownie 5.00 / 50%; Box of cookies' cheapest is Plain (no recipe);
+    #   Tub's cheapest is Lotus 8.00 / 53.33%; No recipe: unknown.
+    assert await _names_for(db, "cost_asc", ids) == [
+        "Brownie",
+        "Tub",
+        "Box of cookies",
+        "No recipe",
+    ]
+    assert await _names_for(db, "cost_desc", ids) == [
+        "Tub",
+        "Brownie",
+        "Box of cookies",  # unknowns stay last, by name
+        "No recipe",
+    ]
+    assert await _names_for(db, "cost_pct_desc", ids) == [
+        "Tub",
+        "Brownie",
+        "Box of cookies",
+        "No recipe",
+    ]
+
+
+async def test_cost_sort_pages_do_not_overlap(db):
+    w = await _world(db, extra_plain=6)
+    mine = {w["plain"].id, *(p.id for p in w["extras"])}
+    seen: list = []
+    for page in (1, 2, 3, 4, 5, 6, 7, 8):
+        items, _ = await product_service.get_all(
+            db,
+            search="Extra",
+            sort="cost_pct_asc",
+            page=page,
+            per_page=2,
+            include_inactive=True,
+            channel="all",
+            staff=True,
+        )
+        seen.extend(p.id for p in items if p.id in mine)
+    assert len(seen) == len(set(seen)) == len(w["extras"])
