@@ -20,6 +20,7 @@ import {
   useBranchStock,
   useModifierStock,
 } from '@/components/products/BranchStock';
+import { PriceCostCell, useProductCosts } from '@/components/products/ProductCost';
 
 export default function ProductsPage() {
   const toast = useToast();
@@ -65,6 +66,8 @@ export default function ProductsPage() {
   // however long the list gets — which is what makes a per-branch column
   // affordable rather than a request per row.
   const { branches, statusOf } = useBranchStock();
+  // Recipe cost vs price for the rows on screen: one request per page.
+  const costs = useProductCosts(products.map(p => p.id));
   // The option-level twin, for products that have modifiers: their branch-stock
   // cell reads "how many fillings are in stock here" rather than the rarely-used
   // product-level flag. One shared fetch, same as the product overrides above.
@@ -349,10 +352,14 @@ export default function ProductsPage() {
             { header: 'Slug', priority: 'secondary', render: p => p.slug },
             { header: 'Category', render: p => p.category?.name ?? '—' },
             {
-              header: 'Price',
+              header: 'Price · cost',
               className: 'text-right',
-              render: p =>
-                p.base_price > 0 ? formatCurrency(p.base_price) : 'From options',
+              render: p => (
+                <PriceCostCell
+                  cost={costs.get(p.id)}
+                  fallback={p.base_price > 0 ? formatCurrency(p.base_price) : 'From options'}
+                />
+              ),
             },
             { header: 'SKU', render: p => p.sku ?? '—' },
             {

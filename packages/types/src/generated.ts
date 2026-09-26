@@ -7923,6 +7923,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/products/costs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Product Costs
+         * @description Recipe cost against price for the given products — product-level for a
+         *     product without options, per option (with the product's base) for one with.
+         *
+         *     The console asks once per page of its product list, with that page's ids,
+         *     so the cost never rides on the public `/products` response. A fixed handful
+         *     of queries however many ids (`product_cost_service`). Declared above
+         *     `/{slug}` so it is not read as a product called "costs".
+         */
+        get: operations["product_costs_api_v1_products_costs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/products/featured": {
         parameters: {
             query?: never;
@@ -19197,6 +19223,29 @@ export interface components {
              */
             item_id: string;
         };
+        /**
+         * ProductCostResponse
+         * @description A product's recipe cost against its price (`product_cost_service`).
+         */
+        ProductCostResponse: {
+            /** Consumes Stock */
+            consumes_stock: boolean;
+            /** Cost */
+            cost: number | null;
+            /** Cost Pct */
+            cost_pct: number | null;
+            /** Missing Recipe */
+            missing_recipe: boolean;
+            /** Options */
+            options: components["schemas"]["ProductOptionCostResponse"][];
+            /** Price */
+            price: number;
+            /**
+             * Product Id
+             * Format: uuid
+             */
+            product_id: string;
+        };
         /** ProductCreate */
         ProductCreate: {
             /**
@@ -19337,6 +19386,27 @@ export interface components {
             modifier_id: string;
             /** Unique Options */
             unique_options: boolean;
+        };
+        /**
+         * ProductOptionCostResponse
+         * @description One option of a product: what the item sells for with it, and costs.
+         */
+        ProductOptionCostResponse: {
+            /** Cost */
+            cost: number | null;
+            /** Cost Pct */
+            cost_pct: number | null;
+            /** Modifier Name */
+            modifier_name: string;
+            /**
+             * Modifier Option Id
+             * Format: uuid
+             */
+            modifier_option_id: string;
+            /** Name */
+            name: string;
+            /** Price */
+            price: number;
         };
         /** ProductResponse */
         ProductResponse: {
@@ -39110,6 +39180,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProductResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    product_costs_api_v1_products_costs_get: {
+        parameters: {
+            query: {
+                /** @description Product ids (repeat the param) */
+                ids: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductCostResponse"][];
                 };
             };
             /** @description Validation Error */

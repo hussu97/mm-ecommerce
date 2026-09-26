@@ -30,6 +30,7 @@ type ReconSummary = Schemas['ReconSummaryOut'];
 type PeriodCharges = Schemas['AggregatorPeriodChargesOut'];
 export type OrderPnl = Schemas['OrderPnlResponse'];
 export type PnlReport = Schemas['PnlReportResponse'];
+export type ProductCost = Schemas['ProductCostResponse'];
 type SyncRunList = Schemas['AggregatorSyncRunList'];
 type RunTriggerResult = Schemas['AggregatorRunTriggerOut'];
 type RunTriggerInput = Schemas['AggregatorRunTriggerIn'];
@@ -386,6 +387,8 @@ export const productsApi = {
   list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean; sort?: string; channel?: 'web' | 'pos' | 'all' }) =>
     api.get<ProductListResponse>(`/products${buildQs({ ...params, channel: params?.channel ?? 'all' })}`),
   get: (slug: string) => api.get<Product>(`/products/${slug}`),
+  /** Recipe cost vs price for these products (admin-only; never on the public list). */
+  costs: (ids: string[]) => api.get<ProductCost[]>(`/products/costs${buildQs({ ids })}`),
   create: (data: object) => api.post<Product>('/products', data),
   update: (slug: string, data: object) => api.put<Product>(`/products/${slug}`, data),
   delete: (slug: string) => api.delete<void>(`/products/${slug}`),

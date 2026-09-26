@@ -28293,6 +28293,68 @@
         "title": "ProducibleItemBasis",
         "type": "object"
       },
+      "ProductCostResponse": {
+        "description": "A product's recipe cost against its price (`product_cost_service`).",
+        "properties": {
+          "consumes_stock": {
+            "title": "Consumes Stock",
+            "type": "boolean"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "cost_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Pct"
+          },
+          "missing_recipe": {
+            "title": "Missing Recipe",
+            "type": "boolean"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/ProductOptionCostResponse"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "price",
+          "consumes_stock",
+          "cost",
+          "cost_pct",
+          "missing_recipe",
+          "options"
+        ],
+        "title": "ProductCostResponse",
+        "type": "object"
+      },
       "ProductCreate": {
         "properties": {
           "base_price": {
@@ -28607,6 +28669,60 @@
           "display_order"
         ],
         "title": "ProductModifierResponse",
+        "type": "object"
+      },
+      "ProductOptionCostResponse": {
+        "description": "One option of a product: what the item sells for with it, and costs.",
+        "properties": {
+          "cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "cost_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Pct"
+          },
+          "modifier_name": {
+            "title": "Modifier Name",
+            "type": "string"
+          },
+          "modifier_option_id": {
+            "format": "uuid",
+            "title": "Modifier Option Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          }
+        },
+        "required": [
+          "modifier_option_id",
+          "modifier_name",
+          "name",
+          "price",
+          "cost",
+          "cost_pct"
+        ],
+        "title": "ProductOptionCostResponse",
         "type": "object"
       },
       "ProductResponse": {
@@ -69863,6 +69979,64 @@
           }
         },
         "summary": "List Cart Addons",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/api/v1/products/costs": {
+      "get": {
+        "description": "Recipe cost against price for the given products \u2014 product-level for a\nproduct without options, per option (with the product's base) for one with.\n\nThe console asks once per page of its product list, with that page's ids,\nso the cost never rides on the public `/products` response. A fixed handful\nof queries however many ids (`product_cost_service`). Declared above\n`/{slug}` so it is not read as a product called \"costs\".",
+        "operationId": "product_costs_api_v1_products_costs_get",
+        "parameters": [
+          {
+            "description": "Product ids (repeat the param)",
+            "in": "query",
+            "name": "ids",
+            "required": true,
+            "schema": {
+              "description": "Product ids (repeat the param)",
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": "Ids",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProductCostResponse"
+                  },
+                  "title": "Response Product Costs Api V1 Products Costs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Product Costs",
         "tags": [
           "Products"
         ]

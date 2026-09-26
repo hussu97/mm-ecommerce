@@ -179,3 +179,35 @@ class ProductResponse(BaseModel):
     @property
     def has_modifiers(self) -> bool:
         return len(self.product_modifiers) > 0
+
+
+class ProductOptionCostResponse(BaseModel):
+    """One option of a product: what the item sells for with it, and costs."""
+
+    modifier_option_id: UUID
+    modifier_name: str
+    name: str
+    #: Base price + option price.
+    price: float
+    #: The product's own recipe + the option's, at current cost; null when the
+    #: option has no active recipe.
+    cost: float | None
+    #: `cost` as a % of `price`.
+    cost_pct: float | None
+
+
+class ProductCostResponse(BaseModel):
+    """A product's recipe cost against its price (`product_cost_service`)."""
+
+    product_id: UUID
+    price: float
+    consumes_stock: bool
+    #: The product's own recipe at current cost; null with no active recipe,
+    #: zero when it consumes no stock.
+    cost: float | None
+    cost_pct: float | None
+    #: Consumes stock but has no recipe of its own — its options carry the cost.
+    missing_recipe: bool
+    #: Active options, when the product has modifiers. Each is priced and costed
+    #: as sold: with the product's base.
+    options: list[ProductOptionCostResponse]

@@ -9,6 +9,7 @@ import { ProductForm } from '@/components/products/ProductForm';
 import { Spinner } from '@/components/ui';
 import { BranchStockPanel } from '@/components/products/BranchStock';
 import { RecipeButton } from '@/components/inventory/RecipeButton';
+import { ProductCostPanel } from '@/components/products/ProductCost';
 
 export default function EditProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
@@ -74,6 +75,8 @@ export default function EditProductPage({ params }: { params: Promise<{ slug: st
           )}
         </RecipeButton>
       </section>
+
+      <ProductCostPanel productId={product.id} />
 
       {/*
         Below the form rather than inside it, because it is not part of the

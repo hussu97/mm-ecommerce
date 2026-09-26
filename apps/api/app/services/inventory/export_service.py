@@ -152,15 +152,17 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
         ]
     )
     w.writerow(header)
+    # One ingredient-cost query for the whole export, not one per product.
+    product_costs = await recipe_service.owner_unit_costs(
+        db, [("product", r.id) for r in rows], catalog=catalog
+    )
     for r in rows:
         category_ref = (
             r.category.reference if r.category and r.category.reference else ""
         )
         image = r.image_urls[0] if r.image_urls else ""
         t = r.translations or {}
-        product_cost = await recipe_service.product_recipe_unit_cost(
-            db, product_id=r.id, catalog=catalog
-        )
+        product_cost = product_costs.get(("product", r.id))
         row_data: list[str] = [
             str(r.id),
             r.name,
