@@ -157,3 +157,19 @@ h6,
 .font-display {
   font-family: var(--font-display);
 }
+
+/* ─── Google Maps PlaceAutocompleteElement — force light theme ──────────────
+   The element follows the OS colour scheme, so on a Mac in dark mode it renders
+   a black search bar on this light console. Same override as apps/web. */
+gmp-place-autocomplete {
+  color-scheme: light;
+  --gmp-mat-color-surface: #ffffff;
+  --gmp-mat-color-on-surface: #111827;
+  --gmp-mat-color-on-surface-variant: #6b7280;
+  --gmp-mat-color-outline: #e5e7eb;
+  --gmp-mat-color-primary: #8a5a64;
+  width: 100%;
+  display: block;
+  border: 1px solid #e5e7eb;
+  border-radius: 2px;
+}

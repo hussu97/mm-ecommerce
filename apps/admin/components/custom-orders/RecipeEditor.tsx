@@ -11,8 +11,8 @@
  * negative, and a count corrects it. So it is a warning, never a block.
  */
 
-import { useMemo, useState } from 'react';
-import { Input } from '@/components/ui';
+import { useMemo } from 'react';
+import { Select } from '@/components/ui';
 import type { CustomCakeItem } from '@/lib/api';
 import { cn, formatQuantity } from '@/lib/utils';
 
@@ -54,20 +54,17 @@ export function RecipeEditor({
   onChange: (next: RecipeDraft[]) => void;
   disabled?: boolean;
 }) {
-  const [search, setSearch] = useState('');
   const byId = useMemo(() => new Map(items.map(i => [i.id, i])), [items]);
   const chosen = new Set(value.map(v => v.item_id));
-  const q = search.trim().toLowerCase();
-  const matches = q
-    ? items
-        .filter(i => !chosen.has(i.id))
-        .filter(i => i.name.toLowerCase().includes(q) || (i.sku ?? '').toLowerCase().includes(q))
-        .slice(0, 8)
-    : [];
+  // The category is a short list, so every item not yet on the recipe is one
+  // pick away in a dropdown — name order, with its on-hand beside it.
+  const addable = items
+    .filter(i => !chosen.has(i.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  function add(item: CustomCakeItem) {
-    onChange([...value, { item_id: item.id, quantity: '' }]);
-    setSearch('');
+  function add(itemId: string) {
+    if (!itemId || chosen.has(itemId)) return;
+    onChange([...value, { item_id: itemId, quantity: '' }]);
   }
 
   return (
@@ -138,35 +135,23 @@ export function RecipeEditor({
       )}
 
       {!disabled && (
-        <div className="relative">
-          <Input
-            id="recipe-item-search"
-            placeholder={items.length ? 'Add an item — search by name or SKU' : 'No items in the custom-cake category yet'}
-            value={search}
-            disabled={items.length === 0}
-            onChange={e => setSearch(e.target.value)}
-          />
-          {matches.length > 0 && (
-            <div className="absolute z-20 top-full left-0 right-0 mt-0.5 max-h-64 overflow-y-auto border border-gray-200 bg-white shadow-md">
-              {matches.map(i => (
-                <button
-                  key={i.id}
-                  type="button"
-                  onClick={() => add(i)}
-                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-50"
-                >
-                  <span className="text-sm font-body text-gray-700 truncate">{itemLabel(i)}</span>
-                  <span className="shrink-0 text-xs font-body text-gray-400">
-                    {formatQuantity(i.on_hand)} {i.unit ?? ''} on hand
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-          {q && matches.length === 0 && (
-            <p className="mt-1 text-xs font-body text-gray-400">No matching item that isn&rsquo;t already added.</p>
-          )}
-        </div>
+        <Select
+          aria-label="Add an item to the recipe"
+          value=""
+          disabled={addable.length === 0}
+          onChange={e => add(e.target.value)}
+          placeholder={
+            items.length === 0
+              ? 'No items in the custom-cake category yet'
+              : addable.length === 0
+                ? 'Every item is on the recipe'
+                : 'Add an item…'
+          }
+          options={addable.map(i => ({
+            value: i.id,
+            label: `${itemLabel(i)} — ${formatQuantity(i.on_hand)} ${i.unit ?? ''} on hand`,
+          }))}
+        />
       )}
     </div>
   );
