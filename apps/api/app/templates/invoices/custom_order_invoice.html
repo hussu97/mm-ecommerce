@@ -1,0 +1,220 @@
+{#
+  A custom order's tax invoice, A4, rendered by WeasyPrint
+  (`services/orders/custom_order_invoice.py`).
+
+  Every figure arrives formatted from a stored column; this template does no
+  arithmetic. It reads nothing but `inv`, so two renders of the same order are
+  the same document. `dcterms.created` / `dcterms.modified` are the date of
+  supply, which is what WeasyPrint writes as the PDF's dates — without them it
+  writes none, never the clock.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>{{ inv.title }} {{ inv.invoice_number }}</title>
+<meta name="author" content="{{ inv.entity.legal_name }}" />
+{% if inv.supply_w3c %}
+<meta name="dcterms.created" content="{{ inv.supply_w3c }}" />
+<meta name="dcterms.modified" content="{{ inv.supply_w3c }}" />
+{% endif %}
+<style>
+@font-face { font-family:'Poppins'; font-weight:400; font-style:normal;
+  src:url('{{ font_uri("Poppins-Regular.ttf") }}'); }
+@font-face { font-family:'Poppins'; font-weight:500; font-style:normal;
+  src:url('{{ font_uri("Poppins-Medium.ttf") }}'); }
+@font-face { font-family:'Poppins'; font-weight:600; font-style:normal;
+  src:url('{{ font_uri("Poppins-SemiBold.ttf") }}'); }
+@font-face { font-family:'Poppins'; font-weight:700; font-style:normal;
+  src:url('{{ font_uri("Poppins-Bold.ttf") }}'); }
+/* Arabic customer names and addresses fall through to Almarai. */
+@font-face { font-family:'Almarai'; font-weight:400; font-style:normal;
+  src:url('{{ font_uri("Almarai-Regular.ttf") }}'); }
+@font-face { font-family:'Almarai'; font-weight:700; font-style:normal;
+  src:url('{{ font_uri("Almarai-Bold.ttf") }}'); }
+
+@page {
+  size: A4;
+  margin: 16mm 15mm 20mm 15mm;
+  /* Entity text goes through a running element, not a CSS string, so a
+     name with a quote or an ampersand is escaped as HTML and cannot break the
+     stylesheet. */
+  @bottom-left { content: element(footer); }
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: 'Poppins', 'Almarai', sans-serif; font-size: 7.5pt; color: #8a8a8a;
+  }
+}
+.footer { position: running(footer); font-size: 7.5pt; color: #8a8a8a; }
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: 'Poppins', 'Almarai', sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.45;
+  color: #2b2b2b;
+}
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.muted { color: #7a7a7a; }
+.label {
+  font-size: 7.5pt; font-weight: 600; letter-spacing: 1.2px;
+  text-transform: uppercase; color: #8a5a64; margin: 0 0 1.5mm 0;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+.header { display: flex; justify-content: space-between; align-items: flex-start;
+  padding-bottom: 6mm; border-bottom: 1.2pt solid #8a5a64; }
+.issuer { max-width: 58%; }
+.issuer .logo { height: 18mm; width: auto; margin-bottom: 3mm; display: block; }
+.issuer .brand { font-size: 15pt; font-weight: 600; color: #8a5a64; margin: 0 0 1mm 0; }
+.issuer .legal { font-weight: 600; margin: 0; }
+.issuer p { margin: 0; }
+.issuer .address { white-space: pre-line; }
+.doc { text-align: right; }
+.doc h1 { font-size: 20pt; font-weight: 700; margin: 0 0 3mm 0; color: #2b2b2b;
+  letter-spacing: .3px; }
+.doc table { margin-left: auto; border-collapse: collapse; }
+.doc td { padding: .6mm 0 .6mm 5mm; }
+.doc td:first-child { color: #7a7a7a; }
+.doc td:last-child { font-weight: 600; text-align: right; }
+
+/* ── Parties ─────────────────────────────────────────────────────────── */
+.parties { display: flex; justify-content: space-between; margin: 7mm 0 6mm 0; }
+.billto p { margin: 0; }
+.billto .name { font-weight: 600; font-size: 10.5pt; }
+
+/* ── Lines ───────────────────────────────────────────────────────────── */
+table.lines { width: 100%; border-collapse: collapse; }
+table.lines thead th {
+  font-size: 7.5pt; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+  color: #ffffff; background: #8a5a64; padding: 2.2mm 2.5mm; text-align: left;
+}
+table.lines thead th.num { text-align: right; }
+table.lines tbody td { padding: 2.4mm 2.5mm; border-bottom: .6pt solid #e6dcd8;
+  vertical-align: top; }
+table.lines tbody tr { break-inside: avoid; }
+table.lines td.desc { width: 40%; }
+
+/* ── Totals ──────────────────────────────────────────────────────────── */
+.summary { display: flex; justify-content: space-between; align-items: flex-start;
+  margin-top: 6mm; break-inside: avoid; }
+.summary .left { max-width: 52%; }
+table.totals { border-collapse: collapse; min-width: 72mm; }
+table.totals td { padding: 1.2mm 2.5mm; }
+table.totals td:first-child { color: #555555; }
+table.totals tr.grand td { border-top: 1.2pt solid #8a5a64; padding-top: 2.4mm;
+  font-size: 11.5pt; font-weight: 700; color: #2b2b2b; }
+
+.panel { border: .6pt solid #e6dcd8; background: #fbf7f5; border-radius: 1.5mm;
+  padding: 3.5mm 4mm; margin-top: 4mm; }
+.panel table { border-collapse: collapse; }
+.panel td { padding: .5mm 4mm .5mm 0; }
+.panel td:first-child { color: #7a7a7a; }
+.panel td:last-child { font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="footer">{{ inv.entity.legal_name }}{% if inv.entity.tax_number %} · TRN {{ inv.entity.tax_number }}{% endif %} · {{ inv.invoice_number }}</div>
+
+<div class="header">
+  <div class="issuer">
+    {% if inv.entity.logo_data_uri %}
+    <img class="logo" src="{{ inv.entity.logo_data_uri }}" alt="{{ inv.entity.brand_name }}" />
+    {% endif %}
+    <p class="brand">{{ inv.entity.brand_name }}</p>
+    <p class="legal">{{ inv.entity.legal_name }}</p>
+    {% if inv.entity.registered_address %}
+    <p class="address muted">{{ inv.entity.registered_address }}</p>
+    {% endif %}
+    {% if inv.entity.tax_number %}<p>TRN: {{ inv.entity.tax_number }}</p>{% endif %}
+    {% if inv.entity.trade_license_number %}<p>Trade licence: {{ inv.entity.trade_license_number }}</p>{% endif %}
+  </div>
+  <div class="doc">
+    <h1>{{ inv.title }}</h1>
+    <table>
+      <tr><td>Invoice no.</td><td>{{ inv.invoice_number }}</td></tr>
+      <tr><td>Date of supply</td><td>{{ inv.supply_date }}</td></tr>
+      {% if inv.payment_method %}
+      <tr><td>Payment</td><td>{{ inv.payment_method }}</td></tr>
+      {% endif %}
+      <tr><td>Currency</td><td>{{ inv.currency }}</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="parties">
+  <div class="billto">
+    <p class="label">Bill to</p>
+    <p class="name" dir="auto">{{ inv.customer.name }}</p>
+    {% for line in inv.customer.address_lines %}<p dir="auto">{{ line }}</p>{% endfor %}
+    {% if inv.customer.email %}<p>{{ inv.customer.email }}</p>{% endif %}
+    {% if inv.customer.phone %}<p>{{ inv.customer.phone }}</p>{% endif %}
+  </div>
+</div>
+
+<table class="lines">
+  <thead>
+    <tr>
+      <th>Description</th>
+      <th class="num">Qty</th>
+      <th class="num">Unit price</th>
+      {% if inv.show_vat %}
+      <th class="num">Excl. VAT</th>
+      <th class="num">VAT</th>
+      {% endif %}
+      <th class="num">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in inv.lines %}
+    <tr>
+      <td class="desc" dir="auto">{{ line.title }}</td>
+      <td class="num">{{ line.quantity }}</td>
+      <td class="num">{{ line.unit_price }}</td>
+      {% if inv.show_vat %}
+      <td class="num">{{ line.net }}</td>
+      <td class="num">{{ line.vat }}</td>
+      {% endif %}
+      <td class="num">{{ line.total }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="summary">
+  <div class="left">
+    {% if inv.bank_details %}
+    <div class="panel bank">
+      <p class="label">Pay by bank transfer</p>
+      <table>
+        {% for label, value in inv.bank_details %}
+        <tr><td>{{ label }}</td><td>{{ value }}</td></tr>
+        {% endfor %}
+        <tr><td>Reference</td><td>{{ inv.invoice_number }}</td></tr>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  <table class="totals">
+    {% if inv.discount %}
+    <tr><td>Discount</td><td class="num">−{{ inv.discount }}</td></tr>
+    {% endif %}
+    {% if inv.show_vat %}
+    <tr><td>Total excl. VAT</td><td class="num">{{ inv.total_excl_vat }}</td></tr>
+    {% for tax in inv.taxes %}
+    <tr><td>{{ tax.label }} on {{ tax.taxable }}</td><td class="num">{{ tax.amount }}</td></tr>
+    {% else %}
+    <tr><td>VAT</td><td class="num">{{ inv.vat_amount }}</td></tr>
+    {% endfor %}
+    {% endif %}
+    {% if inv.rounding %}
+    <tr><td>Rounding</td><td class="num">{{ inv.rounding }}</td></tr>
+    {% endif %}
+    <tr class="grand"><td>Total ({{ inv.currency }})</td><td class="num">{{ inv.total }}</td></tr>
+  </table>
+</div>
+
+</body>
+</html>

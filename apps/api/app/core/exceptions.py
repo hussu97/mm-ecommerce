@@ -5,6 +5,7 @@ __all__ = [
     "BadGatewayError",
     "BadRequestError",
     "ConflictError",
+    "CustomOrderInvoiceUnavailable",
     "ForbiddenError",
     "NotFoundError",
     "ServiceUnavailableError",
@@ -82,6 +83,20 @@ class ConflictError(AppError):
 
     def __init__(self, detail: str = "Conflict", *, payload: dict | None = None):
         super().__init__(detail, payload=payload)
+
+
+class CustomOrderInvoiceUnavailable(ConflictError):
+    """409: the custom order cannot be invoiced in its current state.
+
+    The detail is the reason a person reads (not packed yet, no customer email,
+    ...), the same sentence `custom_order_invoice.invoice_readiness` returns for
+    the order detail screen. Coded so the console can tell it apart from any
+    other conflict without parsing the message.
+    """
+
+    def __init__(self, detail: str = "This order cannot be invoiced yet"):
+        super().__init__(detail)
+        self.code = "custom_order_invoice_unavailable"
 
 
 class UnprocessableError(AppError):

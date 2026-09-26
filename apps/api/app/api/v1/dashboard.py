@@ -84,11 +84,12 @@ _REVENUE_STATUSES = Order.status != OrderStatusEnum.CANCELLED
 #: The storefront (`online`) is split in two: a store-pickup order is its own
 #: channel ("Store Pickup") rather than folded into the website's delivery sales,
 #: because the shop tracks the two as different businesses. The split is by
-#: `delivery_method`, expressed in `_CHANNEL_EXPR` below — the counter and the
-#: marketplaces group on `source` unchanged.
+#: `delivery_method`, expressed in `_CHANNEL_EXPR` below — the counter, custom
+#: orders and the marketplaces group on `source` unchanged.
 _CHANNEL_LABELS = {
     "website_delivery": "Website Delivery",
     "website_pickup": "Store Pickup",
+    OrderSourceEnum.CUSTOM.value: "Custom orders",
     OrderSourceEnum.CASHIER.value: "Counter",
     OrderSourceEnum.AGGREGATOR.value: "Aggregator",
 }
@@ -834,7 +835,7 @@ async def _by_courier(
         if code in courier_catalog.AGGREGATOR_CODES:
             if aggregator_fee is None:
                 totals[code][3] += 1
-        elif code not in (order_query.COUNTER_CODE, order_query.WEBSITE_PICKUP_CODE):
+        elif code not in order_query.SHOP_CHANNEL_CODES:
             if courier_cost_v is None:
                 totals[code][3] += 1
 
@@ -844,7 +845,7 @@ async def _by_courier(
             label=order_query.courier_label(code),
             logo_url=(
                 None
-                if code in (order_query.COUNTER_CODE, order_query.WEBSITE_PICKUP_CODE)
+                if code in order_query.SHOP_CHANNEL_CODES
                 else courier_catalog.logo_url_for(code)
             ),
             orders=orders,

@@ -38,22 +38,32 @@ nowhere to put a provider name.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, ServiceUnavailableError
+from app.core.exceptions import (
+    BadGatewayError,
+    BadRequestError,
+    ConflictError,
+    ServiceUnavailableError,
+)
 from app.models.delivery_polygon import (
     DEFAULT_ALTERNATES,
     DeliveryPolygon,
     FulfilmentProviderEnum,
 )
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
-from app.models.order_delivery import OrderDelivery, is_collected, is_failed
+from app.models.order_delivery import (
+    OrderDelivery,
+    is_collected,
+    is_failed,
+    is_terminal,
+)
 from app.services import email_service
 from app.services.couriers import (
     courier_service,
@@ -65,19 +75,26 @@ from app.services.delivery import (
     delivery_zone_service,
     driver_assignment,
 )
+from app.services.orders import channels, order_lifecycle
+from app.services.providers.lalamove_provider import LalamoveError
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "FIRST_BOOKING_TARGETS",
     "Exposure",
     "Options",
+    "Price",
+    "QuotationExpiredError",
     "Quote",
     "Target",
     "abandon_booking",
     "allowed_targets",
+    "book_first",
     "exposure_of",
     "move",
     "options_for",
+    "price_target",
     "quote",
     "refuse",
 ]
@@ -219,6 +236,27 @@ class Quote:
     margin: Decimal | None
     #: The booking this move would call off, if there is one.
     cancels_booking: str | None = None
+
+
+@dataclass(frozen=True)
+class Price:
+    """One courier's answer to "what would you charge to carry this?".
+
+    Either a `cost` or a `reason`, never neither: a courier that will not price
+    a job is an answer the admin reads, not a fault. The same shape for every
+    courier, with the fields that do not apply left empty — Slider and noon Send
+    issue no quotation id and so nothing expires.
+    """
+
+    provider: str
+    cost: Decimal | None = None
+    currency: str | None = None
+    distance_m: int | None = None
+    #: Lalamove only, and the booking must quote it back — see `book_first`.
+    quotation_id: str | None = None
+    expires_at: datetime | None = None
+    #: Why there is no cost, in words for the admin. None when priced.
+    reason: str | None = None
 
 
 # ── policy ────────────────────────────────────────────────────────────────────
@@ -436,68 +474,103 @@ async def quote(
     delivery = await _locked(db, order, lock=False)
     await _assert_may_move(db, order, delivery, target)
 
-    fee = delivery.fee_charged
-    cancels = delivery.courier_order_id or None
+    if target == THIRD_PARTY:
+        cost = None
+        price = Price(provider=target)
+    else:
+        price = await price_target(db, order, target)
+        if price.cost is None:
+            return None, price.reason
+        cost = price.cost
 
-    def _built(cost, currency, distance_m, quotation_id, expires_at) -> Quote:
-        return Quote(
+    fee = delivery.fee_charged
+    return (
+        Quote(
             provider=target,
             cost=cost,
-            currency=currency,
-            distance_m=distance_m,
-            quotation_id=quotation_id,
-            expires_at=expires_at,
+            currency=price.currency,
+            distance_m=price.distance_m,
+            quotation_id=price.quotation_id,
+            expires_at=price.expires_at,
             fee_charged=fee,
             # The customer's fee is fixed; this is what we would keep of it.
             margin=(None if cost is None or fee is None else Decimal(str(fee)) - cost),
-            cancels_booking=cancels,
-        )
+            cancels_booking=delivery.courier_order_id or None,
+        ),
+        None,
+    )
 
-    if target == THIRD_PARTY:
-        return _built(None, None, None, None, None), None
+
+async def price_target(db: AsyncSession, order: Order, target: str) -> Price:
+    """
+    What `target` would charge us to carry this order right now, or why it will not say.
+
+    The per-courier half of `quote`, with no delivery row and no zone policy, so
+    a custom order — which has neither until an admin books its first courier —
+    can be priced by the same code that prices a move. `quote` still owns the
+    gates and the margin; this owns only the courier's answer.
+
+    **Never raises for a courier problem.** A courier that declines to price a
+    job, is not configured, or does not exist comes back as a `Price` whose
+    `reason` says so and whose `cost` is None — the quotes screen renders it
+    beside the courier that did answer, rather than failing the pair.
+
+    Third party is not priced here (there is nobody to ask); `quote` builds that
+    blank itself.
+    """
+    if target not in (LALAMOVE, NOON_SEND) and target not in SLIDER_PROVIDERS:
+        return Price(provider=target, reason=f"Unknown courier '{target}'")
+
+    # `quote` has already refused an unconfigured target through
+    # `_assert_may_move`; this is for the callers that have no such gate, where
+    # Slider's `estimate_for_point` would otherwise answer `(None, None)` — no
+    # price and no reason — for a missing API key.
+    if not courier_service.is_enabled(target):
+        return Price(
+            provider=target,
+            reason=f"{target} is not configured, so nothing can be booked with it.",
+        )
 
     if target == LALAMOVE:
         found, error = await lalamove_service.quote_for_order(db, order)
         if found is None:
-            return None, error
-        return (
-            _built(
-                found.estimate.cost,
-                found.estimate.currency,
-                found.estimate.distance_m,
-                found.estimate.quotation_id,
-                found.expires_at,
-            ),
-            None,
+            return Price(provider=target, reason=error or "Lalamove returned no price")
+        return Price(
+            provider=target,
+            cost=found.estimate.cost,
+            currency=found.estimate.currency,
+            distance_m=found.estimate.distance_m,
+            quotation_id=found.estimate.quotation_id,
+            expires_at=found.expires_at,
         )
+
+    # Each courier's own gate first — its refusal is the more useful sentence
+    # (a money ceiling, an emirate boundary) and it already covers a missing pin.
+    if target == NOON_SEND:
+        allowed, why_not = await noon_send_service.may_serve(db, order)
+        refused = why_not or "noon Send will not take this order"
+    else:
+        allowed, why_not = await slider_service.may_serve(db, order)
+        refused = why_not or "Slider will not take this order"
+    if not allowed:
+        return Price(provider=target, reason=refused)
+
+    address = order.shipping_address_snapshot or {}
+    try:
+        latitude = float(address["latitude"])
+        longitude = float(address["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return Price(provider=target, reason="Order has no delivery coordinates")
 
     if target == NOON_SEND:
-        in_range, why_not = await noon_send_service.may_serve(db, order)
-        if not in_range:
-            return None, why_not or "noon Send will not take this order"
-        address = order.shipping_address_snapshot or {}
         estimate, error = await noon_send_service.estimate_for_point(
-            db,
-            float(address.get("latitude")),
-            float(address.get("longitude")),
-            branch_id=order.branch_id,
+            db, latitude, longitude, branch_id=order.branch_id
         )
-        if estimate is None:
-            return None, error
-        return (
-            _built(estimate.cost, estimate.currency, estimate.distance_m, None, None),
-            None,
-        )
-
-    if target in SLIDER_PROVIDERS:
-        allowed, why_not = await slider_service.may_serve(db, order)
-        if not allowed:
-            return None, why_not or "Slider will not take this order"
-        address = order.shipping_address_snapshot or {}
+    else:
         estimate, error = await slider_service.estimate_for_point(
             db,
-            float(address.get("latitude")),
-            float(address.get("longitude")),
+            latitude,
+            longitude,
             branch_id=order.branch_id,
             # The drop's emirate decides the vehicle for a legacy `slider` target;
             # a tier-pinned target (`slider_car` when a bike is upgraded) names it
@@ -507,14 +580,15 @@ async def quote(
             drop_emirate=str(address.get("city") or ""),
             vehicle=slider_service.vehicle_for_provider(target),
         )
-        if estimate is None:
-            return None, error
-        return (
-            _built(estimate.cost, estimate.currency, estimate.distance_m, None, None),
-            None,
-        )
 
-    return None, f"Unknown courier '{target}'"
+    if estimate is None:
+        return Price(provider=target, reason=error or f"{target} returned no price")
+    return Price(
+        provider=target,
+        cost=estimate.cost,
+        currency=estimate.currency,
+        distance_m=estimate.distance_m,
+    )
 
 
 # ── the move ──────────────────────────────────────────────────────────────────
@@ -547,21 +621,25 @@ async def _locked(
     """
     statement = select(OrderDelivery).where(OrderDelivery.order_id == order.id)
     if lock:
-        statement = statement.with_for_update(nowait=True)
-        try:
-            delivery = (await db.execute(statement)).scalars().first()
-        except DBAPIError as exc:
-            if getattr(exc.orig, "sqlstate", None) == _LOCK_NOT_AVAILABLE:
-                raise ConflictError(
-                    "Another change to this order's courier is already in "
-                    "progress. Wait for it to finish, then try again."
-                ) from exc
-            raise
+        delivery = await _first_nowait(db, statement.with_for_update(nowait=True))
     else:
         delivery = (await db.execute(statement)).scalars().first()
     if delivery is None:
         raise ConflictError("This order has no delivery record to move.")
     return delivery
+
+
+async def _first_nowait(db: AsyncSession, statement):
+    """Run a `NOWAIT` locking select; a lock somebody else holds is a 409."""
+    try:
+        return (await db.execute(statement)).scalars().first()
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == _LOCK_NOT_AVAILABLE:
+            raise ConflictError(
+                "Another change to this order's courier is already in "
+                "progress. Wait for it to finish, then try again."
+            ) from exc
+        raise
 
 
 async def _release(db: AsyncSession, order: Order, delivery: OrderDelivery) -> None:
@@ -650,6 +728,18 @@ async def _release(db: AsyncSession, order: Order, delivery: OrderDelivery) -> N
             order.order_number,
         )
 
+    await _forget_booking(db, delivery)
+
+
+async def _forget_booking(db: AsyncSession, delivery: OrderDelivery) -> None:
+    """
+    Wipe the booking off the row so the next courier starts clean.
+
+    The second half of `_release`, and the whole of what `book_first` needs for a
+    booking that has already ended on the courier's side: there is nothing to
+    call off, only a row to clear. The caller has already kept the old id in
+    `previous_courier_order_ids`.
+    """
     await driver_assignment.clear(db, delivery)
 
     delivery.courier_order_id = None
@@ -799,6 +889,336 @@ def _price_moved(found, delivery: OrderDelivery) -> ConflictError:
                 ),
             },
         },
+    )
+
+
+# ── a custom order's first booking ────────────────────────────────────────────
+
+#: The couriers an admin may book for a custom order. A Slider **car** and never
+#: a bike — a bespoke cake does not travel in a bike box — and Lalamove. Third
+#: party and collection finish the order by hand and never reach this module.
+FIRST_BOOKING_TARGETS = frozenset({SLIDER_CAR, LALAMOVE})
+
+#: Where a custom order may stand to be booked. `packed` because the cake is
+#: made and boxed (and packing is what consumed its recipe, so nothing leaves
+#: the shop unconsumed); `undelivered` because a rider brought it back and the
+#: admin is choosing again.
+_FIRST_BOOKABLE_STATUSES = frozenset(
+    {OrderStatusEnum.PACKED, OrderStatusEnum.UNDELIVERED}
+)
+
+#: How far the pin may sit from the quotation's drop-off before the price is
+#: treated as belonging to a different address — ~11 m, the same rounding the
+#: checkout quote cache uses. The contact and address stay editable until a
+#: courier is booked, so a pin can move between the quote and the button.
+_PIN_TOLERANCE_DEGREES = 1e-4
+
+
+class QuotationExpiredError(ConflictError):
+    """409: the Lalamove price the admin approved can no longer be booked.
+
+    Coded so the console re-fetches the quotes instead of only showing the
+    message — the one conflict here a client should act on rather than report.
+    """
+
+    def __init__(
+        self,
+        detail: str = (
+            "The Lalamove price you chose has expired. Refresh the delivery "
+            "quotes and choose again."
+        ),
+    ):
+        super().__init__(detail)
+        self.code = "delivery_quote_expired"
+
+
+async def book_first(
+    db: AsyncSession,
+    order: Order,
+    target: str,
+    *,
+    quotation_id: str | None = None,
+) -> OrderDelivery:
+    """
+    Book the courier an admin chose for a custom order.
+
+    `move` cannot do this: it needs a delivery row to move *from*, asks the
+    zone where the order may go, and mails the customer afterwards. A custom
+    order has no row until this call, no zone that chose anything, and its
+    customer hears only courier news (`channels`). And `courier_service.dispatch`
+    must not do it either: when Slider refuses it quietly books noon Send or
+    Lalamove instead — money spent on a courier nobody chose — and its Lalamove
+    path re-quotes, so the price booked is not the price shown.
+
+    So this books exactly `target`, or raises and books nothing:
+
+    * **No fallback.** Slider refusing is a `ConflictError` carrying Slider's
+      reason; the admin chooses again.
+    * **No retry ladder.** A failure leaves `next_attempt_at` empty, so
+      `retry_failed_dispatches` — which books through `dispatch`, fallback and
+      all — never picks the order up behind the admin's back.
+    * **Lalamove only at the approved price.** `quotation_id` is the one the
+      quotes screen showed; the booking is placed against that quotation, and a
+      lapsed one is `QuotationExpiredError` for the console to re-quote.
+    * **No zone policy and no email.**
+
+    On failure the request rolls back whatever was written here (the new row,
+    the `undelivered → packed` step). On success the courier arm has already
+    committed — see the comment at the call.
+    """
+    if not channels.is_custom(order.source):
+        raise BadRequestError(
+            "Only a custom order is booked this way. Use Change courier on any "
+            "other order."
+        )
+    if target not in FIRST_BOOKING_TARGETS:
+        raise BadRequestError(
+            f"A custom order can go by {' or '.join(sorted(FIRST_BOOKING_TARGETS))}"
+            f", not '{target}'."
+        )
+    if target == LALAMOVE and not quotation_id:
+        raise BadRequestError(
+            "Lalamove is booked only at a price you have seen. Fetch the delivery "
+            "quotes and choose again."
+        )
+    if not courier_service.is_enabled(target):
+        raise ServiceUnavailableError(
+            f"{target} is not configured, so nothing can be booked with it."
+        )
+
+    # Held against a second admin pressing the same button, and against the
+    # order moving under us (a cancel, a hand finish). The order row rather than
+    # the delivery row because on a first booking there is no delivery row to
+    # lock. `NOWAIT` for the reason `_locked` gives: the hold spans courier
+    # round-trips. `FOR NO KEY UPDATE` so rows that merely reference the order —
+    # status events, the delivery row we are about to insert — are not blocked.
+    # `populate_existing` re-reads the status and contact under the lock; the
+    # flush first so nothing the caller set in memory is overwritten by it.
+    await db.flush()
+    await _first_nowait(
+        db,
+        select(Order)
+        .where(Order.id == order.id)
+        .with_for_update(nowait=True, key_share=True)
+        .execution_options(populate_existing=True),
+    )
+
+    if order.status not in _FIRST_BOOKABLE_STATUSES:
+        raise ConflictError(
+            "A custom order is booked once it is packed, or again after it came "
+            f"back undelivered. This one is {order.status.value}."
+        )
+    missing = _missing_for_courier(order)
+    if missing:
+        raise BadRequestError("A courier needs " + ", ".join(missing) + ".")
+
+    existing = (
+        (
+            await db.execute(
+                select(OrderDelivery)
+                .where(OrderDelivery.order_id == order.id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if (
+        existing is not None
+        and existing.courier_order_id
+        and not is_terminal(existing.provider, existing.courier_status)
+    ):
+        # Not ours to call off from here: this path books, it does not replace.
+        # A live booking is cancelled deliberately (the custom order's finish or
+        # cancel) and then this runs on a row whose booking has ended.
+        raise ConflictError(
+            f"This order already has a live {existing.provider} booking "
+            f"({existing.courier_order_id}). Call it off before booking another."
+        )
+
+    # Every question that can be answered without writing anything, before
+    # anything is written.
+    approved = None
+    if target == LALAMOVE:
+        approved = await _approved_lalamove_quote(order, quotation_id or "")
+    else:
+        allowed, why_not = await slider_service.may_serve(db, order)
+        if not allowed:
+            raise ConflictError(why_not or "Slider will not take this order.")
+
+    delivery = await _row_for_first_booking(db, order, target, existing)
+
+    # A rider brought it back; the box is on the shelf again. The map sends a
+    # failed hand-over back through `packed` (the website re-dispatch lands in
+    # the same place, via `stamp_packed` after its booking). Done *before*
+    # booking so the courier arm's commit carries the status and the booking
+    # together: stamped afterwards, a failure between the two commits would
+    # leave a live booking on an `undelivered` order, and the courier's pickup
+    # push (`undelivered → out_for_delivery` is not a transition) would be
+    # skipped. Re-packing consumes nothing twice — `accept_order` is idempotent
+    # per inventory revision.
+    if order.status == OrderStatusEnum.UNDELIVERED:
+        await order_lifecycle.transition(db, order, OrderStatusEnum.PACKED)
+
+    if approved is not None:
+        try:
+            # COMMITS the session on success: a driver has been engaged and the
+            # Lalamove wallet debited outside our transaction, so the booking
+            # (with the row and the status above) is written now rather than
+            # left to the request, which could still fail and roll back a
+            # booking that exists. See `lalamove_service.assign_and_dispatch`.
+            delivery = await lalamove_service.assign_and_dispatch(
+                db, order, quote=approved
+            )
+        except lalamove_service.QuotationExpired as exc:
+            raise QuotationExpiredError() from exc
+    else:
+        # COMMITS the session on success, for the same reason: a Slider rider
+        # has been engaged and cannot be rolled back with the request. See
+        # `slider_service.dispatch_order`. The row names `slider_car`, so the
+        # car is what is asked for.
+        result = await slider_service.dispatch_order(db, order)
+        if result is not None:
+            delivery = result
+
+    if not delivery.courier_order_id or delivery.last_error:
+        # Nothing was committed: both arms commit only once a rider exists.
+        # Raised so the request rolls the row and the status step back, and so
+        # a client that does not read fields cannot report this as done.
+        raise ConflictError(
+            delivery.last_error or f"{target} would not take this order."
+        )
+
+    logger.info(
+        "Custom order %s booked on %s as %s (%s %s)",
+        order.order_number,
+        delivery.provider,
+        delivery.courier_order_id,
+        delivery.quoted_currency or "",
+        delivery.cost_total if delivery.cost_total is not None else "-",
+    )
+    return delivery
+
+
+def _missing_for_courier(order: Order) -> list[str]:
+    """What a courier booking needs that this order does not have.
+
+    The customer's name and phone are also the recipient's: the custom service
+    mirrors them into the address snapshot, which is what both courier arms
+    hand the rider (`address_format.delivery_contact`).
+    """
+    missing = []
+    address = order.shipping_address_snapshot or {}
+    try:
+        float(address["latitude"])
+        float(address["longitude"])
+    except (KeyError, TypeError, ValueError):
+        missing.append("a location pin")
+    if not (order.customer_name or "").strip():
+        missing.append("the customer's name")
+    if not (order.customer_phone or "").strip():
+        missing.append("the customer's phone")
+    return missing
+
+
+async def _row_for_first_booking(
+    db: AsyncSession, order: Order, target: str, delivery: OrderDelivery | None
+) -> OrderDelivery:
+    """The delivery row this booking will write to, created or made ready.
+
+    Created the checkout way (`record_order_delivery`) on a first booking, with
+    no zone — a custom order was priced by the shop, not by the map. After an
+    `undelivered`, the existing row, with the ended booking kept in
+    `previous_courier_order_ids` and cleared the way `move` clears one. The
+    caller has already refused a row whose booking is still live.
+    """
+    if delivery is None:
+        return await lalamove_service.record_order_delivery(
+            db, order, zone=None, cart=None, provider=target
+        )
+
+    if delivery.courier_order_id:
+        # Ended on the courier's side — returned, rejected, expired, or
+        # completed and then marked undelivered here. Nothing to cancel; kept
+        # so the history still names it.
+        previous = list(delivery.previous_courier_order_ids or [])
+        if delivery.courier_order_id not in previous:
+            previous.append(delivery.courier_order_id)
+        delivery.previous_courier_order_ids = previous
+        await _forget_booking(db, delivery)
+
+    # Set once, the way `move` sets it: a second courier after an undelivered is
+    # a person choosing differently, and the first choice is what the "moved
+    # from" badge names.
+    if delivery.provider != target and delivery.original_provider is None:
+        delivery.original_provider = delivery.provider
+    delivery.provider = target
+    # The retry ladder and any fallback note belong to earlier attempts. Cleared
+    # even without a booking to forget, so no sweep inherits them.
+    delivery.dispatch_attempts = 0
+    delivery.next_attempt_at = None
+    delivery.last_error = None
+    delivery.fallback_reason = None
+    return delivery
+
+
+async def _approved_lalamove_quote(
+    order: Order, quotation_id: str
+) -> lalamove_service.ReassignQuote:
+    """
+    The quotation the admin approved, read back from Lalamove — not a new one.
+
+    `quote_for_order` would issue a fresh quotation, at a price nobody saw and
+    under a new id. Lalamove keep a quotation readable by id for its five
+    minutes, stops and all, and `place_order` must quote the stop ids it was
+    priced for, so reading it back is how the booking spends the number on the
+    screen. A read, not a booking, so no money moves here.
+
+    Refused with `QuotationExpiredError` when it has lapsed, and also when the
+    pin has moved since it was quoted: that price was for somewhere else.
+    """
+    try:
+        quotation = await lalamove_service.provider.get_quotation(quotation_id)
+    except LalamoveError as exc:
+        if exc.is_expired_quotation or exc.status == 404:
+            raise QuotationExpiredError() from exc
+        raise BadGatewayError(
+            f"Lalamove could not read that price back: {exc}"
+        ) from exc
+
+    estimate = lalamove_service.parse_quotation(quotation)
+    stops = quotation.get("stops") or []
+    if estimate is None or len(stops) < 2:
+        raise QuotationExpiredError()
+    expires_at = lalamove_service.parse_time(quotation.get("expiresAt"))
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        raise QuotationExpiredError()
+
+    drop = stops[-1].get("coordinates") or {}
+    address = order.shipping_address_snapshot or {}
+    try:
+        moved = (
+            abs(float(drop["lat"]) - float(address["latitude"]))
+            > _PIN_TOLERANCE_DEGREES
+            or abs(float(drop["lng"]) - float(address["longitude"]))
+            > _PIN_TOLERANCE_DEGREES
+        )
+    except (KeyError, TypeError, ValueError):
+        # A quotation that does not echo its coordinates cannot be checked; the
+        # id alone is what Lalamove will book against.
+        moved = False
+    if moved:
+        raise QuotationExpiredError(
+            "The delivery pin has moved since this Lalamove price was quoted. "
+            "Refresh the delivery quotes and choose again."
+        )
+
+    return lalamove_service.ReassignQuote(
+        # The id asked for, whatever the read echoes: it is the one the admin
+        # agreed to and the one `place_order` will be told.
+        estimate=replace(estimate, quotation_id=quotation_id),
+        stops=stops,
+        expires_at=expires_at,
     )
 
 

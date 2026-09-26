@@ -16,8 +16,8 @@ those costs summed with no breakdown: the marketplace's commission, the payment
 fee, and — on a website order — what the courier cost us. Discount is shown for
 information, since it is already inside the total.
 
-Only **delivered** trade counts: a delivered marketplace or website order, or a
-closed counter check. Anything cancelled or still in progress is left out — a
+Only **delivered** trade counts: a delivered marketplace, website or custom
+order, or a closed counter check. Anything cancelled or still in progress is left out — a
 sales report is a record of money taken, not orders opened.
 
 The loop belongs to the app because this stack has no cron, and it holds an
@@ -54,7 +54,7 @@ from app.models.order_delivery import OrderDelivery
 from app.services import branch_hours_service, email_service
 from app.services.couriers import courier_catalog
 from app.services.pos import business_day_service
-from app.services.pos.pos_reports._base import _COMPLETED_SALE
+from app.services.pos.pos_reports._base import _COMPLETED_SALE, _REPORTED_ORDER
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +87,16 @@ _TEMPLATE = "daily_sales_report"
 
 #: The channel columns, in report order. The five aggregators are the courier
 #: catalogue's own codes; website delivery folds every courier into one column,
-#: store pickup is its own column, and counter is the till. A marketplace nobody
-#: has mapped yet still gets a column (appended) rather than having its money
-#: silently dropped.
+#: store pickup is its own column, custom orders are one column whoever carried
+#: them, and counter is the till. A marketplace nobody has mapped yet still gets
+#: a column (appended) rather than having its money silently dropped.
 _AGGREGATOR_COLUMNS = ["keeta", "noon_food", "talabat", "careem", "deliveroo"]
-_FIXED_COLUMNS = _AGGREGATOR_COLUMNS + ["website", "website_pickup", "counter"]
+_FIXED_COLUMNS = _AGGREGATOR_COLUMNS + [
+    "website",
+    "website_pickup",
+    "custom",
+    "counter",
+]
 _COLUMN_LABELS = {
     "keeta": "keeta",
     "noon_food": "noon food",
@@ -100,6 +105,7 @@ _COLUMN_LABELS = {
     "deliveroo": "deliveroo",
     "website": "website delivery",
     "website_pickup": "store pickup",
+    "custom": "custom orders",
     "counter": "counter",
 }
 
@@ -112,10 +118,12 @@ def _label(column: str) -> str:
 #: from `pos_reports._base` rather than kept as a second copy here, so the owner's
 #: inbox and the manager console can never define "a completed sale" differently
 #: (F-POS-19). A counter check counts once the till closes it; a website order
-#: once its e-commerce status is delivered; an aggregator order once the parcel
-#: leaves the counter (`out_for_delivery`). Cancelled, refunded and in-progress
-#: orders match no arm. The per-channel reasoning now lives in one place; see the
-#: named clauses in `pos_reports._base`.
+#: or a custom order once its e-commerce status is delivered; an aggregator
+#: order once the parcel leaves the counter (`out_for_delivery`). The order set
+#: it narrows is `_REPORTED_ORDER`, the same one the console reads, which is
+#: what lets a custom order (never `is_pos`) in. Cancelled, refunded and
+#: in-progress orders match no arm. The per-channel reasoning now lives in one
+#: place; see the named clauses in `pos_reports._base`.
 _DELIVERED = _COMPLETED_SALE
 
 
@@ -173,6 +181,8 @@ def _column_for(
         return "counter"
     if source == "online":
         return "website_pickup" if delivery_method == "pickup" else "website"
+    if source == "custom":
+        return "custom"
     if source == "aggregator":
         code = courier_catalog.code_for_channel(aggregator_channel or "")
         return code or (aggregator_channel or "unknown")
@@ -205,7 +215,7 @@ async def _fetch(
         )
         .select_from(Order)
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
-        .where(Order.is_pos.is_(True))
+        .where(_REPORTED_ORDER)
         .where(Order.business_date >= date_from, Order.business_date <= date_to)
         .where(_DELIVERED)
         .group_by(
@@ -370,7 +380,7 @@ async def build_detail(
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
         .outerjoin(Branch, Branch.id == Order.branch_id)
         .outerjoin(LegalEntity, LegalEntity.id == Order.legal_entity_id)
-        .where(Order.is_pos.is_(True))
+        .where(_REPORTED_ORDER)
         .where(Order.business_date >= date_from, Order.business_date <= date_to)
         .where(_DELIVERED)
         .order_by(Order.business_date, Branch.name, Order.aggregator_channel)
@@ -437,7 +447,7 @@ async def build_detail(
         )
         .select_from(Order)
         .outerjoin(LegalEntity, LegalEntity.id == Order.legal_entity_id)
-        .where(Order.is_pos.is_(True))
+        .where(_REPORTED_ORDER)
         .where(Order.business_date >= date_from, Order.business_date <= date_to)
         .where(_DELIVERED)
         .group_by(Order.business_date, LegalEntity.legal_name)
@@ -731,6 +741,8 @@ def _order_channel_label(source: str | None, aggregator_channel: str | None) -> 
         return "website"
     if source == "cashier":
         return "counter"
+    if source == "custom":
+        return "custom order"
     return source or ""
 
 

@@ -1,0 +1,55 @@
+{#
+  A custom order's invoice, sent from the admin console with the PDF attached
+  (`services/orders/custom_order_invoice.send_invoice`) and copied to the legal
+  entity's `invoice_cc_emails`. English, like the invoice itself.
+#}
+{% extends "base.html" %}
+
+{% block title %}{{ invoice_title }} {{ invoice_number }}{% endblock %}
+{% block preheader %}Your invoice from {{ brand_name }} is attached.{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">{{ invoice_title }}</p>
+    <h2 class="hero-title">{{ invoice_number }}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <p>Dear <span dir="auto">{{ customer_name }}</span>,</p>
+    <p>
+      Thank you for your custom order. Your invoice is attached to this email
+      as a PDF.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-label" style="width: 140px; padding: 5px 0;">Invoice no.</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ invoice_number }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Date of supply</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ supply_date }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Total</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ total }}</td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+    {% if pays_by_bank_transfer %}
+    <p style="margin-top: 22px;">
+      Our bank details are on the invoice. Please use {{ invoice_number }} as
+      the payment reference.
+    </p>
+    {% endif %}
+    <p style="margin-top: 22px;">
+      If anything on it looks wrong, please let us know.
+    </p>
+  </td></tr>
+</table>
+{% endblock %}

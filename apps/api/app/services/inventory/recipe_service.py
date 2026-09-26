@@ -48,6 +48,7 @@ from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order, OrderItem
 from app.models.product import Product
 from app.models.user import User
+from app.services.orders import channels
 
 logger = logging.getLogger(__name__)
 
@@ -1193,7 +1194,16 @@ async def snapshot_order(
     sweeper) load the active recipe graph ONCE and reuse it, instead of paying a
     full `load_active_catalog` per order — the per-event reload is what pushed a
     branch's backlog past the sweep budget and rolled the whole branch back every
-    tick. A per-request caller (accept/reconsume) omits it and loads fresh."""
+    tick. A per-request caller (accept/reconsume) omits it and loads fresh.
+
+    A **custom order** is the one order whose consumption is not its products':
+    each cake is made to its own brief, so the kitchen names the bases it used on
+    the order itself (`custom_order_recipe_lines`) and that list is the plan.
+    Its FG0119 lines expand nothing. Everything downstream — idempotency, the
+    poster, the sweeper, the consumption view — is the same as any order's."""
+    if channels.is_custom(order.source):
+        return await _snapshot_custom_order(db, order), []
+
     totals: dict[uuid.UUID, ExpandedLine] = {}
     version_ids: set[uuid.UUID] = set()
     warnings: list[str] = []
@@ -1292,6 +1302,38 @@ async def snapshot_order(
         },
         warnings,
     )
+
+
+async def _snapshot_custom_order(db: AsyncSession, order: Order) -> dict[str, Any]:
+    """The frozen plan of a custom order: its own recipe lines, as leaves.
+
+    The bases are stocked semi-finished items consumed from their own stock, so
+    nothing is expanded; quantities are already in ingredient units.
+    """
+    from app.models.custom_order import CustomOrderRecipeLine
+
+    lines = (
+        (
+            await db.execute(
+                select(CustomOrderRecipeLine)
+                .where(CustomOrderRecipeLine.order_id == order.id)
+                .order_by(CustomOrderRecipeLine.item_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "order_id": str(order.id),
+        "order_number": order.order_number,
+        "recipe_version_ids": [],
+        "lines": [
+            ExpandedLine(
+                item_id=line.item_id, quantity=Decimal(str(line.quantity))
+            ).as_snapshot()
+            for line in lines
+        ],
+    }
 
 
 async def branch_menu_recipe_gaps(

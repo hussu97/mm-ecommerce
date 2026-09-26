@@ -53,7 +53,8 @@ async def profit_and_loss(
     channels: list[str] | None = Query(
         None,
         description="P&L channel codes (multi): `counter`, `website_delivery`, "
-        "`website_pickup`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`",
+        "`website_pickup`, `custom`, `talabat`, `keeta`, `noon_food`, `deliveroo`, "
+        "`careem`",
     ),
     branch_ids: list[uuid.UUID] | None = Query(None),
     legal_entity_ids: list[uuid.UUID] | None = Query(None),

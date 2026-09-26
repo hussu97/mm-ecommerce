@@ -21,6 +21,7 @@ from .custom_order_enquiries import (
 from .custom_order_enquiries import (
     router as custom_order_enquiries_router,
 )
+from .custom_orders import router as custom_orders_admin_router
 from .dashboard import router as home_dashboard_router
 from .delivery import router as delivery_router
 from .delivery_zones import router as delivery_zones_router
@@ -168,6 +169,9 @@ api_router.include_router(
     custom_order_enquiries_admin_router,
     prefix="/admin/custom-orders",
     tags=["Custom Orders"],
+)
+api_router.include_router(
+    custom_orders_admin_router, prefix="/admin/custom-orders", tags=["Custom Orders"]
 )
 api_router.include_router(blog_router, prefix="/blog", tags=["Blog"])
 api_router.include_router(email_logs_router, prefix="/email-logs", tags=["Email Logs"])

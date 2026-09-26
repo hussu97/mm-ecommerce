@@ -2122,6 +2122,11 @@ async def update_status(
         and order.source == OrderSourceEnum.ONLINE.value
     ):
         extra_from |= order_lifecycle.ONLINE_CANCELLABLE_FROM
+    if (
+        new_status == OrderStatusEnum.CANCELLED
+        and order.source == OrderSourceEnum.CUSTOM.value
+    ):
+        extra_from |= order_lifecycle.CUSTOM_CANCELLABLE_FROM
 
     moved = await order_lifecycle.transition(
         db,
@@ -2188,6 +2193,8 @@ async def get_all_admin(
         base_stmt = base_stmt.where(Order.source == OrderSourceEnum.ONLINE.value)
     elif channel == "aggregator":
         base_stmt = base_stmt.where(Order.source == OrderSourceEnum.AGGREGATOR.value)
+    elif channel == "custom":
+        base_stmt = base_stmt.where(Order.source == OrderSourceEnum.CUSTOM.value)
 
     picked_couriers = list(couriers or [])
     if courier:

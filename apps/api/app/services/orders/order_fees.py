@@ -50,7 +50,7 @@ from app.models.order import Order
 from app.models.payment_gateway import PaymentGateway
 from app.services.orders.order_pricing import VAT_RATE
 
-__all__ = ["OrderFees", "compute", "stamp"]
+__all__ = ["OrderFees", "card_fee_covering", "card_fee_terms", "compute", "stamp"]
 
 _ZERO = Decimal("0")
 
@@ -153,16 +153,29 @@ async def _own_channel_fees(
     if order.payment_method != "card":
         return OrderFees(None, _ZERO, False)
 
+    fraction, fixed = await card_fee_terms(db, order.payment_provider)
+    return OrderFees(
+        aggregator_fee=None,
+        payment_fee=_with_vat(charged * fraction + fixed),
+        payment_fee_is_estimated=True,
+    )
+
+
+async def card_fee_terms(
+    db: AsyncSession, provider: str | None
+) -> tuple[Decimal, Decimal]:
+    """A card processor's rate as (fraction of the charge, fixed fee), pre-VAT.
+
+    From the provider's `payment_gateways` row, falling back to the published
+    rate when the row is missing.
+    """
     gateway = None
-    if order.payment_provider:
+    if provider:
         gateway = (
             await db.execute(
-                select(PaymentGateway).where(
-                    PaymentGateway.code == order.payment_provider
-                )
+                select(PaymentGateway).where(PaymentGateway.code == provider)
             )
         ).scalar_one_or_none()
-
     percent = (
         to_decimal(gateway.fee_percent)
         if gateway is not None
@@ -171,11 +184,25 @@ async def _own_channel_fees(
     fixed = (
         to_decimal(gateway.fee_fixed) if gateway is not None else _DEFAULT_CARD_FIXED
     )
-    return OrderFees(
-        aggregator_fee=None,
-        payment_fee=_with_vat(charged * _as_fraction(percent) + fixed),
-        payment_fee_is_estimated=True,
+    return _as_fraction(percent), fixed
+
+
+def card_fee_covering(goods: Decimal, fraction: Decimal, fixed: Decimal) -> Decimal:
+    """The fee line that pays the processor's fee on the goods *and on itself*.
+
+    A card fee billed to the customer is charged through the card too, so a
+    line of just `fee(goods)` leaves the shop short by the fee on that line.
+    Solving `L = fee(goods + L)` with `fee(x) = (x·p + f)·(1 + VAT)` gives
+    `L = (goods·p + f)·(1 + VAT) / (1 − p·(1 + VAT))`. After rounding to cents
+    the line and the fee it covers agree to within a fil.
+    """
+    gross = Decimal("1") + VAT_RATE
+    raw = (
+        (to_decimal(goods) * fraction + fixed)
+        * gross
+        / (Decimal("1") - fraction * gross)
     )
+    return money(raw)
 
 
 async def stamp(

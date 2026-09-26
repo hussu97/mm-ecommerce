@@ -121,11 +121,13 @@ _ZERO = Decimal("0")
 #: The sales channels the P&L groups and filters by, in display order. Coarser
 #: than the dashboard's courier codes on purpose: which van carried a website
 #: order is a delivery-cost question, not a channel, so every dispatched website
-#: order is one `website_delivery` column.
+#: order is one `website_delivery` column, and every custom order is one `custom`
+#: column whether a courier carried it or the customer collected it.
 CHANNELS: tuple[str, ...] = (
     "counter",
     "website_delivery",
     "website_pickup",
+    "custom",
     *AGGREGATOR_CHANNEL_PREFIX.keys(),
 )
 
@@ -177,6 +179,7 @@ def channel_expression():
             literal("website_pickup"),
         ),
         (Order.source == OrderSourceEnum.ONLINE.value, literal("website_delivery")),
+        (Order.source == OrderSourceEnum.CUSTOM.value, literal("custom")),
     ]
     for code, prefix in AGGREGATOR_CHANNEL_PREFIX.items():
         whens.append(
@@ -444,7 +447,11 @@ def line_columns() -> dict[str, object]:
         "fees_pending": case(
             # A marketplace order whose commission has not landed yet (its
             # statement arrives days to a month later), or a dispatched website
-            # order whose courier has neither quoted nor invoiced.
+            # order whose courier has neither quoted nor invoiced. A custom order
+            # has no arm: it is only a sale once delivered, and by then its
+            # delivery cost is known — the fare an admin agreed to before booking
+            # Slider or Lalamove, the fee typed for a third party, or nothing for
+            # a collection.
             (
                 and_(
                     Order.source == OrderSourceEnum.AGGREGATOR.value,

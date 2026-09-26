@@ -50,6 +50,7 @@ from app.models.operations import (
     ProductionLine,
     ProductionLineStatusEnum,
     ProductionOrder,
+    ProductionOrderOriginEnum,
     ProductionOrderStatusEnum,
     Transfer,
     TransferKindEnum,
@@ -1357,12 +1358,17 @@ async def _build_production_order(
     transfer_order_id: uuid.UUID | None,
     notes: str | None,
     client_request_id: str | None,
+    origin: str = ProductionOrderOriginEnum.ADMIN.value,
 ) -> ProductionOrder:
     """Create a ProductionOrder + one pending line per makeable item. No movement.
 
     Every item must genuinely produce something (have an active recipe or a legacy
     BOM); a non-recipe item is refused, since the grid should never have offered
     it. Idempotent on ``client_request_id``.
+
+    An order raised at a register (`origin='pos'`) is printed there as it is
+    made, so it is stamped auto-printed: the till's open-of-day auto-print is for
+    orders raised elsewhere and must not print this one a second time.
     """
     if client_request_id:
         existing = (
@@ -1385,6 +1391,10 @@ async def _build_production_order(
         notes=notes,
         client_request_id=client_request_id,
         creator_id=user.id,
+        origin=origin,
+        auto_printed_at=(
+            utcnow() if origin == ProductionOrderOriginEnum.POS.value else None
+        ),
     )
     try:
         async with db.begin_nested():
@@ -1465,6 +1475,7 @@ async def create_production_order(
     production_items: list,
     notes: str | None = None,
     client_request_id: str | None = None,
+    origin: str = ProductionOrderOriginEnum.ADMIN.value,
 ) -> ProductionOrder:
     """Raise a production-only order at the source branch (no transfers). No stock
     moves until a line is produced."""
@@ -1482,6 +1493,7 @@ async def create_production_order(
         transfer_order_id=None,
         notes=notes,
         client_request_id=client_request_id,
+        origin=origin,
     )
 
 

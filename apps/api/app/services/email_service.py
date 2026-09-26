@@ -64,6 +64,7 @@ __all__ = [
     "send_order_packed",
     "send_order_undelivered",
     "maps_url",
+    "render_email",
     "report_failed_sends",
     "send_auto_availability_change",
     "send_counter_pricing_mismatch",
@@ -175,6 +176,15 @@ def _render(
             **context,
         )
     )
+
+
+def render_email(
+    template_name: str, recipient_email: str, *, locale: str = "en", **context
+) -> str:
+    """`_render` for a caller that sends through `send_with_attachment`, which
+    takes finished HTML rather than a template name. May raise on a template
+    error; the caller decides whether that fails its request."""
+    return _render(template_name, recipient_email, locale=locale, **context)
 
 
 def _order_tracking_url(order_number: str, email: str, locale: str = "en") -> str:

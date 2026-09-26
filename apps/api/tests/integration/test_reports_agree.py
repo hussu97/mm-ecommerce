@@ -28,7 +28,7 @@ from app.models import Branch, Order
 from app.models.inventory import Warehouse
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.services.pos import daily_sales_email
-from app.services.pos.pos_reports import sales_summary
+from app.services.pos.pos_reports import sales_by_dimension, sales_summary
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -51,12 +51,22 @@ async def engine():
 
 
 def _order(
-    branch_id, *, source, status, total, pos_status=None, channel=None, ref=None
+    branch_id,
+    *,
+    source,
+    status,
+    total,
+    pos_status=None,
+    channel=None,
+    ref=None,
+    is_pos=True,
 ):
     # A closed counter check must carry a closed_at (ck_orders_closed_has_closed_at).
+    # A delivered custom order is closed by its hand-over.
     closed_at = (
         datetime(2026, 9, 1, 20, 0, tzinfo=timezone.utc)
         if pos_status == "closed"
+        or (source == "custom" and status == OrderStatusEnum.DELIVERED.value)
         else None
     )
     return Order(
@@ -64,7 +74,8 @@ def _order(
         email="pytest-reports@example.com",
         source=source,
         branch_id=branch_id,
-        is_pos=True,
+        is_pos=is_pos,
+        delivered_at=(closed_at if status == OrderStatusEnum.DELIVERED.value else None),
         business_date=BDATE,
         status=status,
         pos_status=pos_status,
@@ -126,6 +137,15 @@ async def seeded(engine):
                 ref=f"C-{uuid.uuid4().hex[:8]}",
                 total="30.00",
             ),
+            # Custom order handed over → counts, though it never reached the
+            # register (`is_pos` false).
+            _order(
+                branch.id,
+                source="custom",
+                status=S.DELIVERED.value,
+                is_pos=False,
+                total="400.00",
+            ),
         ]
         uncounted = [
             # Counter check still open → not a sale yet.
@@ -161,14 +181,32 @@ async def seeded(engine):
                 ref=f"N-{uuid.uuid4().hex[:8]}",
                 total="999.00",
             ),
+            # Custom order boxed but not handed over → not counted.
+            _order(
+                branch.id,
+                source="custom",
+                status=S.PACKED.value,
+                is_pos=False,
+                total="999.00",
+            ),
+            # Custom order on a courier's van → not counted; the courier can
+            # still fail it.
+            _order(
+                branch.id,
+                source="custom",
+                status=S.OUT_FOR_DELIVERY.value,
+                is_pos=False,
+                total="999.00",
+            ),
         ]
         for o in counted + uncounted:
             db.add(o)
         await db.commit()
         branch_id = branch.id
 
-    # 100 counter + 50 website + 70 aggregator-OFD + 30 aggregator-delivered.
-    expected = Decimal("250.00")
+    # 100 counter + 50 website + 70 aggregator-OFD + 30 aggregator-delivered
+    # + 400 custom-delivered.
+    expected = Decimal("650.00")
 
     yield branch_id, expected
 
@@ -205,3 +243,30 @@ async def test_email_total_equals_sales_summary_total(seeded, engine):
     assert email_revenue == summary["net_sales"]
     # And the excluded orders (each 999.00) never leaked into either total.
     assert summary["net_sales"] < Decimal("999.00")
+
+
+async def test_a_delivered_custom_order_is_its_own_channel_in_both(seeded, engine):
+    branch_id, _ = seeded
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with Session() as db:
+        by_channel = await sales_by_dimension(
+            db,
+            dimension="channel",
+            branch_id=branch_id,
+            date_from=BDATE,
+            date_to=BDATE,
+        )
+        report = await daily_sales_email.build(
+            db, date_from=BDATE, date_to=BDATE, branch_id=branch_id
+        )
+
+    custom = next(r for r in by_channel if r["key"] == "custom")
+    assert custom["label"] == "Custom orders"
+    assert custom["image_url"] is None
+    assert custom["orders"] == 1
+    assert custom["net_sales"] == Decimal("400.00")
+
+    (row,) = report.rows
+    assert row.cells["custom"].count == 1
+    assert row.cells["custom"].revenue == Decimal("400.00")

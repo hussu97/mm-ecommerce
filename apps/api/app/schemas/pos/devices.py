@@ -115,6 +115,10 @@ class DevicePairResponse(BaseModel):
     device: DeviceResponse
     device_token: str
     branch: BranchResponse
+    #: Whether this branch takes custom orders (the register shows its
+    #: "Customized Cake Orders" section). Derived from the one custom-orders
+    #: branch setting, not a branch column.
+    custom_orders_enabled: bool = False
 
 
 class DeviceSessionResponse(BaseModel):
@@ -127,6 +131,8 @@ class DeviceSessionResponse(BaseModel):
 
     device: DeviceResponse
     branch: BranchResponse
+    #: See `DevicePairResponse.custom_orders_enabled`.
+    custom_orders_enabled: bool = False
 
 
 class PrinterCreate(BaseModel):

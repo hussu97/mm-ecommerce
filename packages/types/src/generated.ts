@@ -76,6 +76,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/custom-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Custom Orders */
+        get: operations["list_custom_orders_api_v1_admin_custom_orders_get"];
+        put?: never;
+        /**
+         * Create Custom Order
+         * @description Take a custom order. It is confirmed at once and its kitchen docket is
+         *     sent to the custom-orders branch's registers.
+         */
+        post: operations["create_custom_order_api_v1_admin_custom_orders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/custom-orders/enquiries": {
         parameters: {
             query?: never;
@@ -93,6 +115,231 @@ export interface paths {
          */
         get: operations["list_enquiries_api_v1_admin_custom_orders_enquiries_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recipe Items
+         * @description What a recipe may use, with the kitchen's stock of each.
+         */
+        get: operations["recipe_items_api_v1_admin_custom_orders_items_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Channel Status
+         * @description Whether the channel is set up, so the console can say what is missing.
+         */
+        get: operations["channel_status_api_v1_admin_custom_orders_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Custom Order */
+        get: operations["get_custom_order_api_v1_admin_custom_orders__order_number__get"];
+        /** Update Custom Order */
+        put: operations["update_custom_order_api_v1_admin_custom_orders__order_number__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Custom Order */
+        post: operations["cancel_custom_order_api_v1_admin_custom_orders__order_number__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/collected": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark Custom Order Collected */
+        post: operations["mark_custom_order_collected_api_v1_admin_custom_orders__order_number__collected_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/contact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Custom Order Contact */
+        put: operations["update_custom_order_contact_api_v1_admin_custom_orders__order_number__contact_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/delivery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Choose Custom Order Delivery
+         * @description Book Slider (car) or Lalamove, or record a third-party courier and its
+         *     fee (which finishes the order as delivered).
+         */
+        post: operations["choose_custom_order_delivery_api_v1_admin_custom_orders__order_number__delivery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/delivery-quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Custom Order Delivery Quotes
+         * @description Live Slider (car) and Lalamove fares from the custom-orders branch to the
+         *     customer's pin, each with its fare or the reason it cannot go.
+         */
+        get: operations["custom_order_delivery_quotes_api_v1_admin_custom_orders__order_number__delivery_quotes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/invoice.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** View Custom Order Invoice */
+        get: operations["view_custom_order_invoice_api_v1_admin_custom_orders__order_number__invoice_pdf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/invoice/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Custom Order Invoice
+         * @description Email the invoice PDF to the customer, copying the owners.
+         */
+        post: operations["send_custom_order_invoice_api_v1_admin_custom_orders__order_number__invoice_send_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pack Custom Order
+         * @description Boxed and ready: the recipe is consumed from the kitchen's stock.
+         */
+        post: operations["pack_custom_order_api_v1_admin_custom_orders__order_number__pack_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/custom-orders/{order_number}/recipe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Custom Order Recipe */
+        put: operations["update_custom_order_recipe_api_v1_admin_custom_orders__order_number__recipe_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -13445,6 +13692,193 @@ export interface components {
             session_id?: string | null;
         };
         /**
+         * CustomCakeItem
+         * @description An item a custom order's recipe may use, with the kitchen's stock.
+         */
+        CustomCakeItem: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** On Hand */
+            on_hand: string;
+            /** On Hand In Production Unit */
+            on_hand_in_production_unit: string;
+            /** Production Unit */
+            production_unit: string | null;
+            /** Sku */
+            sku: string | null;
+            /** Unit */
+            unit: string | null;
+        };
+        /**
+         * CustomOrderActions
+         * @description What may be done to the order now — decided by the API so the console
+         *     and both POS apps offer the same buttons.
+         */
+        CustomOrderActions: {
+            /** Can Cancel */
+            can_cancel: boolean;
+            /** Can Choose Delivery */
+            can_choose_delivery: boolean;
+            /** Can Collect */
+            can_collect: boolean;
+            /** Can Edit Contact */
+            can_edit_contact: boolean;
+            /** Can Edit Lines */
+            can_edit_lines: boolean;
+            /** Can Edit Recipe */
+            can_edit_recipe: boolean;
+            /** Can Pack */
+            can_pack: boolean;
+            /** Delivery Unavailable Reason */
+            delivery_unavailable_reason: string | null;
+            /** Invoice Unavailable Reason */
+            invoice_unavailable_reason: string | null;
+        };
+        /**
+         * CustomOrderAddressIn
+         * @description All optional, in any combination; a pin needs both coordinates.
+         */
+        CustomOrderAddressIn: {
+            /** Address Line 1 */
+            address_line_1?: string | null;
+            /** Latitude */
+            latitude?: number | null;
+            /** Longitude */
+            longitude?: number | null;
+            /** Unit Number */
+            unit_number?: string | null;
+        };
+        /** CustomOrderAddressOut */
+        CustomOrderAddressOut: {
+            /** Address Line 1 */
+            address_line_1: string | null;
+            /** Latitude */
+            latitude: number | null;
+            /** Longitude */
+            longitude: number | null;
+            /** Unit Number */
+            unit_number: string | null;
+        };
+        /** CustomOrderChargeOut */
+        CustomOrderChargeOut: {
+            /** Amount */
+            amount: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * CustomOrderContactUpdate
+         * @description Refused once a courier has been booked.
+         */
+        CustomOrderContactUpdate: {
+            address?: components["schemas"]["CustomOrderAddressIn"] | null;
+            customer?: components["schemas"]["CustomOrderCustomerIn"];
+        };
+        /** CustomOrderCreate */
+        CustomOrderCreate: {
+            address?: components["schemas"]["CustomOrderAddressIn"] | null;
+            /** Card Fee Mode */
+            card_fee_mode?: ("separate_line" | "included") | null;
+            /** Client Request Id */
+            client_request_id?: string | null;
+            customer?: components["schemas"]["CustomOrderCustomerIn"];
+            /**
+             * Delivery Date
+             * Format: date
+             */
+            delivery_date: string;
+            /** Delivery Time */
+            delivery_time?: string | null;
+            /** Enquiry Id */
+            enquiry_id?: string | null;
+            /** Lines */
+            lines: components["schemas"]["CustomOrderLineIn"][];
+            /** Notes */
+            notes?: string | null;
+            /** Payment Type */
+            payment_type?: ("bank_transfer" | "card" | "cash") | null;
+            /** Recipe */
+            recipe?: components["schemas"]["CustomOrderRecipeLineIn"][];
+        };
+        /**
+         * CustomOrderCustomerIn
+         * @description All optional, in any combination — a DM may come with only a name.
+         */
+        CustomOrderCustomerIn: {
+            /** Email */
+            email?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Phone */
+            phone?: string | null;
+        };
+        /**
+         * CustomOrderDeliveryChoice
+         * @description How an admin sends a packed order.
+         *
+         *     `slider_car` / `lalamove` book that courier (a Lalamove booking carries
+         *     the quotation the admin was shown); `third_party` records a courier we did
+         *     not book and marks the order delivered.
+         */
+        CustomOrderDeliveryChoice: {
+            /** Courier Fee */
+            courier_fee?: number | string | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "slider_car" | "lalamove" | "third_party";
+            /** Quotation Id */
+            quotation_id?: string | null;
+        };
+        /** CustomOrderDeliveryOut */
+        CustomOrderDeliveryOut: {
+            /** Cost */
+            cost: string | null;
+            /** Courier Status */
+            courier_status: string | null;
+            /** Driver Name */
+            driver_name: string | null;
+            /** Driver Phone */
+            driver_phone: string | null;
+            /** Last Error */
+            last_error: string | null;
+            /** Provider */
+            provider: string;
+            /** Share Link */
+            share_link: string | null;
+        };
+        /** CustomOrderDeliveryQuote */
+        CustomOrderDeliveryQuote: {
+            /** Available */
+            available: boolean;
+            /** Expires At */
+            expires_at: string | null;
+            /** Fare */
+            fare: string | null;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "slider_car" | "lalamove";
+            /** Quotation Id */
+            quotation_id: string | null;
+            /** Reason */
+            reason: string | null;
+        };
+        /** CustomOrderDeliveryQuotes */
+        CustomOrderDeliveryQuotes: {
+            /** Quotes */
+            quotes: components["schemas"]["CustomOrderDeliveryQuote"][];
+            /** Unavailable Reason */
+            unavailable_reason: string | null;
+        };
+        /**
          * CustomOrderEnquiryAdminResponse
          * @description The whole lead, for the admin Enquiries list.
          */
@@ -13507,6 +13941,195 @@ export interface components {
              * Format: uuid
              */
             id: string;
+        };
+        /** CustomOrderLineIn */
+        CustomOrderLineIn: {
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Quantity
+             * @default 1
+             */
+            quantity: number;
+            /** Title */
+            title: string;
+            /** Unit Price */
+            unit_price: number | string;
+        };
+        /** CustomOrderLineOut */
+        CustomOrderLineOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Notes */
+            notes: string | null;
+            /** Quantity */
+            quantity: number;
+            /** Title */
+            title: string;
+            /** Total */
+            total: string;
+            /** Unit Price */
+            unit_price: string;
+        };
+        /** CustomOrderListItem */
+        CustomOrderListItem: {
+            /** Customer Name */
+            customer_name: string | null;
+            /** Delivery Date */
+            delivery_date: string | null;
+            /** Delivery Provider */
+            delivery_provider: string | null;
+            /** Delivery Time */
+            delivery_time: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kitchen Printed At */
+            kitchen_printed_at: string | null;
+            /** Order Number */
+            order_number: string;
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string;
+            /** Total */
+            total: string;
+        };
+        /** CustomOrderRecipeLineIn */
+        CustomOrderRecipeLineIn: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Quantity */
+            quantity: number | string;
+        };
+        /** CustomOrderRecipeLineOut */
+        CustomOrderRecipeLineOut: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Name */
+            name: string;
+            /** On Hand */
+            on_hand: string;
+            /** Quantity */
+            quantity: string;
+            /** Sku */
+            sku: string | null;
+            /** Unit */
+            unit: string | null;
+        };
+        /**
+         * CustomOrderRecipeUpdate
+         * @description Replaces the recipe. Refused once packed (the recipe has been consumed).
+         */
+        CustomOrderRecipeUpdate: {
+            /** Recipe */
+            recipe: components["schemas"]["CustomOrderRecipeLineIn"][];
+        };
+        /** CustomOrderResponse */
+        CustomOrderResponse: {
+            actions: components["schemas"]["CustomOrderActions"];
+            address: components["schemas"]["CustomOrderAddressOut"] | null;
+            /** Card Fee Mode */
+            card_fee_mode: string | null;
+            /** Charges */
+            charges: components["schemas"]["CustomOrderChargeOut"][];
+            /** Charges Amount */
+            charges_amount: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created Via */
+            created_via: string;
+            /** Customer Email */
+            customer_email: string | null;
+            /** Customer Name */
+            customer_name: string | null;
+            /** Customer Phone */
+            customer_phone: string | null;
+            /** Delivered At */
+            delivered_at: string | null;
+            delivery: components["schemas"]["CustomOrderDeliveryOut"] | null;
+            /** Delivery Date */
+            delivery_date: string | null;
+            /** Delivery Time */
+            delivery_time: string | null;
+            /** Enquiry Id */
+            enquiry_id: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kitchen Printed At */
+            kitchen_printed_at: string | null;
+            /** Lines */
+            lines: components["schemas"]["CustomOrderLineOut"][];
+            /** Notes */
+            notes: string | null;
+            /** Order Number */
+            order_number: string;
+            /** Payment Fee */
+            payment_fee: string | null;
+            /** Payment Type */
+            payment_type: string | null;
+            /** Recipe */
+            recipe: components["schemas"]["CustomOrderRecipeLineOut"][];
+            /** Status */
+            status: string;
+            /** Subtotal */
+            subtotal: string;
+            /** Total */
+            total: string;
+            /** Total Excl Vat */
+            total_excl_vat: string;
+            /** Vat Amount */
+            vat_amount: string;
+        };
+        /**
+         * CustomOrderUpdate
+         * @description Replaces the lines, date, payment and notes. Refused once delivered.
+         */
+        CustomOrderUpdate: {
+            /** Card Fee Mode */
+            card_fee_mode?: ("separate_line" | "included") | null;
+            /**
+             * Delivery Date
+             * Format: date
+             */
+            delivery_date: string;
+            /** Delivery Time */
+            delivery_time?: string | null;
+            /** Lines */
+            lines: components["schemas"]["CustomOrderLineIn"][];
+            /** Notes */
+            notes?: string | null;
+            /** Payment Type */
+            payment_type?: ("bank_transfer" | "card" | "cash") | null;
+        };
+        /**
+         * CustomOrdersStatus
+         * @description Whether the channel is configured, and for which branch.
+         */
+        CustomOrdersStatus: {
+            /** Branch Id */
+            branch_id: string | null;
+            /** Branch Name */
+            branch_name: string | null;
+            /** Enabled */
+            enabled: boolean;
         };
         /** CustomerBreakdown */
         CustomerBreakdown: {
@@ -14041,6 +14664,11 @@ export interface components {
         /** DevicePairResponse */
         DevicePairResponse: {
             branch: components["schemas"]["BranchResponse"];
+            /**
+             * Custom Orders Enabled
+             * @default false
+             */
+            custom_orders_enabled: boolean;
             device: components["schemas"]["DeviceResponse"];
             /** Device Token */
             device_token: string;
@@ -14136,6 +14764,11 @@ export interface components {
          */
         DeviceSessionResponse: {
             branch: components["schemas"]["BranchResponse"];
+            /**
+             * Custom Orders Enabled
+             * @default false
+             */
+            custom_orders_enabled: boolean;
             device: components["schemas"]["DeviceResponse"];
         };
         /** DeviceUpdate */
@@ -17813,6 +18446,19 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** PaginatedCustomOrders */
+        PaginatedCustomOrders: {
+            /** Items */
+            items: components["schemas"]["CustomOrderListItem"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
         /** PaginatedCustomerOrders */
         PaginatedCustomerOrders: {
             /** Items */
@@ -19542,6 +20188,11 @@ export interface components {
             lines: components["schemas"]["ProductionLineResponse"][];
             /** Notes */
             notes: string | null;
+            /**
+             * Origin
+             * @default admin
+             */
+            origin: string;
             /** Reference */
             reference: string;
             /**
@@ -19930,7 +20581,7 @@ export interface components {
              */
             reward_value: number | string;
             /** Sources */
-            sources?: ("cashier" | "online" | "aggregator")[];
+            sources?: ("cashier" | "online" | "aggregator" | "custom")[];
             /** To Date */
             to_date?: string | null;
             /**
@@ -20093,7 +20744,7 @@ export interface components {
             /** Reward Value */
             reward_value?: number | string | null;
             /** Sources */
-            sources?: ("cashier" | "online" | "aggregator")[] | null;
+            sources?: ("cashier" | "online" | "aggregator" | "custom")[] | null;
             /** To Date */
             to_date?: string | null;
             /** To Time */
@@ -24554,6 +25205,75 @@ export interface operations {
             };
         };
     };
+    list_custom_orders_api_v1_admin_custom_orders_get: {
+        parameters: {
+            query?: {
+                status_group?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                q?: string | null;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedCustomOrders"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_custom_order_api_v1_admin_custom_orders_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomOrderCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_enquiries_api_v1_admin_custom_orders_enquiries_get: {
         parameters: {
             query?: {
@@ -24573,6 +25293,403 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedCustomOrderEnquiries"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recipe_items_api_v1_admin_custom_orders_items_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomCakeItem"][];
+                };
+            };
+        };
+    };
+    channel_status_api_v1_admin_custom_orders_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrdersStatus"];
+                };
+            };
+        };
+    };
+    get_custom_order_api_v1_admin_custom_orders__order_number__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_custom_order_api_v1_admin_custom_orders__order_number__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomOrderUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_custom_order_api_v1_admin_custom_orders__order_number__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_custom_order_collected_api_v1_admin_custom_orders__order_number__collected_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_custom_order_contact_api_v1_admin_custom_orders__order_number__contact_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomOrderContactUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    choose_custom_order_delivery_api_v1_admin_custom_orders__order_number__delivery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomOrderDeliveryChoice"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    custom_order_delivery_quotes_api_v1_admin_custom_orders__order_number__delivery_quotes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderDeliveryQuotes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    view_custom_order_invoice_api_v1_admin_custom_orders__order_number__invoice_pdf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_custom_order_invoice_api_v1_admin_custom_orders__order_number__invoice_send_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pack_custom_order_api_v1_admin_custom_orders__order_number__pack_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_custom_order_recipe_api_v1_admin_custom_orders__order_number__recipe_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomOrderRecipeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderResponse"];
                 };
             };
             /** @description Validation Error */
@@ -35669,9 +36786,9 @@ export interface operations {
                 status?: components["schemas"]["OrderStatusEnum"] | null;
                 /** @description Order number, marketplace reference, email, customer name or phone, or a product name or SKU held on the order */
                 search?: string | null;
-                /** @description `online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all — they are one ledger. */
+                /** @description `online` for the storefront, `counter` for the till, `aggregator` for a marketplace order, `custom` for a custom order. Omit for all — they are one ledger. */
                 channel?: string | null;
-                /** @description Narrow to one carrier by its code — a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`), or `counter`. */
+                /** @description Narrow to one carrier by its code — a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider_bike`, `slider_car`, `third_party`), `counter`, `website_pickup` or `custom`. */
                 courier?: string | null;
                 /** @description Multi-select carrier codes; the OR of them (see `courier`). */
                 couriers?: string[] | null;
@@ -39623,7 +40740,7 @@ export interface operations {
                 date_from: string;
                 /** @description Inclusive shop day */
                 date_to: string;
-                /** @description P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem` */
+                /** @description P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `custom`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem` */
                 channels?: string[] | null;
                 branch_ids?: string[] | null;
                 legal_entity_ids?: string[] | null;

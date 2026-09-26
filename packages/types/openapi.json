@@ -11084,6 +11084,695 @@
         "title": "CreateSessionResponse",
         "type": "object"
       },
+      "CustomCakeItem": {
+        "description": "An item a custom order's recipe may use, with the kitchen's stock.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "on_hand": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "On Hand",
+            "type": "string"
+          },
+          "on_hand_in_production_unit": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "On Hand In Production Unit",
+            "type": "string"
+          },
+          "production_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Unit"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "id",
+          "sku",
+          "name",
+          "unit",
+          "on_hand",
+          "production_unit",
+          "on_hand_in_production_unit"
+        ],
+        "title": "CustomCakeItem",
+        "type": "object"
+      },
+      "CustomOrderActions": {
+        "description": "What may be done to the order now \u2014 decided by the API so the console\nand both POS apps offer the same buttons.",
+        "properties": {
+          "can_cancel": {
+            "title": "Can Cancel",
+            "type": "boolean"
+          },
+          "can_choose_delivery": {
+            "title": "Can Choose Delivery",
+            "type": "boolean"
+          },
+          "can_collect": {
+            "title": "Can Collect",
+            "type": "boolean"
+          },
+          "can_edit_contact": {
+            "title": "Can Edit Contact",
+            "type": "boolean"
+          },
+          "can_edit_lines": {
+            "title": "Can Edit Lines",
+            "type": "boolean"
+          },
+          "can_edit_recipe": {
+            "title": "Can Edit Recipe",
+            "type": "boolean"
+          },
+          "can_pack": {
+            "title": "Can Pack",
+            "type": "boolean"
+          },
+          "delivery_unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Unavailable Reason"
+          },
+          "invoice_unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Unavailable Reason"
+          }
+        },
+        "required": [
+          "can_edit_lines",
+          "can_edit_recipe",
+          "can_edit_contact",
+          "can_pack",
+          "can_collect",
+          "can_choose_delivery",
+          "can_cancel",
+          "delivery_unavailable_reason",
+          "invoice_unavailable_reason"
+        ],
+        "title": "CustomOrderActions",
+        "type": "object"
+      },
+      "CustomOrderAddressIn": {
+        "description": "All optional, in any combination; a pin needs both coordinates.",
+        "properties": {
+          "address_line_1": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address Line 1"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "unit_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Number"
+          }
+        },
+        "title": "CustomOrderAddressIn",
+        "type": "object"
+      },
+      "CustomOrderAddressOut": {
+        "properties": {
+          "address_line_1": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address Line 1"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "unit_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Number"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude",
+          "address_line_1",
+          "unit_number"
+        ],
+        "title": "CustomOrderAddressOut",
+        "type": "object"
+      },
+      "CustomOrderChargeOut": {
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "amount"
+        ],
+        "title": "CustomOrderChargeOut",
+        "type": "object"
+      },
+      "CustomOrderContactUpdate": {
+        "description": "Refused once a courier has been booked.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CustomOrderAddressIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "customer": {
+            "$ref": "#/components/schemas/CustomOrderCustomerIn"
+          }
+        },
+        "title": "CustomOrderContactUpdate",
+        "type": "object"
+      },
+      "CustomOrderCreate": {
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CustomOrderAddressIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "card_fee_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "separate_line",
+                  "included"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Fee Mode"
+          },
+          "client_request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Request Id"
+          },
+          "customer": {
+            "$ref": "#/components/schemas/CustomOrderCustomerIn"
+          },
+          "delivery_date": {
+            "format": "date",
+            "title": "Delivery Date",
+            "type": "string"
+          },
+          "delivery_time": {
+            "anyOf": [
+              {
+                "format": "time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Time"
+          },
+          "enquiry_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enquiry Id"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderLineIn"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "payment_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bank_transfer",
+                  "card",
+                  "cash"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Type"
+          },
+          "recipe": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderRecipeLineIn"
+            },
+            "maxItems": 50,
+            "title": "Recipe",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines",
+          "delivery_date"
+        ],
+        "title": "CustomOrderCreate",
+        "type": "object"
+      },
+      "CustomOrderCustomerIn": {
+        "description": "All optional, in any combination \u2014 a DM may come with only a name.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "title": "CustomOrderCustomerIn",
+        "type": "object"
+      },
+      "CustomOrderDeliveryChoice": {
+        "description": "How an admin sends a packed order.\n\n`slider_car` / `lalamove` book that courier (a Lalamove booking carries\nthe quotation the admin was shown); `third_party` records a courier we did\nnot book and marks the order delivered.",
+        "properties": {
+          "courier_fee": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier Fee"
+          },
+          "mode": {
+            "enum": [
+              "slider_car",
+              "lalamove",
+              "third_party"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "quotation_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quotation Id"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "CustomOrderDeliveryChoice",
+        "type": "object"
+      },
+      "CustomOrderDeliveryOut": {
+        "properties": {
+          "cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "courier_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier Status"
+          },
+          "driver_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Name"
+          },
+          "driver_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Phone"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "share_link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Link"
+          }
+        },
+        "required": [
+          "provider",
+          "courier_status",
+          "cost",
+          "share_link",
+          "driver_name",
+          "driver_phone",
+          "last_error"
+        ],
+        "title": "CustomOrderDeliveryOut",
+        "type": "object"
+      },
+      "CustomOrderDeliveryQuote": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "fare": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fare"
+          },
+          "provider": {
+            "enum": [
+              "slider_car",
+              "lalamove"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "quotation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quotation Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "provider",
+          "available",
+          "fare",
+          "reason",
+          "quotation_id",
+          "expires_at"
+        ],
+        "title": "CustomOrderDeliveryQuote",
+        "type": "object"
+      },
+      "CustomOrderDeliveryQuotes": {
+        "properties": {
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderDeliveryQuote"
+            },
+            "title": "Quotes",
+            "type": "array"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason"
+          }
+        },
+        "required": [
+          "quotes",
+          "unavailable_reason"
+        ],
+        "title": "CustomOrderDeliveryQuotes",
+        "type": "object"
+      },
       "CustomOrderEnquiryAdminResponse": {
         "description": "The whole lead, for the admin Enquiries list.",
         "properties": {
@@ -11252,6 +11941,687 @@
           "created_at"
         ],
         "title": "CustomOrderEnquiryResponse",
+        "type": "object"
+      },
+      "CustomOrderLineIn": {
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "quantity": {
+            "default": 1,
+            "maximum": 999.0,
+            "minimum": 1.0,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "required": [
+          "title",
+          "unit_price"
+        ],
+        "title": "CustomOrderLineIn",
+        "type": "object"
+      },
+      "CustomOrderLineOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total",
+            "type": "string"
+          },
+          "unit_price": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Price",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "quantity",
+          "unit_price",
+          "total",
+          "notes"
+        ],
+        "title": "CustomOrderLineOut",
+        "type": "object"
+      },
+      "CustomOrderListItem": {
+        "properties": {
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "delivery_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Date"
+          },
+          "delivery_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Provider"
+          },
+          "delivery_time": {
+            "anyOf": [
+              {
+                "format": "time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Time"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kitchen_printed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kitchen Printed At"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_number",
+          "status",
+          "delivery_date",
+          "delivery_time",
+          "customer_name",
+          "summary",
+          "total",
+          "kitchen_printed_at",
+          "delivery_provider"
+        ],
+        "title": "CustomOrderListItem",
+        "type": "object"
+      },
+      "CustomOrderRecipeLineIn": {
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000000.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          }
+        },
+        "required": [
+          "item_id",
+          "quantity"
+        ],
+        "title": "CustomOrderRecipeLineIn",
+        "type": "object"
+      },
+      "CustomOrderRecipeLineOut": {
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "on_hand": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "On Hand",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "item_id",
+          "sku",
+          "name",
+          "unit",
+          "quantity",
+          "on_hand"
+        ],
+        "title": "CustomOrderRecipeLineOut",
+        "type": "object"
+      },
+      "CustomOrderRecipeUpdate": {
+        "description": "Replaces the recipe. Refused once packed (the recipe has been consumed).",
+        "properties": {
+          "recipe": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderRecipeLineIn"
+            },
+            "maxItems": 50,
+            "title": "Recipe",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recipe"
+        ],
+        "title": "CustomOrderRecipeUpdate",
+        "type": "object"
+      },
+      "CustomOrderResponse": {
+        "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/CustomOrderActions"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CustomOrderAddressOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "card_fee_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Fee Mode"
+          },
+          "charges": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderChargeOut"
+            },
+            "title": "Charges",
+            "type": "array"
+          },
+          "charges_amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Charges Amount",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_via": {
+            "title": "Created Via",
+            "type": "string"
+          },
+          "customer_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Email"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "customer_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CustomOrderDeliveryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Date"
+          },
+          "delivery_time": {
+            "anyOf": [
+              {
+                "format": "time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Time"
+          },
+          "enquiry_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enquiry Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kitchen_printed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kitchen Printed At"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderLineOut"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "payment_fee": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Fee"
+          },
+          "payment_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Type"
+          },
+          "recipe": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderRecipeLineOut"
+            },
+            "title": "Recipe",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subtotal": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Subtotal",
+            "type": "string"
+          },
+          "total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total",
+            "type": "string"
+          },
+          "total_excl_vat": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Excl Vat",
+            "type": "string"
+          },
+          "vat_amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Vat Amount",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_number",
+          "status",
+          "created_via",
+          "created_at",
+          "delivery_date",
+          "delivery_time",
+          "delivered_at",
+          "kitchen_printed_at",
+          "customer_name",
+          "customer_email",
+          "customer_phone",
+          "address",
+          "payment_type",
+          "card_fee_mode",
+          "notes",
+          "enquiry_id",
+          "lines",
+          "charges",
+          "recipe",
+          "subtotal",
+          "charges_amount",
+          "vat_amount",
+          "total_excl_vat",
+          "total",
+          "payment_fee",
+          "delivery",
+          "actions"
+        ],
+        "title": "CustomOrderResponse",
+        "type": "object"
+      },
+      "CustomOrderUpdate": {
+        "description": "Replaces the lines, date, payment and notes. Refused once delivered.",
+        "properties": {
+          "card_fee_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "separate_line",
+                  "included"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Fee Mode"
+          },
+          "delivery_date": {
+            "format": "date",
+            "title": "Delivery Date",
+            "type": "string"
+          },
+          "delivery_time": {
+            "anyOf": [
+              {
+                "format": "time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Time"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderLineIn"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "payment_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bank_transfer",
+                  "card",
+                  "cash"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Type"
+          }
+        },
+        "required": [
+          "lines",
+          "delivery_date"
+        ],
+        "title": "CustomOrderUpdate",
+        "type": "object"
+      },
+      "CustomOrdersStatus": {
+        "description": "Whether the channel is configured, and for which branch.",
+        "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "branch_id",
+          "branch_name"
+        ],
+        "title": "CustomOrdersStatus",
         "type": "object"
       },
       "CustomerBreakdown": {
@@ -12762,6 +14132,11 @@
           "branch": {
             "$ref": "#/components/schemas/BranchResponse"
           },
+          "custom_orders_enabled": {
+            "default": false,
+            "title": "Custom Orders Enabled",
+            "type": "boolean"
+          },
           "device": {
             "$ref": "#/components/schemas/DeviceResponse"
           },
@@ -13042,6 +14417,11 @@
         "properties": {
           "branch": {
             "$ref": "#/components/schemas/BranchResponse"
+          },
+          "custom_orders_enabled": {
+            "default": false,
+            "title": "Custom Orders Enabled",
+            "type": "boolean"
           },
           "device": {
             "$ref": "#/components/schemas/DeviceResponse"
@@ -24023,6 +25403,42 @@
         "title": "PaginatedCustomOrderEnquiries",
         "type": "object"
       },
+      "PaginatedCustomOrders": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages"
+        ],
+        "title": "PaginatedCustomOrders",
+        "type": "object"
+      },
       "PaginatedCustomerOrders": {
         "properties": {
           "items": {
@@ -29268,6 +30684,11 @@
             ],
             "title": "Notes"
           },
+          "origin": {
+            "default": "admin",
+            "title": "Origin",
+            "type": "string"
+          },
           "reference": {
             "title": "Reference",
             "type": "string"
@@ -30391,7 +31812,8 @@
               "enum": [
                 "cashier",
                 "online",
-                "aggregator"
+                "aggregator",
+                "custom"
               ],
               "type": "string"
             },
@@ -31020,7 +32442,8 @@
                   "enum": [
                     "cashier",
                     "online",
-                    "aggregator"
+                    "aggregator",
+                    "custom"
                   ],
                   "type": "string"
                 },
@@ -43286,6 +44709,180 @@
         ]
       }
     },
+    "/api/v1/admin/custom-orders": {
+      "get": {
+        "operationId": "list_custom_orders_api_v1_admin_custom_orders_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status_group",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(pending|packed|on_the_way|delivered|cancelled)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status Group"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedCustomOrders"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Custom Orders",
+        "tags": [
+          "Custom Orders"
+        ]
+      },
+      "post": {
+        "description": "Take a custom order. It is confirmed at once and its kitchen docket is\nsent to the custom-orders branch's registers.",
+        "operationId": "create_custom_order_api_v1_admin_custom_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomOrderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Custom Order",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
     "/api/v1/admin/custom-orders/enquiries": {
       "get": {
         "description": "The custom-order enquiries sent from the storefront, newest first.\n\nRead-only: these are leads someone answers by phone or email. Same\npermission as custom orders, since the same people handle both and an\nenquiry is converted into one.",
@@ -43343,6 +44940,621 @@
           }
         ],
         "summary": "List Enquiries",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/items": {
+      "get": {
+        "description": "What a recipe may use, with the kitchen's stock of each.",
+        "operationId": "recipe_items_api_v1_admin_custom_orders_items_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CustomCakeItem"
+                  },
+                  "title": "Response Recipe Items Api V1 Admin Custom Orders Items Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Recipe Items",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/status": {
+      "get": {
+        "description": "Whether the channel is set up, so the console can say what is missing.",
+        "operationId": "channel_status_api_v1_admin_custom_orders_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrdersStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Channel Status",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}": {
+      "get": {
+        "operationId": "get_custom_order_api_v1_admin_custom_orders__order_number__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Custom Order",
+        "tags": [
+          "Custom Orders"
+        ]
+      },
+      "put": {
+        "operationId": "update_custom_order_api_v1_admin_custom_orders__order_number__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomOrderUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Custom Order",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/cancel": {
+      "post": {
+        "operationId": "cancel_custom_order_api_v1_admin_custom_orders__order_number__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Cancel Custom Order",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/collected": {
+      "post": {
+        "operationId": "mark_custom_order_collected_api_v1_admin_custom_orders__order_number__collected_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Mark Custom Order Collected",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/contact": {
+      "put": {
+        "operationId": "update_custom_order_contact_api_v1_admin_custom_orders__order_number__contact_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomOrderContactUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Custom Order Contact",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/delivery": {
+      "post": {
+        "description": "Book Slider (car) or Lalamove, or record a third-party courier and its\nfee (which finishes the order as delivered).",
+        "operationId": "choose_custom_order_delivery_api_v1_admin_custom_orders__order_number__delivery_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomOrderDeliveryChoice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Choose Custom Order Delivery",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/delivery-quotes": {
+      "get": {
+        "description": "Live Slider (car) and Lalamove fares from the custom-orders branch to the\ncustomer's pin, each with its fare or the reason it cannot go.",
+        "operationId": "custom_order_delivery_quotes_api_v1_admin_custom_orders__order_number__delivery_quotes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderDeliveryQuotes"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Custom Order Delivery Quotes",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/invoice.pdf": {
+      "get": {
+        "operationId": "view_custom_order_invoice_api_v1_admin_custom_orders__order_number__invoice_pdf_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "View Custom Order Invoice",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/invoice/send": {
+      "post": {
+        "description": "Email the invoice PDF to the customer, copying the owners.",
+        "operationId": "send_custom_order_invoice_api_v1_admin_custom_orders__order_number__invoice_send_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Send Custom Order Invoice",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/pack": {
+      "post": {
+        "description": "Boxed and ready: the recipe is consumed from the kitchen's stock.",
+        "operationId": "pack_custom_order_api_v1_admin_custom_orders__order_number__pack_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Pack Custom Order",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/{order_number}/recipe": {
+      "put": {
+        "operationId": "update_custom_order_recipe_api_v1_admin_custom_orders__order_number__recipe_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomOrderRecipeUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Custom Order Recipe",
         "tags": [
           "Custom Orders"
         ]
@@ -63095,26 +65307,26 @@
             }
           },
           {
-            "description": "`online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all \u2014 they are one ledger.",
+            "description": "`online` for the storefront, `counter` for the till, `aggregator` for a marketplace order, `custom` for a custom order. Omit for all \u2014 they are one ledger.",
             "in": "query",
             "name": "channel",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "pattern": "^(online|counter|aggregator)$",
+                  "pattern": "^(online|counter|aggregator|custom)$",
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "`online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all \u2014 they are one ledger.",
+              "description": "`online` for the storefront, `counter` for the till, `aggregator` for a marketplace order, `custom` for a custom order. Omit for all \u2014 they are one ledger.",
               "title": "Channel"
             }
           },
           {
-            "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`), or `counter`.",
+            "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider_bike`, `slider_car`, `third_party`), `counter`, `website_pickup` or `custom`.",
             "in": "query",
             "name": "courier",
             "required": false,
@@ -63127,7 +65339,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`), or `counter`.",
+              "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider_bike`, `slider_car`, `third_party`), `counter`, `website_pickup` or `custom`.",
               "title": "Courier"
             }
           },
@@ -70678,7 +72890,7 @@
             }
           },
           {
-            "description": "P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`",
+            "description": "P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `custom`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`",
             "in": "query",
             "name": "channels",
             "required": false,
@@ -70694,7 +72906,7 @@
                   "type": "null"
                 }
               ],
-              "description": "P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`",
+              "description": "P&L channel codes (multi): `counter`, `website_delivery`, `website_pickup`, `custom`, `talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`",
               "title": "Channels"
             }
           },

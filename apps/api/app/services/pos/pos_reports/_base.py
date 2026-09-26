@@ -24,6 +24,15 @@ from app.services.couriers import courier_catalog
 ZERO = Decimal("0.00")
 
 
+#: The orders the POS reports and the daily owner email read. A counter, website
+#: or aggregator order is read once it has reached the register (`is_pos`). A
+#: custom order never reaches it — `is_pos` would put the cake on the Checks
+#: board, in the till's shift totals and in the register's void and return
+#: flows — so it is named by its `source` instead. `_COMPLETED_SALE` decides
+#: which of these count as sales.
+_REPORTED_ORDER = or_(Order.is_pos.is_(True), Order.source == "custom")
+
+
 def _scope(
     stmt: Select[Any],
     *,
@@ -32,7 +41,7 @@ def _scope(
     date_to: str | None,
 ) -> Select[Any]:
     """Apply the standard branch + business-date window to an order query."""
-    stmt = stmt.where(Order.is_pos.is_(True))
+    stmt = stmt.where(_REPORTED_ORDER)
     if branch_id:
         stmt = stmt.where(Order.branch_id == branch_id)
     if date_from:
@@ -84,10 +93,18 @@ _AGGREGATOR_SALE = and_(
     ),
 )
 
+#: A custom order is sold when it is handed over. It never enters the register,
+#: so it has no `pos_status`, and `out_for_delivery` is not enough: our own
+#: courier can still fail it. On `delivered` the lifecycle stamps its
+#: `business_date` with the day of the hand-over, which is the day it reports on.
+_CUSTOM_SALE = and_(
+    Order.source == "custom", Order.status == OrderStatusEnum.DELIVERED.value
+)
+
 #: Cancellations and refunds are excluded by construction: a cancelled order is
 #: `cancelled` (matches no arm), and a voided counter check is `pos_status =
 #: void`, not `closed`.
-_COMPLETED_SALE = or_(_COUNTER_SALE, _WEBSITE_SALE, _AGGREGATOR_SALE)
+_COMPLETED_SALE = or_(_COUNTER_SALE, _WEBSITE_SALE, _AGGREGATOR_SALE, _CUSTOM_SALE)
 
 
 #: When an order carries no cashier or terminal of its own — every aggregator and
@@ -116,8 +133,8 @@ def _covering_till():
 
 
 def _channel_logo(key: Any) -> str | None:
-    """The badge for a channel row, or None for the shop's own two channels."""
-    if key is None or str(key) in {"online", "website_pickup", "cashier"}:
+    """The badge for a channel row, or None for the shop's own channels."""
+    if key is None or str(key) in {"online", "website_pickup", "cashier", "custom"}:
         return None
     code = courier_catalog.code_for_channel(str(key))
     return courier_catalog.logo_url_for(code) if code else None
@@ -139,7 +156,8 @@ def _channel_logo(key: Any) -> str | None:
 #: came from.
 #: The website (`online`) is split by fulfilment: a store-pickup order is its
 #: own channel ("Store Pickup"), the way the shop tracks it, rather than folded
-#: into the website's delivery sales. `_channel_labels` maps the keys out.
+#: into the website's delivery sales. A custom order is its own channel through
+#: `else_`, whoever carried it. `_channel_labels` maps the keys out.
 _CHANNEL_COLUMN = case(
     (Order.source == "aggregator", Order.aggregator_channel),
     (
@@ -235,10 +253,10 @@ def _channel_labels(rows: Sequence[Any]) -> dict[str, str]:
     """
     Channel keys in the words the shop uses out loud.
 
-    `online` and `cashier` are ours and are simply renamed. Everything else is a
-    marketplace display name straight from GrubOps — "Keeta 2.0", "Noon" — and
-    is resolved through `courier_catalog`, the one place that knows those names
-    map to `keeta` and `noon_food`. An unrecognised marketplace keeps its own
+    `online`, `cashier` and `custom` are ours and are simply renamed. Everything
+    else is a marketplace display name straight from GrubOps — "Keeta 2.0",
+    "Noon" — and is resolved through `courier_catalog`, the one place that knows
+    those names map to `keeta` and `noon_food`. An unrecognised marketplace keeps its own
     name rather than becoming "Unknown": a new aggregator nobody has mapped yet
     is still a real row of real money.
     """
@@ -254,6 +272,8 @@ def _channel_labels(rows: Sequence[Any]) -> dict[str, str]:
             out[key] = "Store Pickup"
         elif key == "cashier":
             out[key] = "Counter"
+        elif key == "custom":
+            out[key] = "Custom orders"
         else:
             code = courier_catalog.code_for_channel(key)
             out[key] = courier_catalog.COURIER_NAMES.get(code or "", key)

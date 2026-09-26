@@ -44,6 +44,7 @@ from app.schemas.pos import (
 from app.schemas.pos_counter import DeviceHeartbeatRequest
 from app.services import audit_service, crud_service, push_service
 from app.services.inventory.access_service import assert_branch_access
+from app.services.orders import custom_order_service
 
 logger = logging.getLogger("mm.pos.devices")
 
@@ -536,6 +537,7 @@ async def pair_device(
         device=DeviceResponse.model_validate(device),
         device_token=token,
         branch=BranchResponse.model_validate(branch),
+        custom_orders_enabled=await custom_order_service.branch_id(db) == branch.id,
     )
 
 
@@ -576,6 +578,7 @@ async def device_heartbeat(
     return DeviceSessionResponse(
         device=DeviceResponse.model_validate(device),
         branch=BranchResponse.model_validate(branch),
+        custom_orders_enabled=await custom_order_service.branch_id(db) == branch.id,
     )
 
 

@@ -14,6 +14,9 @@ A "courier" here spans all three carrier shapes the shop uses:
   `careem`), identified by the order's `aggregator_channel` display name; and
 * a **dispatched website courier** (`lalamove`, `noon_send`, `slider_bike`,
   `slider_car`, `third_party`), identified by the order's delivery record.
+
+Store pickup (``website_pickup``) and custom orders (``custom``) are columns of
+their own beside the counter: channels the shop tracks apart, not carriers.
 """
 
 from __future__ import annotations
@@ -37,11 +40,20 @@ COUNTER_CODE = "counter"
 #: than folded into the website's dispatch couriers or counted under none.
 WEBSITE_PICKUP_CODE = "website_pickup"
 
-#: Every courier code the dashboard and the list offer, counter and store-pickup
-#: first (the two synthetic, carrier-less columns).
+#: The synthetic code for a custom order (`source = custom`). Every custom order
+#: is this column, including one a Slider or Lalamove driver carried: the shop
+#: reads custom orders as one line of business, and the courier it chose for
+#: one is a cost of that order rather than its channel.
+CUSTOM_CODE = "custom"
+
+#: The synthetic codes — channels of the shop's own, with no carrier logo and
+#: no courier invoice to wait for.
+SHOP_CHANNEL_CODES: tuple[str, ...] = (COUNTER_CODE, WEBSITE_PICKUP_CODE, CUSTOM_CODE)
+
+#: Every courier code the dashboard and the list offer, the synthetic columns
+#: first.
 ALL_COURIER_CODES: list[str] = [
-    COUNTER_CODE,
-    WEBSITE_PICKUP_CODE,
+    *SHOP_CHANNEL_CODES,
     *courier_catalog.COURIER_NAMES.keys(),
 ]
 
@@ -70,6 +82,7 @@ AGGREGATOR_CHANNEL_PREFIX: dict[str, str] = {
 #:
 #: A website order is NOT included at `out_for_delivery`: our own courier can still
 #: fail one, and `undelivered` is a real outcome there. Nothing about that changed.
+#: A custom order is the same: it counts at `delivered`, through the first arm.
 def fulfilled_clause():
     """SQLAlchemy predicate for an order whose sale stands."""
     from app.models.order import Order, OrderStatusEnum
@@ -121,16 +134,23 @@ def courier_predicate(code: str):
             Order.source == OrderSourceEnum.ONLINE.value,
             Order.delivery_method == DeliveryMethodEnum.PICKUP,
         )
+    if code == CUSTOM_CODE:
+        return Order.source == OrderSourceEnum.CUSTOM.value
     if code in courier_catalog.AGGREGATOR_CODES:
         prefix = AGGREGATOR_CHANNEL_PREFIX.get(code, code)
         return and_(
             Order.source == OrderSourceEnum.AGGREGATOR.value,
             Order.aggregator_channel.ilike(f"{prefix}%"),
         )
-    # A dispatched website courier, matched on the order's delivery record.
-    return exists().where(
-        OrderDelivery.order_id == Order.id,
-        OrderDelivery.provider == code,
+    # A dispatched website courier, matched on the order's delivery record. A
+    # custom order it carried is left out: `courier_code_for` counts that order
+    # under `custom`, and a scorecard click must land on the rows it counted.
+    return and_(
+        Order.source != OrderSourceEnum.CUSTOM.value,
+        exists().where(
+            OrderDelivery.order_id == Order.id,
+            OrderDelivery.provider == code,
+        ),
     )
 
 
@@ -196,11 +216,14 @@ def courier_code_for(
 
     The inverse of `courier_predicate`, for grouping a result set in Python (the
     dashboard's per-courier breakdown). A store-pickup order (online + pickup)
-    resolves to `website_pickup`; any order with no carrier, no register and no
-    pickup returns None and is simply not counted under any courier.
+    resolves to `website_pickup` and a custom order to `custom`, whoever carried
+    it; any other order with no carrier and no register returns None and is
+    simply not counted under any courier.
     """
     if source == OrderSourceEnum.CASHIER.value:
         return COUNTER_CODE
+    if source == OrderSourceEnum.CUSTOM.value:
+        return CUSTOM_CODE
     if source == OrderSourceEnum.AGGREGATOR.value:
         return courier_catalog.code_for_channel(aggregator_channel)
     if (
@@ -219,4 +242,6 @@ def courier_label(code: str) -> str:
         return "Counter"
     if code == WEBSITE_PICKUP_CODE:
         return "Store Pickup"
+    if code == CUSTOM_CODE:
+        return "Custom orders"
     return courier_catalog.COURIER_NAMES.get(code, code.replace("_", " ").title())

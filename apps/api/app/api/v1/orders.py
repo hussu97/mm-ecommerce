@@ -73,7 +73,7 @@ from app.services.delivery import (
     fulfilment_reassignment,
     fulfilment_service,
 )
-from app.services.orders import order_economics, order_pnl, order_service
+from app.services.orders import channels, order_economics, order_pnl, order_service
 from app.services.payments import payment_service
 
 router = APIRouter()
@@ -441,17 +441,17 @@ async def list_all_orders(
     ),
     channel: str | None = Query(
         None,
-        pattern="^(online|counter|aggregator)$",
+        pattern="^(online|counter|aggregator|custom)$",
         description="`online` for the storefront, `counter` for the till, "
-        "`aggregator` for a marketplace order. Omit for all — they are one "
-        "ledger.",
+        "`aggregator` for a marketplace order, `custom` for a custom order. Omit "
+        "for all — they are one ledger.",
     ),
     courier: str | None = Query(
         None,
         description="Narrow to one carrier by its code — a marketplace channel "
         "(`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch "
-        "provider (`lalamove`, `noon_send`, `slider`, `third_party`), or "
-        "`counter`.",
+        "provider (`lalamove`, `noon_send`, `slider_bike`, `slider_car`, "
+        "`third_party`), `counter`, `website_pickup` or `custom`.",
     ),
     couriers: list[str] | None = Query(
         None, description="Multi-select carrier codes; the OR of them (see `courier`)."
@@ -548,6 +548,22 @@ def _assert_still_going_somewhere(order: Order, verb: str) -> None:
         raise ConflictError(
             f"An order that has been refunded cannot be {verb} — "
             f"{order.refunded_amount} has already gone back to the customer."
+        )
+
+
+def _refuse_custom_order(order: Order) -> None:
+    """
+    Keep the generic courier actions off a custom order.
+
+    `courier_service.dispatch` books whichever courier the zone prefers and
+    falls back to another when that one fails, and the reassign path reads the
+    same zone policy. A custom order's courier is the one an admin chose on its
+    custom-order screen, booked there with no fallback, so neither path may
+    pick one for it.
+    """
+    if channels.is_custom(order.source):
+        raise BadRequestError(
+            "A custom order's delivery is chosen on its custom-order screen, not here."
         )
 
 
@@ -988,6 +1004,7 @@ async def dispatch_order_delivery(
     order = result.scalars().first()
     if order is None:
         raise NotFoundError(f"Order '{order_number}' not found")
+    _refuse_custom_order(order)
     _assert_still_going_somewhere(order, "dispatched")
 
     delivery = await courier_service.dispatch(db, order)
@@ -1224,6 +1241,7 @@ async def order_fulfilment_options(
     the answer to.
     """
     order = await _load_order(db, order_number)
+    _refuse_custom_order(order)
     delivery = await _load_delivery(db, order_number)
     return _options_response(
         await fulfilment_reassignment.options_for(db, order, delivery)
@@ -1253,6 +1271,7 @@ async def quote_order_fulfilment(
     cannot go stale.
     """
     order = await _load_order(db, order_number)
+    _refuse_custom_order(order)
     quote, error = await fulfilment_reassignment.quote(db, order, target=data.provider)
     if quote is None:
         # 502 rather than 500: this is a courier declining or unreachable, and
@@ -1294,6 +1313,7 @@ async def reassign_order_fulfilment(
     re-book at a figure nobody agreed to.
     """
     order = await _load_order(db, order_number)
+    _refuse_custom_order(order)
     before = (await _load_delivery(db, order_number)).provider
 
     delivery = await fulfilment_reassignment.move(
@@ -1355,6 +1375,7 @@ async def abandon_order_booking(
     works, and a move to a different courier is now allowed.
     """
     order = await _load_order(db, order_number)
+    _refuse_custom_order(order)
     delivery = await _load_delivery(db, order_number)
 
     exposure = await fulfilment_reassignment.exposure_of(db, delivery)
@@ -1411,6 +1432,7 @@ async def quote_lalamove_for_order(
     something a stale client should discover as a 404.
     """
     order = await _load_order(db, order_number)
+    _refuse_custom_order(order)
     delivery = await _load_delivery(db, order_number)
     _assert_assignable(order, delivery)
 

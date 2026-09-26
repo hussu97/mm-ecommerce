@@ -70,7 +70,7 @@ async def engine():
 
 @pytest.fixture
 async def world(engine):
-    """A branch, two entities, one costed item and six orders (A–F)."""
+    """A branch, two entities, one costed item and eight orders (A–H)."""
     Session = async_sessionmaker(engine, expire_on_commit=False)
     tag = uuid.uuid4().hex[:8]
     async with Session() as db:
@@ -212,6 +212,28 @@ async def world(engine):
                 total=D("70.00"),
                 aggregator_fee=D("22.05"),
             ),
+            # G — custom order handed to a third-party driver: 200 charged, VAT
+            # 9.52, the driver's 21.00 fee on its delivery row. No stock drawn.
+            "G": order(
+                "G",
+                source="custom",
+                delivered_at=AT,
+                closed_at=AT,
+                subtotal=D("200.00"),
+                total=D("200.00"),
+                vat_amount=D("9.52"),
+                total_excl_vat=D("190.48"),
+            ),
+            # H — custom order boxed, not handed over: not a sale yet.
+            "H": order(
+                "H",
+                source="custom",
+                status=OrderStatusEnum.PACKED,
+                subtotal=D("300.00"),
+                total=D("300.00"),
+                vat_amount=D("14.29"),
+                total_excl_vat=D("285.71"),
+            ),
         }
         db.add_all(orders.values())
         await db.flush()
@@ -221,6 +243,14 @@ async def world(engine):
                 provider="lalamove",
                 zone_name="Marina",
                 cost_total=D("10.50"),
+            )
+        )
+        db.add(
+            OrderDelivery(
+                order_id=orders["G"].id,
+                provider="third_party",
+                zone_name="Sharjah",
+                cost_total=D("21.00"),
             )
         )
         for key, channel, net, statement in (
@@ -453,6 +483,22 @@ async def test_an_uncharged_cancellation_is_not_in_the_pnl(engine, world):
     assert await _pnl(engine, world["orders"]["E"]) is None
 
 
+async def test_a_delivered_custom_order_is_its_own_channel(engine, world):
+    p = await _pnl(engine, world["orders"]["G"])
+    assert p.channel == "custom" and p.is_sale
+    assert p.gmv == D("200.00")
+    assert p.output_vat == D("9.52")
+    assert p.delivery_cost == D("21.00")  # the third party's fee
+    assert p.fees_vat == D("1.00")  # 21.00 × 5/105
+    assert p.pc3 == D("170.48")  # 190.48 − 21.00 + 1.00
+    # Its delivery cost is known once it is delivered.
+    assert not p.fees_pending
+
+
+async def test_a_packed_custom_order_is_not_in_the_pnl(engine, world):
+    assert await _pnl(engine, world["orders"]["H"]) is None
+
+
 async def test_the_report_is_the_sum_of_its_orders(engine, world):
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
@@ -461,17 +507,23 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
         )
     assert not report.period_charges_included  # a branch slice drops them
     by_channel = dict(report.channels)
-    assert list(by_channel) == ["counter", "website_delivery", "talabat", "noon_food"]
+    assert list(by_channel) == [
+        "counter",
+        "website_delivery",
+        "custom",
+        "talabat",
+        "noon_food",
+    ]
     total = report.total
-    assert total.orders == 5
+    assert total.orders == 6
     assert total.charged_cancellations == 2
     assert total.orders_with_cogs == 1
-    assert total.gmv == D("197.00")  # 105 + 42 + 50
+    assert total.gmv == D("397.00")  # 105 + 42 + 50 + 200
     assert total.delivery_fees == D("21.00")
     assert total.cogs == D("6.71")
     assert total.cogs_packaging == D("1.00")
-    # PC3 = 69.29 + 23.20 + 43.50 − 11.60 − 21.00
-    assert total.pc3 == D("103.39")
+    # PC3 = 69.29 + 23.20 + 43.50 + 170.48 − 11.60 − 21.00
+    assert total.pc3 == D("273.87")
     assert by_channel["talabat"].pc3 == D("2.20")  # 23.20 − 21.00
 
 

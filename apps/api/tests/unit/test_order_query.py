@@ -13,15 +13,17 @@ from app.services.orders import order_query
 def test_all_codes_lead_with_counter():
     codes = order_query.ALL_COURIER_CODES
     assert codes[0] == "counter"
-    # Store Pickup is the second synthetic, carrier-less column, right after the
-    # register.
+    # Store Pickup and custom orders are the other synthetic, carrier-less
+    # columns, right after the register.
     assert codes[1] == "website_pickup"
+    assert codes[2] == "custom"
     # The dispatch couriers — including Slider's two vehicle tiers (the legacy
-    # bare `slider` was retired) — the five marketplaces, counter, and store
-    # pickup.
+    # bare `slider` was retired) — the five marketplaces, counter, store pickup
+    # and custom orders.
     assert set(codes) == {
         "counter",
         "website_pickup",
+        "custom",
         "lalamove",
         "noon_send",
         "slider_bike",

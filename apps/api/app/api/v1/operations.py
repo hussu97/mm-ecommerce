@@ -40,6 +40,7 @@ from app.models import (
     ProductionLine,
     ProductionLineStatusEnum,
     ProductionOrder,
+    ProductionOrderOriginEnum,
     ProductionOrderStatusEnum,
     Section,
     TableStatusEnum,
@@ -54,6 +55,7 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.user import User
+from app.schemas.custom_order import CustomCakeProductionCreate
 from app.schemas.inventory import (
     TransferTemplateItemInput,
     TransferTemplateItemResponse,
@@ -1442,6 +1444,49 @@ async def pos_completed_production(
         )
     orders = (await db.execute(stmt)).scalars().unique().all()
     return [await _serialise_production_order(db, o) for o in orders]
+
+
+@pos_production_router.post(
+    "/production/custom-cake",
+    response_model=ProductionOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def pos_create_custom_cake_production(
+    data: CustomCakeProductionCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.production.manage")),
+):
+    """Raise production of custom-cake bases (ganache, sponges) from the register.
+
+    The one production a register may raise itself, and only for items in the
+    custom orders' inventory category at the custom-orders branch. From here it
+    is ordinary production: it appears in "To produce", is produced line by line
+    into the ledger, and is stamped printed because the register that raised it
+    prints it on the spot.
+    """
+    from app.services.orders import custom_order_service
+
+    cfg = await custom_order_service.config(db)
+    await access_service.assert_branch_access(db, user, cfg.branch.id)
+    requested = {line.item_id for line in data.items}
+    allowed = {
+        item.id
+        for item, _ in await custom_order_service.custom_cake_items(db, only=requested)
+    }
+    if requested - allowed:
+        raise BadRequestError(
+            "A register may only raise production of Customized Cake Raw Materials"
+        )
+    order = await transfer_service.create_production_order(
+        db,
+        source_branch=cfg.branch,
+        user=user,
+        production_items=data.items,
+        notes=data.notes,
+        client_request_id=data.client_request_id,
+        origin=ProductionOrderOriginEnum.POS.value,
+    )
+    return await _serialise_production_order(db, order)
 
 
 @pos_production_router.post(

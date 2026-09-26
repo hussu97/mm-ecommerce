@@ -118,6 +118,8 @@ class ProductionOrderResponse(ORMModel):
     business_date: str
     notes: str | None
     auto_printed_at: datetime | None = None
+    #: `admin`, or `pos` for custom-cake bases a register raised.
+    origin: str = "admin"
     created_at: datetime
     lines: list[ProductionLineResponse] = []
 

@@ -43,6 +43,7 @@ __all__ = [
     "is_enabled",
     "notify_order_placed",
     "notify_rider_assigned",
+    "notify_custom_order_created",
     "notify_transfer_created",
     "register_token",
     "tokens_for_branch",
@@ -205,6 +206,40 @@ async def notify_transfer_created(
         destination_branch_id,
         payload=payload,
         collapse_id=f"transfer:{reference}",
+    )
+
+
+async def notify_custom_order_created(db: AsyncSession, order: Order) -> int:
+    """Wake the custom-orders branch's registers to print a new order's docket.
+
+    Sent for an order taken in the console (a register that takes one prints it
+    itself). A background wake (`content-available`) so a sleeping iPad claims
+    and prints without anybody touching it, with a quiet alert beside it — not
+    the order alarm: a custom order is made days ahead, nothing is waiting at
+    the counter. Every register is woken; the claim (`claim-print`) decides the
+    one that prints.
+    """
+    if not is_enabled():
+        return 0
+    payload = {
+        "aps": {
+            "alert": {
+                "title": "New custom order",
+                "body": f"{order.order_number}: docket to print",
+            },
+            "sound": "default",
+            "interruption-level": "active",
+            "content-available": 1,
+        },
+        "event": "custom_order_created",
+        "order_id": str(order.id),
+        "reference": order.order_number,
+    }
+    return await _send_to_branch(
+        db,
+        order.branch_id,
+        payload=payload,
+        collapse_id=f"custom-order:{order.order_number}",
     )
 
 

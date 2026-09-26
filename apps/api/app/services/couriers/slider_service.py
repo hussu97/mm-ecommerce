@@ -67,7 +67,7 @@ from app.services.couriers.lalamove_service import (
     resolve_pickup,
 )
 from app.services.delivery import address_format, driver_assignment, driver_routing, geo
-from app.services.orders import order_lifecycle
+from app.services.orders import channels, order_lifecycle
 from app.services.providers.slider_provider import SliderError, aed, provider
 
 logger = logging.getLogger(__name__)
@@ -502,7 +502,7 @@ async def may_serve(db: AsyncSession, order: Order) -> tuple[bool, str | None]:
 
     The money ceilings are commercial terms rather than anything the API
     reports, so they live here as hard refusals: cash on delivery up to AED 350,
-    card up to AED 500.
+    card up to AED 500 — except on a custom order, which carries no money.
     """
     address = order.shipping_address_snapshot or {}
     try:
@@ -514,6 +514,15 @@ async def may_serve(db: AsyncSession, order: Order) -> tuple[bool, str | None]:
     pickup = await resolve_pickup(db, order.branch_id)
     if pickup is None:
         return False, "No pickup branch is configured"
+
+    # No ceiling for a custom order, by the owner's decision (2026-09): it is
+    # paid off the system before it leaves — card, bank transfer or cash at the
+    # shop, never `cod` — so the rider collects nothing and `dispatch_order`
+    # sends `cod_amount=0`. Both ceilings are about money in the rider's hands
+    # or a parcel's declared value on a card-on-delivery run; a bespoke cake
+    # routinely costs more than AED 500 and neither applies.
+    if channels.is_custom(order.source):
+        return True, None
 
     # The cash ceiling is measured against what the rider will actually be
     # handed, not against the order's total. Those are the same number on an

@@ -12,6 +12,8 @@
   details, CC list); the owners are copied on Fatema Cake Sweets' invoices.
 - ``orders.custom.manage`` reaches every role that already produces, so the
   Sharjah registers can take and pack custom orders.
+- The "Card payment fee" charge a custom order bills a card fee as: inactive
+  (so no till offers it), taxed like FG0119, found by its reference.
 
 Every content write is guarded to the value it replaces (canon rule 7).
 Literal SQL throughout: asyncpg types bound parameters strictly.
@@ -36,6 +38,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 _CATEGORY_REFERENCE = "customized-cake-raw-materials"
+_CARD_FEE_CHARGE_REFERENCE = "custom-order-card-fee"
 
 
 def upgrade() -> None:
@@ -135,6 +138,22 @@ def upgrade() -> None:
         """
     )
 
+    # ── The card-fee charge ─────────────────────────────────────────────────
+    op.execute(
+        f"""
+        INSERT INTO charges
+            (id, name, reference, type, value, is_auto_applied, order_types,
+             tax_group_id, is_active, translations, created_at, updated_at)
+        SELECT gen_random_uuid(), 'Card payment fee', '{_CARD_FEE_CHARGE_REFERENCE}',
+               'fixed', 0, false, '{{}}'::varchar[],
+               (SELECT tax_group_id FROM products WHERE sku = 'FG0119' LIMIT 1),
+               false, '{{}}'::jsonb, now(), now()
+        WHERE NOT EXISTS (
+            SELECT 1 FROM charges WHERE reference = '{_CARD_FEE_CHARGE_REFERENCE}'
+        )
+        """
+    )
+
     # ── Permission: the tills that produce may take custom orders ───────────
     op.execute(
         """
@@ -163,6 +182,13 @@ def downgrade() -> None:
     op.execute(
         "UPDATE products SET consumes_stock = true "
         "WHERE sku = 'FG0119' AND consumes_stock = false"
+    )
+    op.execute(
+        f"""
+        DELETE FROM charges ch
+        WHERE ch.reference = '{_CARD_FEE_CHARGE_REFERENCE}'
+          AND NOT EXISTS (SELECT 1 FROM order_charges oc WHERE oc.charge_id = ch.id)
+        """
     )
     op.drop_column("business_settings", "custom_orders_inventory_category_id")
     op.drop_column("business_settings", "custom_orders_product_id")

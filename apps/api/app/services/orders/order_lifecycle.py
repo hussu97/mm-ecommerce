@@ -277,6 +277,17 @@ ONLINE_CANCELLABLE_FROM: frozenset[OrderStatusEnum] = frozenset(
     {OrderStatusEnum.PACKED}
 )
 
+#: Source states a *custom* order may be cancelled from, beyond the map. A
+#: packed custom cake is made and boxed; the customer can still call it off
+#: before it leaves (and after a failed hand-over, which the map already
+#: allows). What packing consumed stays consumed — the cake was made — and any
+#: courier we booked is called off by the cancellation's consequences. Kept out
+#: of `VALID_TRANSITIONS` for the same reason as the hatches above; reached only
+#: through `extra_from`, from the custom-order screens and the admin doorway.
+CUSTOM_CANCELLABLE_FROM: frozenset[OrderStatusEnum] = frozenset(
+    {OrderStatusEnum.PACKED}
+)
+
 #: The statuses a cancellation is "pre-packing" from — the goods have been
 #: accepted (so consumption is posted) but not yet boxed. Cancelling from here
 #: reverses the consumption in full; cancelling from `packed` or later leaves it

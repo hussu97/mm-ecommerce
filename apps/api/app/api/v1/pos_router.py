@@ -49,6 +49,7 @@ from .pos_config import (
     taxes_router,
 )
 from .pos_counter import router as pos_counter_router
+from .pos_custom_orders import router as pos_custom_orders_router
 from .pos_orders import kitchen_router
 from .pos_orders import router as pos_orders_router
 from .pos_reports import router as pos_reports_router
@@ -136,6 +137,10 @@ pos_api_router.include_router(
 # Produce or cancel production-order lines at the source till ("To Produce").
 pos_api_router.include_router(
     pos_production_router, prefix="/pos/inventory", tags=["POS Inventory"]
+)
+# Custom cake orders — the custom-orders branch's "Customized Cake Orders".
+pos_api_router.include_router(
+    pos_custom_orders_router, prefix="/pos/custom-orders", tags=["POS Custom Orders"]
 )
 # Raise a purchase order at the till (create-and-receive) or receive an
 # admin-raised one.

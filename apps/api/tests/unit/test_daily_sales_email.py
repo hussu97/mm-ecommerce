@@ -162,6 +162,7 @@ async def test_build_lays_out_fixed_columns_and_zero_fills():
         "deliveroo",
         "website",
         "website_pickup",
+        "custom",
         "counter",
     ]
     # Both active branches appear, ordered by name; Barsha's untouched columns

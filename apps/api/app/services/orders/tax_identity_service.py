@@ -33,6 +33,9 @@ CHANNEL_CLASS_BY_SOURCE: dict[str, str] = {
     "cashier": ChannelClassEnum.COUNTER.value,
     "online": ChannelClassEnum.WEBSITE.value,
     "aggregator": ChannelClassEnum.AGGREGATOR.value,
+    # Named rather than left to the fallback: a custom order is invoiced under
+    # the branch's website entity (fatema at Sharjah), VAT-registered.
+    "custom": ChannelClassEnum.WEBSITE.value,
 }
 
 #: The registered entity every order falls back to when a branch/channel has no
