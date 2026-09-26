@@ -233,3 +233,42 @@ async def test_a_custom_order_takes_its_trading_day_from_the_hand_over(calls):
     assert order.business_date == "2026-09-27"
     assert order.closed_at == handed_over
     assert order.pos_status is None  # never on a register
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "start", [OrderStatusEnum.CONFIRMED, OrderStatusEnum.ARRIVED_AT_POS]
+)
+@pytest.mark.parametrize(
+    "target", [OrderStatusEnum.DELIVERED, OrderStatusEnum.OUT_FOR_DELIVERY]
+)
+async def test_an_unpacked_custom_order_cannot_leave_the_shop(calls, start, target):
+    """The map's shortcuts past `packed` would finish it with nothing consumed."""
+    from app.core.exceptions import BadRequestError
+
+    order = _order(start, "custom")
+    with pytest.raises(BadRequestError):
+        await order_lifecycle.transition(_Db(), order, target)
+    assert order.status == start
+    # A courier webhook replaying the same move is declined quietly.
+    assert not await order_lifecycle.transition(_Db(), order, target, on_invalid="skip")
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_custom_order_cannot_be_recovered_to_delivered(calls):
+    order = _order(OrderStatusEnum.CANCELLED, "custom")
+    from app.core.exceptions import BadRequestError
+
+    with pytest.raises(BadRequestError):
+        await order_lifecycle.transition(
+            _Db(),
+            order,
+            OrderStatusEnum.DELIVERED,
+            extra_from=order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED],
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_website_order_keeps_its_shortcut_to_delivered(calls):
+    order = _order(OrderStatusEnum.CONFIRMED, "online")
+    assert await order_lifecycle.transition(_Db(), order, OrderStatusEnum.DELIVERED)

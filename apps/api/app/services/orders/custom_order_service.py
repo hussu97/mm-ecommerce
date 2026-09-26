@@ -16,7 +16,7 @@ is reused rather than copied:
   `delivery.fulfilment_reassignment.book_first`, after which the storefront's
   courier machinery (webhooks, tracking, customer emails) carries it.
 
-What is only here: the order's own fields (`custom_orders`), its recipe, the
+What is only here: the order's own fields (`custom_order_details`), its recipe, the
 kitchen-docket claim that puts it "at the POS", and the three ways it finishes
 by hand — a third-party courier, a collection, a cancellation.
 
@@ -643,9 +643,16 @@ async def update(
     *,
     user: User,
 ) -> Order:
-    """Replace the lines, delivery date, payment and notes, and re-price."""
-    if order.status in _FINISHED:
-        raise ConflictError("A delivered or cancelled custom order can't be changed")
+    """Replace the lines, delivery date, payment and notes, and re-price.
+
+    Until it is packed: after that the cake is made, its recipe consumed, and an
+    invoice may already have gone out with these figures on it. The customer's
+    contact and address stay editable (`update_contact`) until a courier has
+    them."""
+    if order.status not in _BEFORE_PACKING:
+        raise ConflictError(
+            "A packed custom order's lines and payment can't be changed"
+        )
     cfg = await config(db)
     for item in list(order.items):
         await db.delete(item)
@@ -915,7 +922,7 @@ async def to_response(
     no_courier = delivery_unavailable_reason(order)
     status = order.status
     actions = CustomOrderActions(
-        can_edit_lines=status not in _FINISHED,
+        can_edit_lines=status in _BEFORE_PACKING,
         can_edit_recipe=status in _BEFORE_PACKING,
         can_edit_contact=contact_locked is None,
         can_pack=status in _BEFORE_PACKING,

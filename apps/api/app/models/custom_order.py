@@ -5,8 +5,9 @@ the counter, and makes to a brief.
 A custom order **is an order** — an `orders` row with `source = 'custom'` — so it
 has the same lines, totals, VAT, customer, address, courier booking, P&L and
 ledger as every other channel, and every screen that lists orders can list it.
-What it has that no other order has lives here, one row per order, rather than
-as custom-only columns on a table every channel shares:
+What it has that no other order has lives here, one row per order
+(`custom_order_details`), rather than as custom-only columns on a table every
+channel shares:
 
 * how the customer is paying, and whether a card fee was put on the bill;
 * the enquiry it was converted from, if any;
@@ -71,19 +72,27 @@ class CustomOrderCreatedViaEnum(str, enum.Enum):
 class CustomOrder(Base, TimestampMixin):
     """The custom-only half of an `orders` row with `source = 'custom'`."""
 
-    __tablename__ = "custom_orders"
+    __tablename__ = "custom_order_details"
     __table_args__ = (
         status_vocabulary(
-            "custom_orders", "payment_type", CustomOrderPaymentTypeEnum, nullable=True
+            "custom_order_details",
+            "payment_type",
+            CustomOrderPaymentTypeEnum,
+            nullable=True,
         ),
         status_vocabulary(
-            "custom_orders", "card_fee_mode", CustomOrderCardFeeModeEnum, nullable=True
+            "custom_order_details",
+            "card_fee_mode",
+            CustomOrderCardFeeModeEnum,
+            nullable=True,
         ),
-        status_vocabulary("custom_orders", "created_via", CustomOrderCreatedViaEnum),
+        status_vocabulary(
+            "custom_order_details", "created_via", CustomOrderCreatedViaEnum
+        ),
         # A card payment has to say where its fee went; nothing else has a fee.
         CheckConstraint(
             "(payment_type IS NOT DISTINCT FROM 'card') = (card_fee_mode IS NOT NULL)",
-            name="ck_custom_orders_card_fee_mode_iff_card",
+            name="ck_custom_order_details_card_fee_mode_iff_card",
         ),
     )
 
@@ -146,7 +155,7 @@ class CustomOrderRecipeLine(Base, UUIDMixin, TimestampMixin):
 
     order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("custom_orders.order_id", ondelete="CASCADE"),
+        ForeignKey("custom_order_details.order_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

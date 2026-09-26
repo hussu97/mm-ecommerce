@@ -5,9 +5,12 @@
   hard-coded, so an environment whose references differ simply resolves NULL
   and the channel stays off until an admin sets it.
 - The inventory category "Customized Cake Raw Materials" is created.
-- FG0119 stops consuming stock through a product recipe: a custom order's
-  consumption is its own recipe, so a product recipe on FG0119 would be
-  counted twice, and without one every recipe-gap report flags it.
+- FG0119 is marked as drawing no stock through a product recipe. It has
+  never had one (checked in production 2026-09-26: no recipe row; its five
+  counter sales consumed nothing and each raised `missing_recipe`), so no
+  channel's consumption changes — the flag says outright what was already
+  true, and stops the recipe-gap reports listing it. A custom order's
+  consumption is its own recipe (`recipe_service.snapshot_order`).
 - ``legal_entities`` gains what an A4 invoice needs (registered address, bank
   details, CC list); the owners are copied on Fatema Cake Sweets' invoices.
 - ``orders.custom.manage`` reaches every role that already produces, so the

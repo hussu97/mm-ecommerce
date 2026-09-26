@@ -302,6 +302,20 @@ _PRE_PACKING_STATUSES: frozenset[OrderStatusEnum] = frozenset(
 )
 
 
+#: Statuses that mean the goods have left the shop, and the ones an order
+#: consuming at packing must already be in to reach them.
+_LEAVES_THE_SHOP = frozenset(
+    {OrderStatusEnum.OUT_FOR_DELIVERY, OrderStatusEnum.DELIVERED}
+)
+_PACKED_OR_LATER = frozenset(
+    {
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        OrderStatusEnum.UNDELIVERED,
+    }
+)
+
+
 def can_transition(current: OrderStatusEnum, new: OrderStatusEnum) -> bool:
     """Whether the map allows moving from `current` to `new`."""
     return new in VALID_TRANSITIONS.get(current, set())
@@ -380,6 +394,26 @@ async def transition(
     """
     if order.status == new_status:
         return False
+
+    # A channel that consumes at packing may not leave the shop unpacked: the
+    # map's shortcuts to `out_for_delivery`/`delivered` (kept for couriers whose
+    # pickup push was lost) and an admin's recovery of a cancelled order would
+    # otherwise finish it with its recipe never posted. Checked here, not at
+    # one doorway, so no caller can step around it.
+    if (
+        channels.policy_for(order.source).consumes_stock_at == OrderStatusEnum.PACKED
+        and new_status in _LEAVES_THE_SHOP
+        and order.status not in _PACKED_OR_LATER
+    ):
+        if on_invalid == "skip":
+            logger.info(
+                "Refused %s -> %s for unpacked order %s",
+                getattr(order.status, "value", order.status),
+                new_status.value,
+                order.order_number,
+            )
+            return False
+        raise BadRequestError("Pack the order before it is delivered")
 
     if not can_transition(order.status, new_status) and order.status not in set(
         extra_from

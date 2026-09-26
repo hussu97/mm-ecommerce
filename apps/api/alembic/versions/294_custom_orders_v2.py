@@ -1,12 +1,8 @@
 """Custom orders v2: a custom order is an `orders` row with `source = 'custom'`.
 
-- The capacity calendar goes: ``custom_orders`` (the diary) and
-  ``custom_order_blackouts`` are dropped. Both were empty in production when
-  this was written (2026-09-26), and no request path read their rows once the
-  code that did was removed in the same change.
-- ``custom_orders`` returns as a 1:1 extension of ``orders`` (payment type, card
+- ``custom_order_details``: a 1:1 extension of ``orders`` (payment type, card
   fee mode, the enquiry it came from, when its docket was printed), and
-  ``custom_order_recipe_lines`` holds each order's own recipe.
+  ``custom_order_recipe_lines``: each order's own recipe.
 - ``orders.source`` gets the CHECK it never had, with ``custom`` added.
 - ``orders.delivered_at`` (backfilled from the status trail) and the generated
   ``orders.reporting_at`` — the one definition of "which day does this order
@@ -14,9 +10,11 @@
 - ``production_orders.origin`` tells POS-raised custom-cake production apart.
 - ``email_logs.cc`` journals copied addresses.
 
-The capacity columns on ``business_settings`` and ``products`` are left in place
-here and dropped by a later migration: the deploy migrates before it cuts
-traffic over, and the container still serving maps them.
+The capacity calendar's tables (``custom_orders``, ``custom_order_blackouts``)
+and its columns on ``business_settings``/``products`` are left untouched here
+and dropped by a later migration: the deploy migrates before it cuts traffic
+over, and the container still serving maps them (its dashboard counts the old
+diary on every load). Additive only, so the old code runs on this schema.
 
 Revision ID: 294_custom_orders_v2
 Revises: 293_po_misc_categories
@@ -45,26 +43,9 @@ _REPORTING_AT = (
 
 
 def upgrade() -> None:
-    # ── The old diary. Refuse rather than destroy a booking somebody made. ──
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM custom_orders)
-               OR EXISTS (SELECT 1 FROM custom_order_blackouts) THEN
-                RAISE EXCEPTION
-                    'custom_orders / custom_order_blackouts hold rows; '
-                    'migrate them before dropping the capacity calendar';
-            END IF;
-        END $$;
-        """
-    )
-    op.drop_table("custom_order_blackouts")
-    op.drop_table("custom_orders")
-
     # ── The new extension table + per-order recipe. ─────────────────────────
     op.create_table(
-        "custom_orders",
+        "custom_order_details",
         sa.Column(
             "order_id",
             UUID(as_uuid=True),
@@ -92,23 +73,25 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
             "payment_type IS NULL OR payment_type IN ('bank_transfer', 'card', 'cash')",
-            name="ck_custom_orders_payment_type_allowed",
+            name="ck_custom_order_details_payment_type_allowed",
         ),
         sa.CheckConstraint(
             "card_fee_mode IS NULL OR card_fee_mode IN ('separate_line', 'included')",
-            name="ck_custom_orders_card_fee_mode_allowed",
+            name="ck_custom_order_details_card_fee_mode_allowed",
         ),
         sa.CheckConstraint(
             "created_via IN ('admin', 'pos')",
-            name="ck_custom_orders_created_via_allowed",
+            name="ck_custom_order_details_created_via_allowed",
         ),
         sa.CheckConstraint(
             "(payment_type IS NOT DISTINCT FROM 'card') = (card_fee_mode IS NOT NULL)",
-            name="ck_custom_orders_card_fee_mode_iff_card",
+            name="ck_custom_order_details_card_fee_mode_iff_card",
         ),
     )
     op.create_index(
-        "ix_custom_orders_created_by_id", "custom_orders", ["created_by_id"]
+        "ix_custom_order_details_created_by_id",
+        "custom_order_details",
+        ["created_by_id"],
     )
 
     op.create_table(
@@ -117,7 +100,7 @@ def upgrade() -> None:
         sa.Column(
             "order_id",
             UUID(as_uuid=True),
-            sa.ForeignKey("custom_orders.order_id", ondelete="CASCADE"),
+            sa.ForeignKey("custom_order_details.order_id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -197,6 +180,19 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # A downgrade on a database that has taken custom orders would strand them
+    # as `orders` rows with a source the old code does not know; refuse.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM custom_order_details) THEN
+                RAISE EXCEPTION
+                    'custom orders exist; migrate them before downgrading';
+            END IF;
+        END $$;
+        """
+    )
     op.drop_column("email_logs", "cc")
     op.drop_constraint(
         "ck_production_orders_origin_allowed", "production_orders", type_="check"
@@ -207,111 +203,5 @@ def downgrade() -> None:
     op.drop_column("orders", "delivered_at")
     op.drop_constraint("ck_orders_source_allowed", "orders", type_="check")
 
-    # A downgrade on a database that has taken custom orders would strand them
-    # as `orders` rows with an unknown source; refuse instead.
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM custom_orders) THEN
-                RAISE EXCEPTION
-                    'custom orders exist; they cannot be downgraded to the '
-                    'capacity calendar';
-            END IF;
-        END $$;
-        """
-    )
     op.drop_table("custom_order_recipe_lines")
-    op.drop_table("custom_orders")
-
-    # The capacity calendar as migrations 081/099/138/272 left it.
-    op.create_table(
-        "custom_orders",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True),
-        sa.Column("due_date", sa.Date(), nullable=False),
-        sa.Column("status", sa.String(20), nullable=False, server_default="enquiry"),
-        sa.Column("source", sa.String(20), nullable=False, server_default="website"),
-        sa.Column(
-            "order_id",
-            UUID(as_uuid=True),
-            sa.ForeignKey("orders.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-        sa.Column("customer_name", sa.String(150), nullable=False),
-        sa.Column("customer_phone", sa.String(30), nullable=True),
-        sa.Column("customer_phone_country", sa.String(2), nullable=True),
-        sa.Column("customer_email", sa.String(255), nullable=True),
-        sa.Column("description", sa.Text(), nullable=False),
-        sa.Column("cake_message", sa.String(200), nullable=True),
-        sa.Column("flavour", sa.String(120), nullable=True),
-        sa.Column("size_label", sa.String(60), nullable=True),
-        sa.Column("servings", sa.Integer(), nullable=True),
-        sa.Column(
-            "reference_image_urls",
-            ARRAY(sa.String()),
-            nullable=False,
-            server_default="{}",
-        ),
-        sa.Column("quoted_total", sa.Numeric(10, 2), nullable=True),
-        sa.Column(
-            "deposit_amount", sa.Numeric(10, 2), nullable=False, server_default="0"
-        ),
-        sa.Column("deposit_paid_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "branch_id",
-            UUID(as_uuid=True),
-            sa.ForeignKey("branches.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-        sa.Column(
-            "product_id",
-            UUID(as_uuid=True),
-            sa.ForeignKey("products.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-        sa.Column(
-            "brief",
-            sa.dialects.postgresql.JSONB(),
-            nullable=False,
-            server_default="{}",
-        ),
-        sa.Column("admin_notes", sa.Text(), nullable=True),
-        sa.Column(
-            "created_by_id",
-            UUID(as_uuid=True),
-            sa.ForeignKey("users.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.CheckConstraint(
-            "status IN ('enquiry', 'confirmed', 'in_production', 'ready', "
-            "'completed', 'cancelled')",
-            name="ck_custom_orders_status_allowed",
-        ),
-        sa.CheckConstraint(
-            "source IN ('website', 'instagram', 'whatsapp', 'phone', 'walk_in', "
-            "'other')",
-            name="ck_custom_orders_source_allowed",
-        ),
-    )
-    op.create_index("ix_custom_orders_due_date", "custom_orders", ["due_date"])
-    op.create_index("ix_custom_orders_status", "custom_orders", ["status"])
-    op.create_index("ix_custom_orders_order_id", "custom_orders", ["order_id"])
-    op.create_index("ix_custom_orders_branch_id", "custom_orders", ["branch_id"])
-    op.create_index(
-        "ix_custom_orders_due_date_status", "custom_orders", ["due_date", "status"]
-    )
-    op.create_table(
-        "custom_order_blackouts",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True),
-        sa.Column("blackout_date", sa.Date(), nullable=False, unique=True),
-        sa.Column("reason", sa.String(200), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-    )
-    op.create_index(
-        "ix_custom_order_blackouts_blackout_date",
-        "custom_order_blackouts",
-        ["blackout_date"],
-    )
+    op.drop_table("custom_order_details")
