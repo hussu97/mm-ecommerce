@@ -1,10 +1,9 @@
 """
 Storing a custom-order enquiry — and nothing more.
 
-The sibling `custom_order_service` books capacity: locks the date, checks lead
-time and blackouts, and holds a slot. This service does none of that on purpose.
-An enquiry is a message, not a booking; the shop reads it and decides. So all
-this does is normalise the phone number and write the row. It `flush()`es and
+An enquiry is a message, not an order; the shop reads it and decides, and if it
+goes ahead converts it into a custom order (`orders.custom_order_service`). So
+all this does is normalise the phone number and write the row. It `flush()`es and
 lets the request dependency commit, per the transaction convention.
 """
 

@@ -76,89 +76,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/custom-orders": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Custom Orders */
-        get: operations["list_custom_orders_api_v1_admin_custom_orders_get"];
-        put?: never;
-        /**
-         * Create Custom Order
-         * @description Record an order that arrived somewhere this system cannot see.
-         */
-        post: operations["create_custom_order_api_v1_admin_custom_orders_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/custom-orders/blackouts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Blackouts */
-        get: operations["list_blackouts_api_v1_admin_custom_orders_blackouts_get"];
-        put?: never;
-        /**
-         * Create Blackout
-         * @description Close a date.
-         *
-         *     Refuses if something is already booked on it, rather than blacking out a day
-         *     the kitchen has already promised. Move or cancel the booking first — the
-         *     calendar should never disagree with what has been said to a customer.
-         */
-        post: operations["create_blackout_api_v1_admin_custom_orders_blackouts_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/custom-orders/blackouts/{blackout_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Blackout */
-        delete: operations["delete_blackout_api_v1_admin_custom_orders_blackouts__blackout_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/custom-orders/calendar": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Calendar
-         * @description The month view: every date in the window with what is booked on it.
-         */
-        get: operations["get_calendar_api_v1_admin_custom_orders_calendar_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/admin/custom-orders/enquiries": {
         parameters: {
             query?: never;
@@ -170,46 +87,12 @@ export interface paths {
          * List Enquiries
          * @description The custom-order enquiries sent from the storefront, newest first.
          *
-         *     Read-only: these are leads someone answers by phone or email, not bookings on
-         *     the calendar. Same permission as the custom-order diary, since the same people
-         *     handle both.
+         *     Read-only: these are leads someone answers by phone or email. Same
+         *     permission as custom orders, since the same people handle both and an
+         *     enquiry is converted into one.
          */
         get: operations["list_enquiries_api_v1_admin_custom_orders_enquiries_get"];
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/custom-orders/{custom_order_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Update Custom Order */
-        put: operations["update_custom_order_api_v1_admin_custom_orders__custom_order_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/custom-orders/{custom_order_id}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Update Status */
-        put: operations["update_status_api_v1_admin_custom_orders__custom_order_id__status_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2553,30 +2436,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/custom-orders/availability": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Availability
-         * @description Which dates can still take a custom order.
-         *
-         *     Public, because the date picker is on the product page and the customer has
-         *     no account yet. It reports counts and never names — a customer asking when
-         *     they can order a cake has no business learning who else ordered one.
-         */
-        get: operations["get_availability_api_v1_custom_orders_availability_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/custom-orders/enquiry": {
         parameters: {
             query?: never;
@@ -2590,10 +2449,10 @@ export interface paths {
          * Submit Enquiry
          * @description Take a custom-order request from the "We cater to" section of the home page.
          *
-         *     This stores a lead and emails the shop — it does **not** create an order or a
-         *     `CustomOrder`, and holds no slot on the custom-cake calendar. A human reads it
-         *     and decides whether it becomes a booking, which is why the form tells the
-         *     customer their delivery date is confirmed only after review.
+         *     This stores a lead and emails the shop — it does **not** create an order. A
+         *     human reads it and decides whether it becomes a custom order, which is why
+         *     the form tells the customer their delivery date is confirmed only after
+         *     review.
          */
         post: operations["submit_enquiry_api_v1_custom_orders_enquiry_post"];
         delete?: never;
@@ -10743,21 +10602,6 @@ export interface components {
             /** Ip Address */
             ip_address?: string | null;
         };
-        /** AvailabilityResponse */
-        AvailabilityResponse: {
-            /** Days */
-            days: components["schemas"]["DayAvailabilityResponse"][];
-            /**
-             * Earliest Date
-             * Format: date
-             */
-            earliest_date: string;
-            /**
-             * Latest Date
-             * Format: date
-             */
-            latest_date: string;
-        };
         /**
          * AvailablePromotionResponse
          * @description A counter promotion as the register lists it for one branch.
@@ -10791,31 +10635,6 @@ export interface components {
             reward_value: string;
             /** Trigger Value */
             trigger_value: string;
-        };
-        /** BlackoutCreate */
-        BlackoutCreate: {
-            /**
-             * Blackout Date
-             * Format: date
-             */
-            blackout_date: string;
-            /** Reason */
-            reason?: string | null;
-        };
-        /** BlackoutResponse */
-        BlackoutResponse: {
-            /**
-             * Blackout Date
-             * Format: date
-             */
-            blackout_date: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Reason */
-            reason: string | null;
         };
         /** BlogPostCreate */
         BlogPostCreate: {
@@ -12054,6 +11873,12 @@ export interface components {
             currency_code: string;
             /** Currency Symbol */
             currency_symbol: string;
+            /** Custom Orders Branch Id */
+            custom_orders_branch_id: string | null;
+            /** Custom Orders Inventory Category Id */
+            custom_orders_inventory_category_id: string | null;
+            /** Custom Orders Product Id */
+            custom_orders_product_id: string | null;
             /** Decimal Places */
             decimal_places: number;
             /** Default Order Type */
@@ -12143,6 +11968,12 @@ export interface components {
             currency_code?: string | null;
             /** Currency Symbol */
             currency_symbol?: string | null;
+            /** Custom Orders Branch Id */
+            custom_orders_branch_id?: string | null;
+            /** Custom Orders Inventory Category Id */
+            custom_orders_inventory_category_id?: string | null;
+            /** Custom Orders Product Id */
+            custom_orders_product_id?: string | null;
             /** Decimal Places */
             decimal_places?: number | null;
             /** Default Order Type */
@@ -12209,26 +12040,6 @@ export interface components {
             require_customer_for_delivery?: boolean | null;
             /** Timezone */
             timezone?: string | null;
-        };
-        /** CalendarDay */
-        CalendarDay: {
-            /** Blackout Reason */
-            blackout_reason: string | null;
-            /** Booked */
-            booked: number;
-            /** Capacity */
-            capacity: number;
-            /**
-             * Date
-             * Format: date
-             */
-            date: string;
-            /** Is Blackout */
-            is_blackout: boolean;
-            /** Orders */
-            orders: components["schemas"]["CustomOrderResponse"][];
-            /** Remaining */
-            remaining: number;
         };
         /**
          * CancellationExposureResponse
@@ -13633,64 +13444,6 @@ export interface components {
             /** Session Id */
             session_id?: string | null;
         };
-        /** CustomOrderCreate */
-        CustomOrderCreate: {
-            /** Admin Notes */
-            admin_notes?: string | null;
-            /**
-             * Allow Past
-             * @default false
-             */
-            allow_past: boolean;
-            /** Branch Id */
-            branch_id?: string | null;
-            /** Brief */
-            brief?: {
-                [key: string]: unknown;
-            };
-            /** Cake Message */
-            cake_message?: string | null;
-            /** Customer Email */
-            customer_email?: string | null;
-            /** Customer Name */
-            customer_name: string;
-            /** Customer Phone */
-            customer_phone?: string | null;
-            /**
-             * Deposit Amount
-             * @default 0
-             */
-            deposit_amount: number | string;
-            /** Description */
-            description: string;
-            /**
-             * Due Date
-             * Format: date
-             */
-            due_date: string;
-            /** Flavour */
-            flavour?: string | null;
-            /** Product Id */
-            product_id?: string | null;
-            /** Quoted Total */
-            quoted_total?: number | string | null;
-            /** Reference Image Urls */
-            reference_image_urls?: string[];
-            /** Servings */
-            servings?: number | null;
-            /** Size Label */
-            size_label?: string | null;
-            /**
-             * Source
-             * @default instagram
-             */
-            source: string;
-            /**
-             * Status
-             * @default enquiry
-             */
-            status: string;
-        };
         /**
          * CustomOrderEnquiryAdminResponse
          * @description The whole lead, for the admin Enquiries list.
@@ -13754,93 +13507,6 @@ export interface components {
              * Format: uuid
              */
             id: string;
-        };
-        /** CustomOrderResponse */
-        CustomOrderResponse: {
-            /** Admin Notes */
-            admin_notes: string | null;
-            /** Branch Id */
-            branch_id: string | null;
-            /** Brief */
-            brief: {
-                [key: string]: unknown;
-            };
-            /** Cake Message */
-            cake_message: string | null;
-            /** Customer Email */
-            customer_email: string | null;
-            /** Customer Name */
-            customer_name: string;
-            /** Customer Phone */
-            customer_phone: string | null;
-            /** Deposit Amount */
-            deposit_amount: string;
-            /** Description */
-            description: string;
-            /**
-             * Due Date
-             * Format: date
-             */
-            due_date: string;
-            /** Flavour */
-            flavour: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Order Id */
-            order_id: string | null;
-            /** Product Id */
-            product_id: string | null;
-            /** Quoted Total */
-            quoted_total: string | null;
-            /** Reference Image Urls */
-            reference_image_urls: string[];
-            /** Servings */
-            servings: number | null;
-            /** Size Label */
-            size_label: string | null;
-            /** Source */
-            source: string;
-            /** Status */
-            status: string;
-        };
-        /** CustomOrderStatusUpdate */
-        CustomOrderStatusUpdate: {
-            /** Status */
-            status: string;
-        };
-        /** CustomOrderUpdate */
-        CustomOrderUpdate: {
-            /** Admin Notes */
-            admin_notes?: string | null;
-            /** Branch Id */
-            branch_id?: string | null;
-            /** Cake Message */
-            cake_message?: string | null;
-            /** Customer Email */
-            customer_email?: string | null;
-            /** Customer Name */
-            customer_name?: string | null;
-            /** Customer Phone */
-            customer_phone?: string | null;
-            /** Deposit Amount */
-            deposit_amount?: number | string | null;
-            /** Description */
-            description?: string | null;
-            /** Due Date */
-            due_date?: string | null;
-            /** Flavour */
-            flavour?: string | null;
-            /** Quoted Total */
-            quoted_total?: number | string | null;
-            /** Reference Image Urls */
-            reference_image_urls?: string[] | null;
-            /** Servings */
-            servings?: number | null;
-            /** Size Label */
-            size_label?: string | null;
         };
         /** CustomerBreakdown */
         CustomerBreakdown: {
@@ -14117,20 +13783,6 @@ export interface components {
             summary: components["schemas"]["DashboardSummary"];
             /** Timezone */
             timezone: string;
-        };
-        /** DayAvailabilityResponse */
-        DayAvailabilityResponse: {
-            /** Available */
-            available: boolean;
-            /**
-             * Date
-             * Format: date
-             */
-            date: string;
-            /** Reason */
-            reason?: string | null;
-            /** Remaining */
-            remaining: number;
         };
         /**
          * DeliverooFinancePush
@@ -16403,8 +16055,18 @@ export interface components {
         };
         /** LegalEntityCreate */
         LegalEntityCreate: {
+            /** Bank Account Name */
+            bank_account_name?: string | null;
+            /** Bank Account Number */
+            bank_account_number?: string | null;
+            /** Bank Name */
+            bank_name?: string | null;
             /** Brand Name */
             brand_name: string;
+            /** Iban */
+            iban?: string | null;
+            /** Invoice Cc Emails */
+            invoice_cc_emails?: string[] | null;
             /**
              * Invoice Title
              * @default Tax Invoice
@@ -16421,6 +16083,10 @@ export interface components {
             logo_url?: string | null;
             /** Reference */
             reference: string;
+            /** Registered Address */
+            registered_address?: string | null;
+            /** Swift Code */
+            swift_code?: string | null;
             /** Tax Number */
             tax_number?: string | null;
             /** Trade License Number */
@@ -16433,6 +16099,12 @@ export interface components {
         };
         /** LegalEntityResponse */
         LegalEntityResponse: {
+            /** Bank Account Name */
+            bank_account_name?: string | null;
+            /** Bank Account Number */
+            bank_account_number?: string | null;
+            /** Bank Name */
+            bank_name?: string | null;
             /** Brand Name */
             brand_name: string;
             /**
@@ -16440,11 +16112,15 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Iban */
+            iban?: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Invoice Cc Emails */
+            invoice_cc_emails?: string[] | null;
             /** Invoice Title */
             invoice_title: string;
             /** Is Active */
@@ -16455,6 +16131,10 @@ export interface components {
             logo_url: string | null;
             /** Reference */
             reference: string;
+            /** Registered Address */
+            registered_address?: string | null;
+            /** Swift Code */
+            swift_code?: string | null;
             /** Tax Number */
             tax_number: string | null;
             /** Trade License Number */
@@ -16469,8 +16149,18 @@ export interface components {
         };
         /** LegalEntityUpdate */
         LegalEntityUpdate: {
+            /** Bank Account Name */
+            bank_account_name?: string | null;
+            /** Bank Account Number */
+            bank_account_number?: string | null;
+            /** Bank Name */
+            bank_name?: string | null;
             /** Brand Name */
             brand_name?: string | null;
+            /** Iban */
+            iban?: string | null;
+            /** Invoice Cc Emails */
+            invoice_cc_emails?: string[] | null;
             /** Invoice Title */
             invoice_title?: string | null;
             /** Is Active */
@@ -16479,6 +16169,10 @@ export interface components {
             legal_name?: string | null;
             /** Logo Url */
             logo_url?: string | null;
+            /** Registered Address */
+            registered_address?: string | null;
+            /** Swift Code */
+            swift_code?: string | null;
             /** Tax Number */
             tax_number?: string | null;
             /** Trade License Number */
@@ -24860,186 +24554,6 @@ export interface operations {
             };
         };
     };
-    list_custom_orders_api_v1_admin_custom_orders_get: {
-        parameters: {
-            query?: {
-                status?: string | null;
-                upcoming_only?: boolean;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CustomOrderResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_custom_order_api_v1_admin_custom_orders_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CustomOrderCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CustomOrderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_blackouts_api_v1_admin_custom_orders_blackouts_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BlackoutResponse"][];
-                };
-            };
-        };
-    };
-    create_blackout_api_v1_admin_custom_orders_blackouts_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BlackoutCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BlackoutResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_blackout_api_v1_admin_custom_orders_blackouts__blackout_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                blackout_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_calendar_api_v1_admin_custom_orders_calendar_get: {
-        parameters: {
-            query: {
-                start: string;
-                end: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CalendarDay"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_enquiries_api_v1_admin_custom_orders_enquiries_get: {
         parameters: {
             query?: {
@@ -25059,76 +24573,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedCustomOrderEnquiries"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_custom_order_api_v1_admin_custom_orders__custom_order_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                custom_order_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CustomOrderUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CustomOrderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_status_api_v1_admin_custom_orders__custom_order_id__status_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                custom_order_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CustomOrderStatusUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CustomOrderResponse"];
                 };
             };
             /** @description Validation Error */
@@ -29460,39 +28904,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CourseResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_availability_api_v1_custom_orders_availability_get: {
-        parameters: {
-            query?: {
-                /** @description Applies this product's own lead time, if it has one */
-                product_id?: string | null;
-                days?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AvailabilityResponse"];
                 };
             };
             /** @description Validation Error */

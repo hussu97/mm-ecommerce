@@ -55,11 +55,11 @@ from .courier import (  # noqa: F401
 # ─── POS domain ───────────────────────────────────────────────────────────────
 from .course import Course  # noqa: F401
 from .custom_order import (  # noqa: F401
-    OCCUPIES_SLOT,
     CustomOrder,
-    CustomOrderBlackout,
-    CustomOrderSourceEnum,
-    CustomOrderStatusEnum,
+    CustomOrderCardFeeModeEnum,
+    CustomOrderCreatedViaEnum,
+    CustomOrderPaymentTypeEnum,
+    CustomOrderRecipeLine,
 )
 from .custom_order_enquiry import CustomOrderEnquiry  # noqa: F401
 from .customer_cache import (  # noqa: F401
@@ -386,9 +386,10 @@ __all__ = [
     "DiscountSourceEnum",
     # Custom cakes
     "CustomOrder",
-    "CustomOrderBlackout",
-    "CustomOrderSourceEnum",
-    "CustomOrderStatusEnum",
+    "CustomOrderCardFeeModeEnum",
+    "CustomOrderCreatedViaEnum",
+    "CustomOrderPaymentTypeEnum",
+    "CustomOrderRecipeLine",
     "CustomOrderEnquiry",
     "OCCUPIES_SLOT",
     # Inventory

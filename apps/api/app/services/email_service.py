@@ -50,6 +50,7 @@ from app.models.pos_order import OrderSourceEnum
 from app.schemas.order import OrderResponse
 from app.services.delivery import address_format
 from app.services.email_copy import DIRECTION, translator
+from app.services.orders import channels
 
 __all__ = [
     "is_counter_sale",
@@ -238,6 +239,25 @@ def is_counter_sale(order: OrderResponse) -> bool:
         # sale's is.
         OrderSourceEnum.AGGREGATOR.value,
     )
+
+
+def customer_email_allowed(order: OrderResponse, template: str) -> bool:
+    """Whether this order's channel lets the customer be sent `template`.
+
+    The channel decides (`orders.channels`): a counter or marketplace sale
+    earns no customer email at all, a storefront order earns every one, and a
+    custom order earns only courier news — and only while a courier we booked
+    is carrying it, so a third-party driver or a collection stays silent.
+    """
+    policy = channels.policy_for(order.source)
+    allowed = policy.customer_email_templates
+    if allowed is not None and template not in allowed:
+        return False
+    if policy.customer_emails_need_booked_courier and not (
+        order.fulfilment is not None and order.fulfilment.courier_managed
+    ):
+        return False
+    return True
 
 
 def _money(value: Any) -> str:
@@ -598,7 +618,12 @@ def _payment_reason(order: OrderResponse, *, t: Callable[..., str]) -> str | Non
 
 
 def _send(
-    to: str, subject: str, html: str, attachments: list[dict] | None = None
+    to: str,
+    subject: str,
+    html: str,
+    attachments: list[dict] | None = None,
+    *,
+    cc: list[str] | None = None,
 ) -> dict:
     """
     Send an email via Resend. Never raises — always returns a result dict:
@@ -655,6 +680,11 @@ def _send(
         # payload it did before.
         if attachments:
             params["attachments"] = attachments
+        # Likewise copied addresses; a malformed one would sink the whole send,
+        # so only plausible addresses are passed on.
+        copies = [c.strip() for c in (cc or []) if c and "@" in c.strip()]
+        if copies:
+            params["cc"] = copies
         response = resend.Emails.send(params)
         resend_id = response.id if hasattr(response, "id") else response.get("id")
         logger.info("Email sent: id=%s to=%s subject=%s", resend_id, to, subject)
@@ -679,7 +709,12 @@ _SEND_TIMEOUT_SECONDS = 10
 
 
 async def _send_async(
-    to: str, subject: str, html: str, attachments: list[dict] | None = None
+    to: str,
+    subject: str,
+    html: str,
+    attachments: list[dict] | None = None,
+    *,
+    cc: list[str] | None = None,
 ) -> dict:
     """`_send` off the event loop with a hard timeout. Never raises.
 
@@ -693,12 +728,14 @@ async def _send_async(
     # attachment, four when there is. `_send` defaults `attachments=None`, but a
     # test double for it need not, so passing a trailing None unconditionally
     # would break a three-argument stub.
+    # `cc` likewise travels only when there is one.
     args = (
         (to, subject, html) if attachments is None else (to, subject, html, attachments)
     )
+    kwargs = {"cc": cc} if cc else {}
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(_send, *args),
+            asyncio.to_thread(_send, *args, **kwargs),
             _SEND_TIMEOUT_SECONDS,
         )
     except TimeoutError:
@@ -723,6 +760,7 @@ async def _log(
     order_number: str | None = None,
     *,
     reference: str | None = None,
+    cc: list[str] | None = None,
 ) -> None:
     """Persist an EmailLog row. Swallows all errors so logging never breaks email flow.
 
@@ -738,6 +776,7 @@ async def _log(
                     subject=subject,
                     order_number=order_number,
                     reference=reference,
+                    cc=list(cc) if cc else None,
                     status=result["status"],
                     resend_id=result.get("resend_id"),
                     error=result.get("error"),
@@ -764,12 +803,17 @@ async def _send_order_email(
     order's status. A cake that is baked and boxed must not be blocked by a
     typo in a Jinja file.
 
-    It is also the one place a counter sale is turned away, for the same reason:
-    the rule belongs where every caller passes rather than at each of them.
+    It is also the one place a channel's customer-email rule is applied, for
+    the same reason: the rule belongs where every caller passes rather than at
+    each of them — including `repair_after_reassignment`, which sends without a
+    status change.
     """
-    if is_counter_sale(order):
+    if not customer_email_allowed(order, template):
         logger.info(
-            "Counter sale %s — no customer email (%s)", order.order_number, template
+            "%s order %s — no customer email (%s)",
+            order.source,
+            order.order_number,
+            template,
         )
         return
 
@@ -870,9 +914,12 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
     # inside is still the customer's language — that is the address they saw.
     #
     # The counter does not need telling about the counter. Whoever rang it up is
-    # standing at the register that printed it.
-    if is_counter_sale(order):
-        logger.info("Counter sale %s — no owner notification", order.order_number)
+    # standing at the register that printed it; the same goes for a custom order
+    # the shop took itself.
+    if not channels.policy_for(order.source).notifies_owner_on_order:
+        logger.info(
+            "%s order %s — no owner notification", order.source, order.order_number
+        )
         return
 
     subject = f"New order — {order.order_number} | Melting Moments"
@@ -1537,8 +1584,9 @@ async def notify_status_change(order: OrderResponse) -> str | None:
     # A counter sale earns nothing, whatever its status. Checked here as well as
     # in `_send_order_email` so the return value is the truth: reporting
     # "confirmed" for an email nobody sent would make this function's answer
-    # useless to a caller trying to log what happened.
-    if is_counter_sale(order):
+    # useless to a caller trying to log what happened. (A custom order's finer
+    # per-template rule is applied in the funnel.)
+    if channels.policy_for(order.source).customer_email_templates == frozenset():
         return None
 
     # A failed handover used to be checked here, ahead of the map, because it
@@ -1683,22 +1731,30 @@ async def send_with_attachment(
     filename: str,
     content: bytes,
     template: str = "report",
+    cc: list[str] | None = None,
+    order_number: str | None = None,
 ) -> dict:
     """
     Send one email carrying a single binary attachment, and journal it.
 
-    The daily sales report is the caller: a spreadsheet the owner opens rather
-    than a templated order mail. Runs the blocking Resend call off the event
-    loop like the rest of this module and never raises — a report that fails to
-    send is a logged failure, not an exception in whatever scheduled it.
+    Callers: the daily sales report (a spreadsheet the owner opens rather than
+    a templated order mail) and a custom order's invoice (a PDF, copied to the
+    owners and journalled against the order so its screen lists it). Runs the
+    blocking Resend call off the event loop like the rest of this module and
+    never raises — an email that fails to send is a logged failure, not an
+    exception in whatever sent it.
     """
     import base64
 
     encoded = base64.b64encode(content).decode("ascii")
     result = await _send_async(
-        recipient, subject, html, [{"filename": filename, "content": encoded}]
+        recipient,
+        subject,
+        html,
+        [{"filename": filename, "content": encoded}],
+        cc=cc,
     )
-    await _log(template, recipient, subject, result)
+    await _log(template, recipient, subject, result, order_number, cc=cc)
     return result
 
 

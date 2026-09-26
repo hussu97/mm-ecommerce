@@ -4,6 +4,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import DateTime, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, UUIDMixin, status_vocabulary, utcnow
@@ -32,6 +33,9 @@ class EmailLog(Base, UUIDMixin):
 
     template: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     recipient: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    #: Copied addresses, when the email had any (a custom-order invoice copies
+    #: the owners). Journalled so "did the owner get it" is answerable here.
+    cc: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
     subject: Mapped[str] = mapped_column(String(500), nullable=False)
     # 64 since migration 286: a local-first counter order number runs to 40.
     order_number: Mapped[str | None] = mapped_column(

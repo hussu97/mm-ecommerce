@@ -13,6 +13,10 @@ UTC bounds rather than `func.date(created_at)` — the latter dates a stored UTC
 instant by the database's timezone and, near midnight in the Gulf, books the
 first four hours of the day to yesterday (see `business_day_service.shop_today`).
 
+Every order is placed in that window by `Order.reporting_at` — its creation for
+every channel except custom orders, which count on the day they are handed
+over (see the column).
+
 Deliberately uncached: it is the one screen an admin keeps open to watch the day
 move, and five-minute-stale headline figures read as a bug, not a saving.
 """
@@ -34,8 +38,6 @@ from app.core.permissions import require
 from app.models import (
     Branch,
     Courier,
-    CustomOrder,
-    CustomOrderStatusEnum,
     DeliveryMethodEnum,
     InventoryItem,
     InventoryLevel,
@@ -176,8 +178,8 @@ async def _breakdown(
                 func.coalesce(func.sum(Order.total), 0),
             )
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 *_filters(
                     statuses, couriers, branch_ids, legal_entity_ids, category_ids
                 ),
@@ -246,8 +248,8 @@ async def _payment_breakdown(
                 func.coalesce(func.sum(Order.total), 0),
             )
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 # NULL-safe: a plain `!= "mixed"` is NULL for an order with no
                 # payment_method and would drop it; is_distinct_from keeps it.
                 Order.payment_method.is_distinct_from("mixed"),
@@ -270,8 +272,8 @@ async def _payment_breakdown(
             .join(Order, Order.id == OrderPayment.order_id)
             .join(PaymentMethod, PaymentMethod.id == OrderPayment.payment_method_id)
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 Order.payment_method == "mixed",
                 OrderPayment.is_refund.is_(False),
                 *_filters(
@@ -320,8 +322,8 @@ async def _window_totals(
                 func.count(Order.id),
                 func.coalesce(func.sum(Order.total), 0),
             ).where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 *_filters(
                     statuses, couriers, branch_ids, legal_entity_ids, category_ids
                 ),
@@ -381,8 +383,8 @@ async def _fee_totals(
             .select_from(Order)
             .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 order_query.active_or_fulfilled_clause(),
                 *(
                     c
@@ -447,8 +449,8 @@ async def _courier_fee_totals(
             .select_from(Order)
             .join(OrderDelivery, OrderDelivery.order_id == Order.id)
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 *_filters(
                     statuses,
                     couriers,
@@ -477,7 +479,7 @@ async def _series(
 ) -> list[SeriesPoint]:
     """Orders and revenue over time, one point per interval across the window.
 
-    Buckets on the shop's local clock (`created_at` is UTC, so it is shifted into
+    Buckets on the shop's local clock (`reporting_at` is UTC, so it is shifted into
     the shop timezone before truncating) — by hour for the live day or a
     single-day range, by day for a multi-day range. Follows the same
     status/courier selection as every other figure, so the trend line moves with
@@ -487,7 +489,7 @@ async def _series(
     # `tz_name`/`granularity` are cast to text so asyncpg sends typed params —
     # an untyped bind leaves PG unable to resolve the overloaded timezone()/
     # date_trunc() signatures and the query fails at runtime.
-    local = func.timezone(cast(tz_name, Text), Order.created_at)
+    local = func.timezone(cast(tz_name, Text), Order.reporting_at)
     bucket = func.date_trunc(cast(granularity, Text), local)
     rows = (
         await db.execute(
@@ -497,8 +499,8 @@ async def _series(
                 func.coalesce(func.sum(Order.total), 0),
             )
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 *_filters(
                     statuses, couriers, branch_ids, legal_entity_ids, category_ids
                 ),
@@ -544,14 +546,14 @@ async def _heatmap(
     """Orders and revenue by shop-local day-of-week × hour-of-day over the window.
 
     Answers "which day and hour do we sell the most" by collapsing every matching
-    order in the window onto a 7×24 grid. `created_at` is UTC, so it is shifted
+    order in the window onto a 7×24 grid. `reporting_at` is UTC, so it is shifted
     into the shop timezone before the day-of-week and hour are extracted — the
     same local-clock treatment `_series` uses, so the grid and the trend line are
     the same orders counted two ways. Follows the page's status/courier selection.
     Sparse: only cells with at least one order are returned; the client zero-fills
     the rest. `extract()` yields double precision, cast to int for clean params.
     """
-    local = func.timezone(cast(tz_name, Text), Order.created_at)
+    local = func.timezone(cast(tz_name, Text), Order.reporting_at)
     dow = cast(func.extract("dow", local), Integer)
     hour = cast(func.extract("hour", local), Integer)
     rows = (
@@ -563,8 +565,8 @@ async def _heatmap(
                 func.coalesce(func.sum(Order.total), 0),
             )
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 *_filters(
                     statuses, couriers, branch_ids, legal_entity_ids, category_ids
                 ),
@@ -695,8 +697,8 @@ async def _by_category(
             .outerjoin(Product, Product.id == OrderItem.product_id)
             .outerjoin(Category, Category.id == Product.category_id)
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
                 *_filters(statuses, couriers, branch_ids, legal_entity_ids),
             )
@@ -774,8 +776,8 @@ async def _by_courier(
                 courier_cost.label("courier_cost"),
                 Order.payment_fee,
             ).where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 order_query.active_or_fulfilled_clause(),
                 *(
                     c
@@ -920,7 +922,7 @@ async def _range_bounds(
             now - timedelta(days=1),
         )
     # End = the last instant of `to`'s local day (start of the day after, minus a
-    # microsecond) so the inclusive `created_at <= end` filters own the whole day.
+    # microsecond) so the inclusive `reporting_at <= end` filters own the whole day.
     end_local = datetime(d_to.year, d_to.month, d_to.day, tzinfo=tz) + timedelta(days=1)
     end = end_local.astimezone(timezone.utc) - timedelta(microseconds=1)
     span = timedelta(days=(d_to - d_from).days + 1)
@@ -1052,8 +1054,8 @@ async def dashboard_today(
     delivered = await _count(
         db,
         select(func.count(Order.id)).where(
-            Order.created_at >= start,
-            Order.created_at <= end,
+            Order.reporting_at >= start,
+            Order.reporting_at <= end,
             order_query.fulfilled_clause(),
             *([delivered_clause] if delivered_clause is not None else []),
             *dim_clauses,
@@ -1062,8 +1064,8 @@ async def dashboard_today(
     delivered_prev = await _count(
         db,
         select(func.count(Order.id)).where(
-            Order.created_at >= prior_start,
-            Order.created_at <= prior_end,
+            Order.reporting_at >= prior_start,
+            Order.reporting_at <= prior_end,
             order_query.fulfilled_clause(),
             *([delivered_clause] if delivered_clause is not None else []),
             *dim_clauses,
@@ -1112,8 +1114,8 @@ async def dashboard_today(
                 func.coalesce(func.sum(Order.total), 0),
             )
             .where(
-                Order.created_at >= start,
-                Order.created_at <= end,
+                Order.reporting_at >= start,
+                Order.reporting_at <= end,
                 *([courier_only] if courier_only is not None else []),
                 *dim_clauses,
             )
@@ -1277,8 +1279,8 @@ async def _operational_snapshot(
     payment_failed_today = await _count(
         db,
         select(func.count(Order.id)).where(
-            Order.created_at >= start,
-            Order.created_at <= end,
+            Order.reporting_at >= start,
+            Order.reporting_at <= end,
             Order.status == OrderStatusEnum.PAYMENT_FAILED,
         ),
     )
@@ -1296,29 +1298,27 @@ async def _operational_snapshot(
         )
     ).one()
 
+    # Custom orders still to finish, and those promised for today. Keyed on
+    # `promised_at` (the delivery date the customer was given), not creation:
+    # a custom order is taken days before it is made.
+    unfinished = Order.status.not_in(
+        (
+            OrderStatusEnum.DELIVERED,
+            OrderStatusEnum.CANCELLED,
+            OrderStatusEnum.REFUNDED,
+        )
+    )
+    is_custom = Order.source == OrderSourceEnum.CUSTOM.value
     open_custom = await _count(
-        db,
-        select(func.count(CustomOrder.id)).where(
-            CustomOrder.status.in_(
-                (
-                    CustomOrderStatusEnum.ENQUIRY.value,
-                    CustomOrderStatusEnum.CONFIRMED.value,
-                    CustomOrderStatusEnum.IN_PRODUCTION.value,
-                    CustomOrderStatusEnum.READY.value,
-                )
-            )
-        ),
+        db, select(func.count(Order.id)).where(is_custom, unfinished)
     )
     custom_due_today = await _count(
         db,
-        select(func.count(CustomOrder.id)).where(
-            CustomOrder.due_date == today,
-            CustomOrder.status.not_in(
-                (
-                    CustomOrderStatusEnum.COMPLETED.value,
-                    CustomOrderStatusEnum.CANCELLED.value,
-                )
-            ),
+        select(func.count(Order.id)).where(
+            is_custom,
+            unfinished,
+            Order.promised_at >= start,
+            Order.promised_at <= end,
         ),
     )
 

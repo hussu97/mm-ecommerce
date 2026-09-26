@@ -55,7 +55,6 @@ CROSS_CUTTING = {
     "cart_service",
     "cms_service",
     "crud_service",
-    "custom_order_service",
     # The customer directory derives identity from both accounts and every
     # canonical order channel, then serves the admin read model. It spans
     # identity/auth and orders, so it has no single domain package.
@@ -64,9 +63,9 @@ CROSS_CUTTING = {
     # delivery-zone geometry for the admin map; it is deliberately not an orders
     # or delivery writer, so it has no one domain package.
     "customer_delivery_area_service",
-    # Storefront custom-order enquiry: a lead, not a booking. It belongs to no
-    # ordering domain (it deliberately never touches orders/custom_orders) — it
-    # captures a message and hands off to email, so it sits beside its sibling.
+    # Storefront custom-order enquiry: a lead, not an order. It belongs to no
+    # ordering domain (it deliberately never touches orders) — it captures a
+    # message and hands off to email.
     "custom_order_enquiry_service",
     "email_copy",
     "email_service",

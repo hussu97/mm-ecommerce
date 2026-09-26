@@ -76,7 +76,6 @@ async def cleanup(maker):
 async def test_enquiry_stores_lead_and_emails_without_creating_an_order(
     client, maker, monkeypatch
 ):
-    from app.models.custom_order import CustomOrder
     from app.models.custom_order_enquiry import CustomOrderEnquiry
     from app.models.order import Order
     from app.services import email_service
@@ -91,10 +90,6 @@ async def test_enquiry_stores_lead_and_emails_without_creating_an_order(
     async with maker() as db:
         orders_before = int(
             (await db.execute(select(func.count()).select_from(Order))).scalar() or 0
-        )
-        custom_before = int(
-            (await db.execute(select(func.count()).select_from(CustomOrder))).scalar()
-            or 0
         )
 
     due = (date.today() + timedelta(days=20)).isoformat()
@@ -129,16 +124,11 @@ async def test_enquiry_stores_lead_and_emails_without_creating_an_order(
         assert len(row.reference_image_urls) == 2
         assert str(row.delivery_by) == due
 
-        # No order and no custom order were created — this is a lead, not a booking.
+        # No order was created — this is a lead, not an order.
         orders_after = int(
             (await db.execute(select(func.count()).select_from(Order))).scalar() or 0
         )
-        custom_after = int(
-            (await db.execute(select(func.count()).select_from(CustomOrder))).scalar()
-            or 0
-        )
     assert orders_after == orders_before
-    assert custom_after == custom_before
 
     # The shop was emailed exactly once, with the row we stored.
     assert len(sent) == 1

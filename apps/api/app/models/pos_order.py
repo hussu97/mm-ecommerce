@@ -60,6 +60,10 @@ class OrderSourceEnum(str, enum.Enum):
     #: is deliberately *not* treated like an `online` order by the delivery,
     #: refund and email machinery. See `services/grubops_orders_service.py`.
     AGGREGATOR = "aggregator"
+    #: A bespoke cake taken by the shop (phone, DM, enquiry form) at the custom-
+    #: orders branch. Its behaviour differs from `online` in named ways — see
+    #: `services/orders/channels.py`, which is the one place that says how.
+    CUSTOM = "custom"
 
 
 class PosOrderStatusEnum(str, enum.Enum):

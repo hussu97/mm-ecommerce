@@ -15,11 +15,11 @@ from .cart import router as cart_router
 from .catalog_sync import router as catalog_sync_router
 from .categories import router as categories_router
 from .cms import router as cms_router
-from .custom_orders import (
-    admin_router as custom_orders_admin_router,
+from .custom_order_enquiries import (
+    admin_router as custom_order_enquiries_admin_router,
 )
-from .custom_orders import (
-    router as custom_orders_router,
+from .custom_order_enquiries import (
+    router as custom_order_enquiries_router,
 )
 from .dashboard import router as home_dashboard_router
 from .delivery import router as delivery_router
@@ -160,10 +160,12 @@ api_router.include_router(export_router, prefix="/export", tags=["Export"])
 api_router.include_router(i18n_router, prefix="/i18n", tags=["i18n"])
 api_router.include_router(cms_router, prefix="/cms", tags=["CMS"])
 api_router.include_router(
-    custom_orders_router, prefix="/custom-orders", tags=["Custom Orders"]
+    custom_order_enquiries_router, prefix="/custom-orders", tags=["Custom Orders"]
 )
+# Mounted before the custom-order admin router, whose `/{order_number}` would
+# otherwise swallow `/enquiries`.
 api_router.include_router(
-    custom_orders_admin_router,
+    custom_order_enquiries_admin_router,
     prefix="/admin/custom-orders",
     tags=["Custom Orders"],
 )

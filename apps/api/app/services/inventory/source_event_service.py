@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import func, or_, select, text
@@ -100,7 +101,15 @@ async def accept_order(
     order: Order,
     user: User | None,
     correction_group_id: uuid.UUID | None = None,
+    occurred_at: datetime | None = None,
 ) -> InventorySourceEvent | None:
+    """Freeze the order's consumption plan and post it, once per revision.
+
+    `occurred_at` dates the movement; it defaults to when the order was placed.
+    A channel that consumes at packing (custom orders, taken days ahead) passes
+    the packing moment, so the ledger and replenishment see the draw on the day
+    the cake was made.
+    """
     if order.branch_id is None:
         return None
     settings = (
@@ -187,7 +196,7 @@ async def accept_order(
         source_revision=revision,
         idempotency_key=key,
         status=InventorySourceEventStatusEnum.PENDING.value,
-        occurred_at=order.created_at,
+        occurred_at=occurred_at or order.created_at,
         accepted_at=utcnow(),
         frozen_plan=plan,
         recipe_version_ids=plan.get("recipe_version_ids", []),

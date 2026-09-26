@@ -45,6 +45,7 @@ from app.models.order_status_event import StatusSourceEnum, current_actor
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.models.product import Product
 from app.models.promo_code import PromoCode
+from app.services.orders import channels
 
 __all__ = [
     "ADMIN_RECOVERABLE",
@@ -472,18 +473,25 @@ async def _release_promo_use(db: AsyncSession, order: Order) -> None:
     order.promo_released_at = utcnow()
 
 
-def _mm_owns_fulfilment(order: Order) -> bool:
-    """Whether MM books the courier and holds the money for this order.
+async def _stamp_delivered(db: AsyncSession, order: Order) -> None:
+    """Record when the order was handed over, at the moment the trail records it.
 
-    True only for the storefront. A counter sale is settled on the till; an
-    aggregator order is delivered by the aggregator's own rider and was paid
-    through the aggregator, so the courier and refund machinery below
-    has nothing to act on and must not try — there is no MM delivery row to
-    cancel and no MM card to refund. What an aggregator order *does* still get
-    is its stock back (`_move_stock`) and its register check voided, because
-    those are facts about our own shelves and our own board.
+    Every channel gets `delivered_at`. A custom order also takes its trading
+    day and its close from that moment: it never sits on a register (so no
+    check ever carried a `business_date` for it), and the day it was handed
+    over is the day the business-date reports — sales, the daily email, the VAT
+    ledger — file it under.
     """
-    return order.source == OrderSourceEnum.ONLINE.value
+    moment = current_actor().at or utcnow()
+    order.delivered_at = moment
+    if channels.is_custom(order.source):
+        from app.models.branch import Branch
+        from app.services.pos import business_day_service
+
+        branch = await db.get(Branch, order.branch_id)
+        tz = await business_day_service.resolve_timezone(db)
+        order.business_date = business_day_service.business_date_for(branch, moment, tz)
+        order.closed_at = moment
 
 
 async def _consequences(
@@ -508,7 +516,12 @@ async def _consequences(
     The service imports are deferred: this module sits underneath
     `order_service` and the couriers, and importing them at the top would close
     the cycle they already thread carefully around.
+
+    Which of these apply to an order is its channel's business
+    (`channels.policy_for`), not a `source ==` test here.
     """
+    policy = channels.policy_for(order.source)
+
     # Confirmation no longer reaches the register. What it does is decide
     # *when* the register will hear: the order takes its place on a run if its
     # zone has one, and is stamped with the moment it is due to arrive.
@@ -528,8 +541,9 @@ async def _consequences(
         # event inside the service; an actual database failure must roll the
         # transition back so a retry cannot confirm an order with no durable
         # acceptance sequence.
-        await source_event_service.accept_order(db, order=order, user=None)
-        if _mm_owns_fulfilment(order):
+        if policy.consumes_stock_at == OrderStatusEnum.CONFIRMED:
+            await source_event_service.accept_order(db, order=order, user=None)
+        if policy.books_courier_automatically:
             from app.services.delivery import arrival_service
 
             await arrival_service.schedule(db, order)
@@ -540,7 +554,7 @@ async def _consequences(
     # minute. `publish_to_register` declines counter sales and repeats, so it is
     # safe to say twice, and the arrival sweep leans on that.
     elif new_status == OrderStatusEnum.ARRIVED_AT_POS:
-        if _mm_owns_fulfilment(order):
+        if policy.books_courier_automatically:
             from app.services.orders import order_service
 
             await order_service.publish_to_register(db, order)
@@ -552,7 +566,17 @@ async def _consequences(
     # the ordinary path this is free. Nothing happens for a third-party zone,
     # exactly as before.
     elif new_status == OrderStatusEnum.PACKED:
-        if _mm_owns_fulfilment(order):
+        # A channel that consumes at packing (custom orders: taken days ahead,
+        # recipe settled only once the cake is boxed) posts it here, dated now
+        # rather than when the order was taken. Idempotent per inventory
+        # revision, so an order packed again after `undelivered` posts nothing.
+        if policy.consumes_stock_at == OrderStatusEnum.PACKED:
+            from app.services.inventory import source_event_service
+
+            await source_event_service.accept_order(
+                db, order=order, user=None, occurred_at=utcnow()
+            )
+        if policy.books_courier_automatically:
             from app.services.couriers import courier_service
 
             # `lock=False`: the delivery row is already loaded on this session —
@@ -568,7 +592,7 @@ async def _consequences(
         new_status == OrderStatusEnum.CANCELLED
         and previous != OrderStatusEnum.DELIVERED
     ):
-        if _mm_owns_fulfilment(order):
+        if policy.manages_courier:
             from app.services.couriers import courier_service
 
             await courier_service.cancel(db, order)
@@ -601,12 +625,29 @@ async def _consequences(
         # visible exception until a person chooses restock, waste, or no stock
         # effect. If posting is still pending, the event is cancelled before it can
         # move anything.
-        from app.services.inventory import source_event_service
+        #
+        # A channel that consumes at packing has neither case: before packing
+        # nothing was posted, and what packing posted is a cake that was made —
+        # consumed, with no disposition for anybody to choose.
+        if policy.consumes_stock_at != OrderStatusEnum.PACKED:
+            from app.services.inventory import source_event_service
 
-        pre_packing = previous in _PRE_PACKING_STATUSES
-        await source_event_service.record_order_cancellation(
-            db, order, pre_packing=pre_packing
-        )
+            pre_packing = previous in _PRE_PACKING_STATUSES
+            await source_event_service.record_order_cancellation(
+                db, order, pre_packing=pre_packing
+            )
+
+        # A custom order that never reached a hand-over has no trading day of
+        # its own yet; file the cancellation under today's, so whatever it did
+        # cost (a courier already booked) reaches the business-date reports.
+        if channels.is_custom(order.source) and order.business_date is None:
+            from app.models.branch import Branch
+            from app.services.pos import business_day_service
+
+            branch = await db.get(Branch, order.branch_id)
+            order.business_date = await business_day_service.current_business_date(
+                db, branch
+            )
 
     # Cancelling an order that was *delivered* is a different act, and the guard
     # above steps around all of it. Two routes reach here. One is the admin refund
@@ -660,6 +701,7 @@ async def _consequences(
     # old rule is exactly the case this warning is for, and narrowing by the set
     # would step past it in silence. `refunded_amount` is the fact; ask it.
     if new_status == OrderStatusEnum.DELIVERED:
+        await _stamp_delivered(db, order)
         refunded = order.refunded_amount or 0
         if refunded:
             logger.warning(
@@ -711,7 +753,7 @@ async def _consequences(
     # on that.
     if (
         new_status in _REFUNDABLE_ENDINGS
-        and _mm_owns_fulfilment(order)
+        and policy.auto_refunds_card
         and previous != OrderStatusEnum.DELIVERED
     ):
         from app.services.payments import payment_service

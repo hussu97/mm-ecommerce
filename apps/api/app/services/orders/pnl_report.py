@@ -75,7 +75,8 @@ async def build(
     if date_from > date_to:
         date_from, date_to = date_to, date_from
     start, end = await business_day_service.range_bounds(db, date_from, date_to)
-    where = [Order.created_at >= start, Order.created_at <= end]
+    # `reporting_at`: a custom order counts on the day it was handed over.
+    where = [Order.reporting_at >= start, Order.reporting_at <= end]
     if channels:
         where.append(channel_expression().in_(channels))
     if branch_ids:

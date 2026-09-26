@@ -2217,7 +2217,11 @@ async def get_all_admin(
     bounds = await business_day_service.range_bounds(db, date_from, date_to)
     if bounds is not None:
         start, end = bounds
-        base_stmt = base_stmt.where(Order.created_at >= start, Order.created_at <= end)
+        # `reporting_at`, the dashboard's and the P&L's date: a custom order is
+        # listed on its delivery day, not the day it was taken.
+        base_stmt = base_stmt.where(
+            Order.reporting_at >= start, Order.reporting_at <= end
+        )
 
     picked_statuses = list(statuses or [])
     if status:

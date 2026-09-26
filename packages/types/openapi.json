@@ -3073,34 +3073,6 @@
         "title": "AuditLogItem",
         "type": "object"
       },
-      "AvailabilityResponse": {
-        "properties": {
-          "days": {
-            "items": {
-              "$ref": "#/components/schemas/DayAvailabilityResponse"
-            },
-            "title": "Days",
-            "type": "array"
-          },
-          "earliest_date": {
-            "format": "date",
-            "title": "Earliest Date",
-            "type": "string"
-          },
-          "latest_date": {
-            "format": "date",
-            "title": "Latest Date",
-            "type": "string"
-          }
-        },
-        "required": [
-          "earliest_date",
-          "latest_date",
-          "days"
-        ],
-        "title": "AvailabilityResponse",
-        "type": "object"
-      },
       "AvailablePromotionResponse": {
         "description": "A counter promotion as the register lists it for one branch.\n\n`mode` is how it runs there: `coupon` ones are the chips the cashier taps,\nthe `auto` one is applied by itself (the register may label it).\n`is_live_now` is the schedule (dates, weekday, time window) in the shop's\ntime zone at the moment of the request; min spend is left to the check,\nvia `trigger_value`.",
         "properties": {
@@ -3159,64 +3131,6 @@
           "is_live_now"
         ],
         "title": "AvailablePromotionResponse",
-        "type": "object"
-      },
-      "BlackoutCreate": {
-        "properties": {
-          "blackout_date": {
-            "format": "date",
-            "title": "Blackout Date",
-            "type": "string"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          }
-        },
-        "required": [
-          "blackout_date"
-        ],
-        "title": "BlackoutCreate",
-        "type": "object"
-      },
-      "BlackoutResponse": {
-        "properties": {
-          "blackout_date": {
-            "format": "date",
-            "title": "Blackout Date",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          }
-        },
-        "required": [
-          "id",
-          "blackout_date",
-          "reason"
-        ],
-        "title": "BlackoutResponse",
         "type": "object"
       },
       "BlogPostCreate": {
@@ -6460,6 +6374,42 @@
             "title": "Currency Symbol",
             "type": "string"
           },
+          "custom_orders_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Orders Branch Id"
+          },
+          "custom_orders_inventory_category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Orders Inventory Category Id"
+          },
+          "custom_orders_product_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Orders Product Id"
+          },
           "decimal_places": {
             "title": "Decimal Places",
             "type": "integer"
@@ -6688,6 +6638,9 @@
           "order_number_reset_daily",
           "enable_tips",
           "extra",
+          "custom_orders_branch_id",
+          "custom_orders_product_id",
+          "custom_orders_inventory_category_id",
           "created_at",
           "updated_at"
         ],
@@ -6763,6 +6716,42 @@
               }
             ],
             "title": "Currency Symbol"
+          },
+          "custom_orders_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Orders Branch Id"
+          },
+          "custom_orders_inventory_category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Orders Inventory Category Id"
+          },
+          "custom_orders_product_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Orders Product Id"
           },
           "decimal_places": {
             "anyOf": [
@@ -7141,60 +7130,6 @@
           }
         },
         "title": "BusinessSettingsUpdate",
-        "type": "object"
-      },
-      "CalendarDay": {
-        "properties": {
-          "blackout_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blackout Reason"
-          },
-          "booked": {
-            "title": "Booked",
-            "type": "integer"
-          },
-          "capacity": {
-            "title": "Capacity",
-            "type": "integer"
-          },
-          "date": {
-            "format": "date",
-            "title": "Date",
-            "type": "string"
-          },
-          "is_blackout": {
-            "title": "Is Blackout",
-            "type": "boolean"
-          },
-          "orders": {
-            "items": {
-              "$ref": "#/components/schemas/CustomOrderResponse"
-            },
-            "title": "Orders",
-            "type": "array"
-          },
-          "remaining": {
-            "title": "Remaining",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "date",
-          "capacity",
-          "booked",
-          "remaining",
-          "is_blackout",
-          "blackout_reason",
-          "orders"
-        ],
-        "title": "CalendarDay",
         "type": "object"
       },
       "CancellationExposureResponse": {
@@ -11149,197 +11084,6 @@
         "title": "CreateSessionResponse",
         "type": "object"
       },
-      "CustomOrderCreate": {
-        "properties": {
-          "admin_notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Admin Notes"
-          },
-          "allow_past": {
-            "default": false,
-            "title": "Allow Past",
-            "type": "boolean"
-          },
-          "branch_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Branch Id"
-          },
-          "brief": {
-            "additionalProperties": true,
-            "title": "Brief",
-            "type": "object"
-          },
-          "cake_message": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cake Message"
-          },
-          "customer_email": {
-            "anyOf": [
-              {
-                "maxLength": 255,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Email"
-          },
-          "customer_name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Customer Name",
-            "type": "string"
-          },
-          "customer_phone": {
-            "anyOf": [
-              {
-                "maxLength": 30,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Phone"
-          },
-          "deposit_amount": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              }
-            ],
-            "default": "0",
-            "title": "Deposit Amount"
-          },
-          "description": {
-            "minLength": 1,
-            "title": "Description",
-            "type": "string"
-          },
-          "due_date": {
-            "format": "date",
-            "title": "Due Date",
-            "type": "string"
-          },
-          "flavour": {
-            "anyOf": [
-              {
-                "maxLength": 120,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Flavour"
-          },
-          "product_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Product Id"
-          },
-          "quoted_total": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quoted Total"
-          },
-          "reference_image_urls": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Reference Image Urls",
-            "type": "array"
-          },
-          "servings": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Servings"
-          },
-          "size_label": {
-            "anyOf": [
-              {
-                "maxLength": 60,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size Label"
-          },
-          "source": {
-            "default": "instagram",
-            "title": "Source",
-            "type": "string"
-          },
-          "status": {
-            "default": "enquiry",
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "due_date",
-          "customer_name",
-          "description"
-        ],
-        "title": "CustomOrderCreate",
-        "type": "object"
-      },
       "CustomOrderEnquiryAdminResponse": {
         "description": "The whole lead, for the admin Enquiries list.",
         "properties": {
@@ -11508,399 +11252,6 @@
           "created_at"
         ],
         "title": "CustomOrderEnquiryResponse",
-        "type": "object"
-      },
-      "CustomOrderResponse": {
-        "properties": {
-          "admin_notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Admin Notes"
-          },
-          "branch_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Branch Id"
-          },
-          "brief": {
-            "additionalProperties": true,
-            "title": "Brief",
-            "type": "object"
-          },
-          "cake_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cake Message"
-          },
-          "customer_email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Email"
-          },
-          "customer_name": {
-            "title": "Customer Name",
-            "type": "string"
-          },
-          "customer_phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Phone"
-          },
-          "deposit_amount": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Deposit Amount",
-            "type": "string"
-          },
-          "description": {
-            "title": "Description",
-            "type": "string"
-          },
-          "due_date": {
-            "format": "date",
-            "title": "Due Date",
-            "type": "string"
-          },
-          "flavour": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Flavour"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "order_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Order Id"
-          },
-          "product_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Product Id"
-          },
-          "quoted_total": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quoted Total"
-          },
-          "reference_image_urls": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Reference Image Urls",
-            "type": "array"
-          },
-          "servings": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Servings"
-          },
-          "size_label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size Label"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "due_date",
-          "status",
-          "source",
-          "order_id",
-          "customer_name",
-          "customer_phone",
-          "customer_email",
-          "description",
-          "cake_message",
-          "flavour",
-          "size_label",
-          "servings",
-          "reference_image_urls",
-          "quoted_total",
-          "deposit_amount",
-          "branch_id",
-          "product_id",
-          "brief",
-          "admin_notes"
-        ],
-        "title": "CustomOrderResponse",
-        "type": "object"
-      },
-      "CustomOrderStatusUpdate": {
-        "properties": {
-          "status": {
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "title": "CustomOrderStatusUpdate",
-        "type": "object"
-      },
-      "CustomOrderUpdate": {
-        "properties": {
-          "admin_notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Admin Notes"
-          },
-          "branch_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Branch Id"
-          },
-          "cake_message": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cake Message"
-          },
-          "customer_email": {
-            "anyOf": [
-              {
-                "maxLength": 255,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Email"
-          },
-          "customer_name": {
-            "anyOf": [
-              {
-                "maxLength": 150,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Name"
-          },
-          "customer_phone": {
-            "anyOf": [
-              {
-                "maxLength": 30,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Phone"
-          },
-          "deposit_amount": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Deposit Amount"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "due_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Due Date"
-          },
-          "flavour": {
-            "anyOf": [
-              {
-                "maxLength": 120,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Flavour"
-          },
-          "quoted_total": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quoted Total"
-          },
-          "reference_image_urls": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reference Image Urls"
-          },
-          "servings": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Servings"
-          },
-          "size_label": {
-            "anyOf": [
-              {
-                "maxLength": 60,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size Label"
-          }
-        },
-        "title": "CustomOrderUpdate",
         "type": "object"
       },
       "CustomerBreakdown": {
@@ -12684,41 +12035,6 @@
           "ops"
         ],
         "title": "DashboardTodayResponse",
-        "type": "object"
-      },
-      "DayAvailabilityResponse": {
-        "properties": {
-          "available": {
-            "title": "Available",
-            "type": "boolean"
-          },
-          "date": {
-            "format": "date",
-            "title": "Date",
-            "type": "string"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "remaining": {
-            "title": "Remaining",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "date",
-          "available",
-          "remaining"
-        ],
-        "title": "DayAvailabilityResponse",
         "type": "object"
       },
       "DeliverooFinancePush": {
@@ -19387,11 +18703,74 @@
       },
       "LegalEntityCreate": {
         "properties": {
+          "bank_account_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Account Name"
+          },
+          "bank_account_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Account Number"
+          },
+          "bank_name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Name"
+          },
           "brand_name": {
             "maxLength": 200,
             "minLength": 1,
             "title": "Brand Name",
             "type": "string"
+          },
+          "iban": {
+            "anyOf": [
+              {
+                "maxLength": 34,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iban"
+          },
+          "invoice_cc_emails": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "email",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Cc Emails"
           },
           "invoice_title": {
             "default": "Tax Invoice",
@@ -19428,6 +18807,30 @@
             "minLength": 1,
             "title": "Reference",
             "type": "string"
+          },
+          "registered_address": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Address"
+          },
+          "swift_code": {
+            "anyOf": [
+              {
+                "maxLength": 11,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swift Code"
           },
           "tax_number": {
             "anyOf": [
@@ -19469,6 +18872,39 @@
       },
       "LegalEntityResponse": {
         "properties": {
+          "bank_account_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Account Name"
+          },
+          "bank_account_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Account Number"
+          },
+          "bank_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Name"
+          },
           "brand_name": {
             "title": "Brand Name",
             "type": "string"
@@ -19478,10 +18914,35 @@
             "title": "Created At",
             "type": "string"
           },
+          "iban": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iban"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "invoice_cc_emails": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Cc Emails"
           },
           "invoice_title": {
             "title": "Invoice Title",
@@ -19509,6 +18970,28 @@
           "reference": {
             "title": "Reference",
             "type": "string"
+          },
+          "registered_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Address"
+          },
+          "swift_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swift Code"
           },
           "tax_number": {
             "anyOf": [
@@ -19561,6 +19044,42 @@
       },
       "LegalEntityUpdate": {
         "properties": {
+          "bank_account_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Account Name"
+          },
+          "bank_account_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Account Number"
+          },
+          "bank_name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Name"
+          },
           "brand_name": {
             "anyOf": [
               {
@@ -19573,6 +19092,33 @@
               }
             ],
             "title": "Brand Name"
+          },
+          "iban": {
+            "anyOf": [
+              {
+                "maxLength": 34,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iban"
+          },
+          "invoice_cc_emails": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "email",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Cc Emails"
           },
           "invoice_title": {
             "anyOf": [
@@ -19622,6 +19168,30 @@
               }
             ],
             "title": "Logo Url"
+          },
+          "registered_address": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Address"
+          },
+          "swift_code": {
+            "anyOf": [
+              {
+                "maxLength": 11,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swift Code"
           },
           "tax_number": {
             "anyOf": [
@@ -43716,313 +43286,9 @@
         ]
       }
     },
-    "/api/v1/admin/custom-orders": {
-      "get": {
-        "operationId": "list_custom_orders_api_v1_admin_custom_orders_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Status"
-            }
-          },
-          {
-            "in": "query",
-            "name": "upcoming_only",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Upcoming Only",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "maximum": 500,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CustomOrderResponse"
-                  },
-                  "title": "Response List Custom Orders Api V1 Admin Custom Orders Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "List Custom Orders",
-        "tags": [
-          "Custom Orders"
-        ]
-      },
-      "post": {
-        "description": "Record an order that arrived somewhere this system cannot see.",
-        "operationId": "create_custom_order_api_v1_admin_custom_orders_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CustomOrderCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CustomOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Create Custom Order",
-        "tags": [
-          "Custom Orders"
-        ]
-      }
-    },
-    "/api/v1/admin/custom-orders/blackouts": {
-      "get": {
-        "operationId": "list_blackouts_api_v1_admin_custom_orders_blackouts_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/BlackoutResponse"
-                  },
-                  "title": "Response List Blackouts Api V1 Admin Custom Orders Blackouts Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "List Blackouts",
-        "tags": [
-          "Custom Orders"
-        ]
-      },
-      "post": {
-        "description": "Close a date.\n\nRefuses if something is already booked on it, rather than blacking out a day\nthe kitchen has already promised. Move or cancel the booking first \u2014 the\ncalendar should never disagree with what has been said to a customer.",
-        "operationId": "create_blackout_api_v1_admin_custom_orders_blackouts_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BlackoutCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BlackoutResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Create Blackout",
-        "tags": [
-          "Custom Orders"
-        ]
-      }
-    },
-    "/api/v1/admin/custom-orders/blackouts/{blackout_id}": {
-      "delete": {
-        "operationId": "delete_blackout_api_v1_admin_custom_orders_blackouts__blackout_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "blackout_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Blackout Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Delete Blackout",
-        "tags": [
-          "Custom Orders"
-        ]
-      }
-    },
-    "/api/v1/admin/custom-orders/calendar": {
-      "get": {
-        "description": "The month view: every date in the window with what is booked on it.",
-        "operationId": "get_calendar_api_v1_admin_custom_orders_calendar_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "start",
-            "required": true,
-            "schema": {
-              "format": "date",
-              "title": "Start",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "end",
-            "required": true,
-            "schema": {
-              "format": "date",
-              "title": "End",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CalendarDay"
-                  },
-                  "title": "Response Get Calendar Api V1 Admin Custom Orders Calendar Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Get Calendar",
-        "tags": [
-          "Custom Orders"
-        ]
-      }
-    },
     "/api/v1/admin/custom-orders/enquiries": {
       "get": {
-        "description": "The custom-order enquiries sent from the storefront, newest first.\n\nRead-only: these are leads someone answers by phone or email, not bookings on\nthe calendar. Same permission as the custom-order diary, since the same people\nhandle both.",
+        "description": "The custom-order enquiries sent from the storefront, newest first.\n\nRead-only: these are leads someone answers by phone or email. Same\npermission as custom orders, since the same people handle both and an\nenquiry is converted into one.",
         "operationId": "list_enquiries_api_v1_admin_custom_orders_enquiries_get",
         "parameters": [
           {
@@ -44077,122 +43343,6 @@
           }
         ],
         "summary": "List Enquiries",
-        "tags": [
-          "Custom Orders"
-        ]
-      }
-    },
-    "/api/v1/admin/custom-orders/{custom_order_id}": {
-      "put": {
-        "operationId": "update_custom_order_api_v1_admin_custom_orders__custom_order_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "custom_order_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Custom Order Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CustomOrderUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CustomOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Update Custom Order",
-        "tags": [
-          "Custom Orders"
-        ]
-      }
-    },
-    "/api/v1/admin/custom-orders/{custom_order_id}/status": {
-      "put": {
-        "operationId": "update_status_api_v1_admin_custom_orders__custom_order_id__status_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "custom_order_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Custom Order Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CustomOrderStatusUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CustomOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Update Status",
         "tags": [
           "Custom Orders"
         ]
@@ -51967,74 +51117,9 @@
         ]
       }
     },
-    "/api/v1/custom-orders/availability": {
-      "get": {
-        "description": "Which dates can still take a custom order.\n\nPublic, because the date picker is on the product page and the customer has\nno account yet. It reports counts and never names \u2014 a customer asking when\nthey can order a cake has no business learning who else ordered one.",
-        "operationId": "get_availability_api_v1_custom_orders_availability_get",
-        "parameters": [
-          {
-            "description": "Applies this product's own lead time, if it has one",
-            "in": "query",
-            "name": "product_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Applies this product's own lead time, if it has one",
-              "title": "Product Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 90,
-              "maximum": 400,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AvailabilityResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Availability",
-        "tags": [
-          "Custom Orders"
-        ]
-      }
-    },
     "/api/v1/custom-orders/enquiry": {
       "post": {
-        "description": "Take a custom-order request from the \"We cater to\" section of the home page.\n\nThis stores a lead and emails the shop \u2014 it does **not** create an order or a\n`CustomOrder`, and holds no slot on the custom-cake calendar. A human reads it\nand decides whether it becomes a booking, which is why the form tells the\ncustomer their delivery date is confirmed only after review.",
+        "description": "Take a custom-order request from the \"We cater to\" section of the home page.\n\nThis stores a lead and emails the shop \u2014 it does **not** create an order. A\nhuman reads it and decides whether it becomes a custom order, which is why\nthe form tells the customer their delivery date is confirmed only after\nreview.",
         "operationId": "submit_enquiry_api_v1_custom_orders_enquiry_post",
         "requestBody": {
           "content": {

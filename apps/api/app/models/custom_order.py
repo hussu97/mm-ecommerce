@@ -1,201 +1,165 @@
 """
-Custom cakes: the ones that have to be booked rather than picked off a shelf.
+Custom cakes: bespoke orders the shop takes by phone, DM, the enquiry form or at
+the counter, and makes to a brief.
 
-A stock brownie box is made in bulk and sold until it runs out. A custom cake is
-a day of somebody's work — it has to be booked for a date, and only so many can
-be booked for the same date. That capacity is the whole point of this module:
-without it the shop takes four wedding cakes for the same Saturday and finds out
-on Friday.
+A custom order **is an order** — an `orders` row with `source = 'custom'` — so it
+has the same lines, totals, VAT, customer, address, courier booking, P&L and
+ledger as every other channel, and every screen that lists orders can list it.
+What it has that no other order has lives here, one row per order, rather than
+as custom-only columns on a table every channel shares:
 
-Two things book that capacity, and they are equally real:
-
-* an order placed on the website for a product tagged customisable, and
-* an order taken over Instagram or WhatsApp, which has no order behind it at all
-  and never will.
-
-The second is why `CustomOrder` exists as its own row rather than a few columns
-on `orders`. Most of this bakery's custom work arrives as a DM, and a calendar
-that only knew about website orders would show a free Saturday that is in fact
-fully booked — which is worse than no calendar, because someone would trust it.
+* how the customer is paying, and whether a card fee was put on the bill;
+* the enquiry it was converted from, if any;
+* when the kitchen docket reached the Sharjah register (the moment the order
+  becomes `arrived_at_pos`);
+* its **recipe** — the semi-finished bases (ganache, sponges) the kitchen will
+  use, chosen per order because no two custom cakes are the same. It belongs to
+  the order, not to a line: a three-tier cake is one line and one recipe. It is
+  consumed from the ledger when the order is packed, through the same
+  `source_event_service` path every order uses (`recipe_service.snapshot_order`
+  reads these lines instead of product recipes for this channel).
 """
 
 from __future__ import annotations
 
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
-    Date,
+    CheckConstraint,
     DateTime,
     ForeignKey,
-    Index,
     Integer,
     Numeric,
     String,
-    Text,
+    UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 
 
-class CustomOrderSourceEnum(str, enum.Enum):
-    """Where the request came from. `website` is the only one with an order."""
+class CustomOrderPaymentTypeEnum(str, enum.Enum):
+    """How the customer pays. Never collected by a rider: a custom order is never
+    cash on delivery, even when it is paid in cash — the customer pays the shop
+    separately, and the courier only carries the cake."""
 
-    WEBSITE = "website"
-    INSTAGRAM = "instagram"
-    WHATSAPP = "whatsapp"
-    PHONE = "phone"
-    WALK_IN = "walk_in"
-    OTHER = "other"
-
-
-class CustomOrderStatusEnum(str, enum.Enum):
-    #: Someone asked. Holds a slot, because a maybe still has to be baked if it
-    #: turns into a yes, and releasing it on confirmation is easier than
-    #: apologising for double-booking.
-    ENQUIRY = "enquiry"
-    CONFIRMED = "confirmed"
-    IN_PRODUCTION = "in_production"
-    READY = "ready"
-    COMPLETED = "completed"
-    #: Releases the slot.
-    CANCELLED = "cancelled"
+    BANK_TRANSFER = "bank_transfer"
+    CARD = "card"
+    CASH = "cash"
 
 
-#: Statuses that still occupy a slot on their date.
-OCCUPIES_SLOT = frozenset(
-    {
-        CustomOrderStatusEnum.ENQUIRY.value,
-        CustomOrderStatusEnum.CONFIRMED.value,
-        CustomOrderStatusEnum.IN_PRODUCTION.value,
-        CustomOrderStatusEnum.READY.value,
-    }
-)
+class CustomOrderCardFeeModeEnum(str, enum.Enum):
+    """Whether a card payment's processing fee is billed as its own line.
+
+    `separate_line` adds an `order_charges` row the customer pays; `included`
+    means the line prices already absorb it. Either way the fee is recorded as
+    the order's `payment_fee` cost, so the channel's P&L carries it."""
+
+    SEPARATE_LINE = "separate_line"
+    INCLUDED = "included"
 
 
-class CustomOrder(Base, UUIDMixin, TimestampMixin):
-    """One booked custom cake, whatever channel asked for it."""
+class CustomOrderCreatedViaEnum(str, enum.Enum):
+    ADMIN = "admin"
+    POS = "pos"
+
+
+class CustomOrder(Base, TimestampMixin):
+    """The custom-only half of an `orders` row with `source = 'custom'`."""
 
     __tablename__ = "custom_orders"
     __table_args__ = (
-        # The calendar's only query: "what is booked on this date". Everything
-        # else — admin lists, a customer's history — is rarer than this.
-        Index("ix_custom_orders_due_date_status", "due_date", "status"),
-        # Migration 099: a typo'd status here is a slot the capacity check
-        # either never releases or never counts.
-        status_vocabulary("custom_orders", "status", CustomOrderStatusEnum),
-        # Migration 138. Ours, not a provider's: a request arrives by one of
-        # four routes we chose, and the sibling `status` has been constrained
-        # since 099.
-        status_vocabulary("custom_orders", "source", CustomOrderSourceEnum),
+        status_vocabulary(
+            "custom_orders", "payment_type", CustomOrderPaymentTypeEnum, nullable=True
+        ),
+        status_vocabulary(
+            "custom_orders", "card_fee_mode", CustomOrderCardFeeModeEnum, nullable=True
+        ),
+        status_vocabulary("custom_orders", "created_via", CustomOrderCreatedViaEnum),
+        # A card payment has to say where its fee went; nothing else has a fee.
+        CheckConstraint(
+            "(payment_type IS NOT DISTINCT FROM 'card') = (card_fee_mode IS NOT NULL)",
+            name="ck_custom_orders_card_fee_mode_iff_card",
+        ),
     )
 
-    #: The date the cake is wanted. Not nullable: a custom order with no date is
-    #: not a booking, and the capacity check has nothing to count.
-    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-
-    status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        server_default=CustomOrderStatusEnum.ENQUIRY.value,
-        index=True,
-    )
-    source: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        server_default=CustomOrderSourceEnum.WEBSITE.value,
-    )
-
-    #: The storefront order, when there is one. Null for everything that arrived
-    #: as a DM, which is most of them. SET NULL rather than CASCADE: deleting an
-    #: order must not silently free a slot the kitchen is still working on.
-    order_id: Mapped[uuid.UUID | None] = mapped_column(
+    order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("orders.id", ondelete="SET NULL"),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    payment_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    card_fee_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: The storefront enquiry this order was converted from. Unique: one lead
+    #: becomes at most one order.
+    enquiry_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("custom_order_enquiries.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
+        unique=True,
     )
-
-    #: Denormalised deliberately. An Instagram order has no user and no order,
-    #: and the person taking it on their phone has a name and a number and
-    #: nothing else.
-    customer_name: Mapped[str] = mapped_column(String(150), nullable=False)
-    customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    customer_phone_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
-    customer_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    #: What was asked for, in the customer's words.
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    #: Written on the cake. Kept apart from `description` because it is the one
-    #: field that must be reproduced exactly, spelling included.
-    cake_message: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    flavour: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    size_label: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    servings: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    #: Reference photographs, in R2. The single most useful thing a customer
-    #: sends and the thing a chat thread loses first.
-    reference_image_urls: Mapped[Any] = mapped_column(
-        ARRAY(String), nullable=False, default=list, server_default="{}"
-    )
-
-    quoted_total: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
-    deposit_amount: Mapped[Any] = mapped_column(
-        Numeric(10, 2), nullable=False, server_default="0"
-    )
-    deposit_paid_at: Mapped[datetime | None] = mapped_column(
+    created_via: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: Set once, by the first register to claim the docket (a conditional
+    #: UPDATE, so two iPads woken by the same push cannot both print it).
+    kitchen_printed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-
-    #: Which kitchen is making it, when that has been decided.
-    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("branches.id", ondelete="SET NULL"),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
-    #: For a website order, the product that was tagged customisable.
-    product_id: Mapped[uuid.UUID | None] = mapped_column(
+
+    recipe_lines: Mapped[list[CustomOrderRecipeLine]] = relationship(
+        back_populates="custom_order",
+        cascade="all, delete-orphan",
+        order_by="CustomOrderRecipeLine.position",
+        lazy="selectin",
+    )
+
+    def __repr__(self) -> str:
+        return f"<CustomOrder {self.order_id}>"
+
+
+class CustomOrderRecipeLine(Base, UUIDMixin, TimestampMixin):
+    """One semi-finished base this order will use, and how much.
+
+    `quantity` is in the item's **ingredient** unit — the unit recipes are
+    written in and the unit the consumption poster converts from
+    (`source_event_service.post_event` posts `unit="ingredient"`). It may exceed
+    what is on hand: the ledger goes negative and the next production or count
+    settles it.
+    """
+
+    __tablename__ = "custom_order_recipe_lines"
+    __table_args__ = (
+        UniqueConstraint(
+            "order_id", "item_id", name="uq_custom_order_recipe_lines_order_item"
+        ),
+        CheckConstraint("quantity > 0", name="ck_custom_order_recipe_lines_quantity"),
+    )
+
+    order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("products.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("custom_orders.order_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    #: Whatever else the customer answered. Free-form so the brief can grow
-    #: without a migration every time someone asks a new question.
-    brief: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="{}")
-    admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
+    quantity: Mapped[Any] = mapped_column(Numeric(20, 8), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
-    @property
-    def occupies_slot(self) -> bool:
-        return self.status in OCCUPIES_SLOT
+    custom_order: Mapped[CustomOrder] = relationship(back_populates="recipe_lines")
 
     def __repr__(self) -> str:
-        return f"<CustomOrder {self.due_date} {self.customer_name} {self.status}>"
-
-
-class CustomOrderBlackout(Base, UUIDMixin, TimestampMixin):
-    """
-    A date that takes no custom orders at all, whatever the capacity says.
-
-    Eid, a holiday, the week the oven is being serviced. Separate from setting
-    capacity to zero for the day because it carries a reason, and because
-    capacity is a standing number rather than a diary.
-    """
-
-    __tablename__ = "custom_order_blackouts"
-
-    blackout_date: Mapped[date] = mapped_column(
-        Date, nullable=False, unique=True, index=True
-    )
-    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
-
-    def __repr__(self) -> str:
-        return f"<CustomOrderBlackout {self.blackout_date}>"
+        return f"<CustomOrderRecipeLine {self.item_id} × {self.quantity}>"

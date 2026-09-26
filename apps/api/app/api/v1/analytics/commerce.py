@@ -66,8 +66,8 @@ async def get_overview(
         func.count(func.distinct(Order.user_id)).label("customers"),
     ).where(
         Order.status != OrderStatusEnum.CANCELLED,
-        func.date(Order.created_at) >= start,
-        func.date(Order.created_at) <= end,
+        func.date(Order.reporting_at) >= start,
+        func.date(Order.reporting_at) <= end,
     )
     result = (await db.execute(stmt)).one()
 
@@ -86,8 +86,8 @@ async def get_overview(
         func.count(Order.id).label("orders"),
     ).where(
         Order.status != OrderStatusEnum.CANCELLED,
-        func.date(Order.created_at) >= prev_start,
-        func.date(Order.created_at) <= prev_end,
+        func.date(Order.reporting_at) >= prev_start,
+        func.date(Order.reporting_at) <= prev_end,
     )
     prev = (await db.execute(prev_stmt)).one()
     prev_rev = float(prev.revenue)
@@ -126,7 +126,7 @@ async def get_revenue(
     if cached is not None:
         return [RevenuePoint(**item) for item in cached]
 
-    trunc = func.date_trunc(group_by, Order.created_at)
+    trunc = func.date_trunc(group_by, Order.reporting_at)
 
     stmt = (
         select(
@@ -135,8 +135,8 @@ async def get_revenue(
         )
         .where(
             Order.status != OrderStatusEnum.CANCELLED,
-            func.date(Order.created_at) >= start,
-            func.date(Order.created_at) <= end,
+            func.date(Order.reporting_at) >= start,
+            func.date(Order.reporting_at) <= end,
         )
         .group_by("period")
         .order_by("period")
@@ -174,13 +174,13 @@ async def get_orders_chart(
     if cached is not None:
         return [OrdersPoint(**item) for item in cached]
 
-    trunc = func.date_trunc(group_by, Order.created_at)
+    trunc = func.date_trunc(group_by, Order.reporting_at)
 
     stmt = (
         select(trunc.label("period"), func.count(Order.id).label("count"))
         .where(
-            func.date(Order.created_at) >= start,
-            func.date(Order.created_at) <= end,
+            func.date(Order.reporting_at) >= start,
+            func.date(Order.reporting_at) <= end,
         )
         .group_by("period")
         .order_by("period")
@@ -228,8 +228,8 @@ async def get_top_products(
         .join(Order, Order.id == OrderItem.order_id)
         .where(
             Order.status != OrderStatusEnum.CANCELLED,
-            func.date(Order.created_at) >= start,
-            func.date(Order.created_at) <= end,
+            func.date(Order.reporting_at) >= start,
+            func.date(Order.reporting_at) <= end,
         )
         .group_by(OrderItem.product_name, OrderItem.product_sku)
         .order_by(func.sum(OrderItem.total_price).desc())
@@ -282,8 +282,8 @@ async def get_customers(
         .select_from(Order)
         .outerjoin(User, User.id == Order.user_id)
         .where(
-            func.date(Order.created_at) >= start,
-            func.date(Order.created_at) <= end,
+            func.date(Order.reporting_at) >= start,
+            func.date(Order.reporting_at) <= end,
         )
     )
     reg_result = (await db.execute(reg_stmt)).one()
@@ -292,7 +292,7 @@ async def get_customers(
 
     # New customers: users whose FIRST ever order falls in the date range
     first_order_sub = (
-        select(Order.user_id, func.min(Order.created_at).label("first_at"))
+        select(Order.user_id, func.min(Order.reporting_at).label("first_at"))
         .where(Order.user_id != None)  # noqa: E711
         .group_by(Order.user_id)
         .subquery()
@@ -310,15 +310,15 @@ async def get_customers(
     # Returning: users with ≥1 order before start AND ≥1 order in range
     before_sub = (
         select(func.distinct(Order.user_id).label("uid"))
-        .where(Order.user_id != None, func.date(Order.created_at) < start)  # noqa: E711
+        .where(Order.user_id != None, func.date(Order.reporting_at) < start)  # noqa: E711
         .subquery()
     )
     in_range_sub = (
         select(func.distinct(Order.user_id).label("uid"))
         .where(
             Order.user_id != None,  # noqa: E711
-            func.date(Order.created_at) >= start,
-            func.date(Order.created_at) <= end,
+            func.date(Order.reporting_at) >= start,
+            func.date(Order.reporting_at) <= end,
         )
         .subquery()
     )
@@ -421,8 +421,8 @@ async def get_revenue_breakdown(
 
     base_filter = [
         Order.status != OrderStatusEnum.CANCELLED,
-        func.date(Order.created_at) >= start,
-        func.date(Order.created_at) <= end,
+        func.date(Order.reporting_at) >= start,
+        func.date(Order.reporting_at) <= end,
     ]
 
     delivery_stmt = (
@@ -565,8 +565,8 @@ async def get_zones(
         .where(
             Order.status != OrderStatusEnum.CANCELLED,
             OrderDelivery.zone_name.isnot(None),
-            func.date(Order.created_at) >= start,
-            func.date(Order.created_at) <= end,
+            func.date(Order.reporting_at) >= start,
+            func.date(Order.reporting_at) <= end,
         )
         .group_by(OrderDelivery.zone_name)
         .order_by(func.sum(Order.total).desc())
@@ -611,8 +611,8 @@ async def get_promos(
         .where(
             Order.status != OrderStatusEnum.CANCELLED,
             Order.promo_code_used != None,  # noqa: E711
-            func.date(Order.created_at) >= start,
-            func.date(Order.created_at) <= end,
+            func.date(Order.reporting_at) >= start,
+            func.date(Order.reporting_at) <= end,
         )
         .group_by(Order.promo_code_used)
         .order_by(func.count(Order.id).desc())

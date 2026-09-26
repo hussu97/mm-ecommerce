@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, String, UniqueConstraint
+from sqlalchemy import Boolean, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -51,6 +52,20 @@ class LegalEntity(Base, UUIDMixin, TimestampMixin):
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
+    )
+
+    # ─── What an A4 invoice needs that a till receipt does not (migration 295) ─
+    #: The registered address printed under the legal name on a tax invoice.
+    registered_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Printed on an invoice whose customer pays by bank transfer, and only then.
+    bank_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bank_account_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    bank_account_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    iban: Mapped[str | None] = mapped_column(String(34), nullable=True)
+    swift_code: Mapped[str | None] = mapped_column(String(11), nullable=True)
+    #: Copied on every invoice emailed under this entity (the owners).
+    invoice_cc_emails: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(255)), nullable=True
     )
 
     def __repr__(self) -> str:

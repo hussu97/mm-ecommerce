@@ -646,6 +646,69 @@ def test_the_gate_reads_the_channel_and_not_whether_it_reached_a_register():
     assert email_service.is_counter_sale(_order(source=None)) is False
 
 
+# ── custom orders: courier news only ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["order_out_for_delivery.html", "order_delivered.html", "order_undelivered.html"],
+)
+def test_a_custom_order_hears_courier_news_while_a_booked_courier_has_it(template):
+    order = _order(source="custom", courier_managed=True)
+    assert email_service.customer_email_allowed(order, template) is True
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "order_confirmation.html",
+        "order_packed.html",
+        "order_cancelled.html",
+        "payment_failed.html",
+    ],
+)
+def test_a_custom_order_hears_nothing_before_the_courier(template):
+    """The shop took the order itself; confirmation or packing is not news."""
+    order = _order(source="custom", courier_managed=True)
+    assert email_service.customer_email_allowed(order, template) is False
+
+
+def test_a_custom_order_on_a_third_party_or_collected_is_silent():
+    """No booked courier: a third-party driver or a collection earns no email,
+    even for `delivered`."""
+    order = _order(source="custom", courier_managed=False)
+    assert email_service.customer_email_allowed(order, "order_delivered.html") is False
+
+
+def test_the_storefront_and_the_counter_keep_their_rules():
+    online = _order(source="online")
+    counter = _order(source="cashier")
+    for template in ("order_confirmation.html", "order_delivered.html"):
+        assert email_service.customer_email_allowed(online, template) is True
+        assert email_service.customer_email_allowed(counter, template) is False
+
+
+@pytest.mark.asyncio
+async def test_a_custom_order_confirmation_is_never_sent(sent):
+    await email_service.send_order_confirmation(
+        _order(source="custom", courier_managed=True)
+    )
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_custom_order_out_for_delivery_is_sent(sent):
+    await email_service.notify_status_change(
+        _order(
+            source="custom",
+            courier_managed=True,
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            stage="on_the_way",
+        )
+    )
+    assert len(sent) == 1
+
+
 # ── tracking that arrives somewhere else ──────────────────────────────────────
 
 

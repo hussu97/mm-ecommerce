@@ -15,7 +15,7 @@ is handled deliberately rather than by pretending it is an `online` sale:
   from GrubOps — there is no cart to re-price, and re-pricing would raise on a
   delivery address GrubOps records as "Unknown".
 * **It is delivered by the aggregator's own rider.** MM books no courier and
-  runs no arrival sweep for it — `order_lifecycle._mm_owns_fulfilment` gates
+  runs no arrival sweep for it — its `orders.channels` policy gates
   that machinery off.
 * **We only learn of it by polling.** So the loop reconciles GrubOps's status
   onto ours each tick, walking the lifecycle ladder rather than assuming a

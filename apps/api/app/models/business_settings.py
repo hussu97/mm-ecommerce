@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import enum
+import uuid
 from typing import Any
 
-from sqlalchemy import Boolean, Integer, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -105,23 +106,32 @@ class BusinessSettings(Base, UUIDMixin, TimestampMixin):
         Boolean, nullable=False, server_default="true"
     )
 
-    # ─── Custom cakes ─────────────────────────────────────────────────────────
-    #: How many custom cakes may be booked for one date.
-    #:
-    #: One, because that is what this kitchen can actually make alongside a
-    #: day's normal production. Configurable because the honest answer changes
-    #: with staff, and hard-coding it would mean a deploy to hire someone.
-    custom_orders_per_day: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="1"
+    # ─── Custom orders ────────────────────────────────────────────────────────
+    #: The one branch that makes and owns every custom order — its kitchen, its
+    #: inventory, its P&L column and the courier pickup point. Null turns the
+    #: channel off (the POS section is hidden and creation is refused). A setting
+    #: rather than a branch reference in code, because references differ between
+    #: environments.
+    custom_orders_branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
     )
-    #: Days of notice a custom order needs when its product does not say.
-    custom_order_lead_days: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="3"
+    #: The open-price product every custom-order line is sold as (FG0119, "Cake -
+    #: Customer Specification"), so each line still has a product, a category
+    #: and a tax group; the line's own title is what everyone reads.
+    custom_orders_product_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="SET NULL"),
+        nullable=True,
     )
-    #: How far ahead the storefront will let someone book. Stops a booking for
-    #: a date nobody can plan staffing for.
-    custom_order_max_days_ahead: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="180"
+    #: The inventory category whose items a custom order's recipe may use and
+    #: the POS may raise custom-cake production for ("Customized Cake Raw
+    #: Materials").
+    custom_orders_inventory_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_categories.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     # ─── Inventory transactions ───────────────────────────────────────────────

@@ -55,6 +55,13 @@ class BusinessSettingsUpdate(BaseModel):
     enable_tips: bool | None = None
     extra: dict | None = None
 
+    #: The custom-orders channel: its branch, its FG0119-style open-price
+    #: product, and the inventory category its recipes draw on. Null turns the
+    #: channel off.
+    custom_orders_branch_id: UUID | None = None
+    custom_orders_product_id: UUID | None = None
+    custom_orders_inventory_category_id: UUID | None = None
+
 
 class BusinessSettingsResponse(ORMModel):
     id: UUID
@@ -99,5 +106,8 @@ class BusinessSettingsResponse(ORMModel):
     order_number_reset_daily: bool
     enable_tips: bool
     extra: dict
+    custom_orders_branch_id: UUID | None
+    custom_orders_product_id: UUID | None
+    custom_orders_inventory_category_id: UUID | None
     created_at: datetime
     updated_at: datetime

@@ -350,6 +350,15 @@ class ProductionOrderStatusEnum(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class ProductionOrderOriginEnum(str, enum.Enum):
+    """Where a production order was raised. Admin raises any production; the POS
+    raises only custom-cake bases (`pos_custom_orders`), and says so here so the
+    pending list and the console can tell the two apart."""
+
+    ADMIN = "admin"
+    POS = "pos"
+
+
 class ProductionOrder(Base, UUIDMixin, TimestampMixin):
     """The production half of a "transfer and production order": a list of items
     to make at the source branch, raised in the same admin action as the transfer
@@ -364,6 +373,7 @@ class ProductionOrder(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "production_orders"
     __table_args__ = (
         status_vocabulary("production_orders", "status", ProductionOrderStatusEnum),
+        status_vocabulary("production_orders", "origin", ProductionOrderOriginEnum),
         business_date_format("production_orders"),
         # Same idempotency guard as TransferOrder: a retried admin create with the
         # same token is refused and the existing order returned.
@@ -406,6 +416,14 @@ class ProductionOrder(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    #: Migration 294. Server default so a container still on the old code keeps
+    #: inserting during the deploy's cutover.
+    origin: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default=ProductionOrderOriginEnum.ADMIN.value,
+        server_default=ProductionOrderOriginEnum.ADMIN.value,
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Client-supplied idempotency token, unique when set (mirrors TransferOrder).
     client_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
