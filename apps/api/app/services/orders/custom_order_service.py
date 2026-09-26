@@ -866,7 +866,7 @@ def delivery_unavailable_reason(order: Order) -> str | None:
     if not order.customer_phone:
         missing.append("the customer's phone")
     if missing:
-        return "A courier needs " + ", ".join(missing)
+        return "A courier needs " + " and ".join(missing) + "."
     return None
 
 
