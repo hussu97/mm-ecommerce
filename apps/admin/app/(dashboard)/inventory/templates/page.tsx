@@ -234,10 +234,6 @@ export default function ReportTemplatesPage() {
     }
   };
 
-  // Creating a template for a type that already has one replaces it, which is
-  // rarely what someone who means to change it wants — say so, and offer Edit.
-  const existingForType = !editing ? currentByType.get(reportType) : undefined;
-
   return <div className="space-y-5">
     <BranchFilter value={branchId} onChange={setBranchId} />
     <p className="text-sm text-gray-500">Choose a branch first: its templates own their own item list. POS uses one template per report type for that branch. Outstanding reports remain visible after the till closes.</p>
@@ -267,12 +263,6 @@ export default function ReportTemplatesPage() {
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />Required (may be deferred/waived)</label>
             {editing && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} />Active</label>}
           </div>
-          {existingForType && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-              <span>This branch already has a {typeLabel(reportType)} template, <strong>{existingForType.name}</strong>. Creating another replaces it — to change it, edit it instead.</span>
-              <Button type="button" size="sm" variant="outline" className="bg-white" onClick={() => startEdit(existingForType)}>Edit {existingForType.name}</Button>
-            </div>
-          )}
           <div className="border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
             <p className="font-medium">What staff will do</p>
             <p className="mt-1">{guidance.staffInstruction}</p>
