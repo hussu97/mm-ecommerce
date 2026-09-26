@@ -63,19 +63,21 @@ export const MOVABLE_STATUSES: OrderStatus[] = [
 /**
  * The statuses ANY source may be cancelled from — the states `VALID_TRANSITIONS`
  * maps to `cancelled` (order_lifecycle.py). `packed` is deliberately NOT here:
- * the map closes it, and only a website or marketplace order reopens it through
- * the source hatch below. (`payment_failed` is cancellable server-side too but
+ * the map closes it, and only a website, marketplace or custom order reopens it
+ * through the source hatch below. (`payment_failed` is cancellable server-side too but
  * has its own retry/void flow on this screen, so the Cancel button leaves it be.)
  */
 const CANCELLABLE_FROM: OrderStatus[] = ['created', 'confirmed', 'arrived_at_pos'];
 
 /**
  * Sources whose `packed` order may still be cancelled — the counterpart of
- * `ONLINE_CANCELLABLE_FROM` / `AGGREGATOR_CANCELLABLE_FROM`. A cashier order is
- * absent on purpose: there is no `CASHIER_CANCELLABLE_FROM`, so a packed counter
- * order is not cancellable, and offering the button only earned a 409 (F-ADM-16).
+ * `ONLINE_CANCELLABLE_FROM` / `AGGREGATOR_CANCELLABLE_FROM` /
+ * `CUSTOM_CANCELLABLE_FROM` (a boxed custom cake the customer calls off before
+ * it leaves). A cashier order is absent on purpose: there is no
+ * `CASHIER_CANCELLABLE_FROM`, so a packed counter order is not cancellable, and
+ * offering the button only earned a 409 (F-ADM-16).
  */
-const PACKED_CANCELLABLE_SOURCES = new Set(['online', 'aggregator']);
+const PACKED_CANCELLABLE_SOURCES = new Set(['online', 'aggregator', 'custom']);
 
 /**
  * Sources whose *delivered* order may still be cancelled — mirrors `delivered`

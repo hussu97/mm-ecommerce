@@ -490,6 +490,10 @@ export default function OrderDetailPage() {
   // neither packs, dispatches, delivers nor marks it undelivered from here; the
   // fulfilment actions are hidden and the page is a read-only record.
   const isAggregator = order.source === 'aggregator';
+  // A custom order's own screen owns its lifecycle (pack consumes the recipe,
+  // delivery is a chosen courier or collection), so the generic status buttons
+  // and courier reassignment — which the API refuses for it — are not offered.
+  const isCustom = order.source === 'custom';
   const currentStepIdx = STATUS_STEPS.indexOf(order.status as OrderStatus);
   const promisedLabel = promisedFor(order);
   // Built here rather than in the JSX so the guard and the URL stay together:
@@ -582,6 +586,24 @@ export default function OrderDetailPage() {
         </div>
         <Badge variant={STATUS_VARIANT[order.status]}>{order.status}</Badge>
       </div>
+
+      {/* A custom order is driven from its own screen (pack, courier choice,
+          recipe, invoice); this page is its timeline and money view. */}
+      {order.source === 'custom' && (
+        <div className="bg-blue-50 border border-blue-200 p-4 mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="material-icons text-[18px] text-blue-600">cake</span>
+          <p className="flex-1 text-sm font-body text-blue-900">
+            This is a custom order. Packing, the courier, the recipe and the invoice are managed on
+            its custom-order page.
+          </p>
+          <Link
+            href={`/custom-orders/${encodeURIComponent(order.order_number)}`}
+            className="text-sm font-body font-medium text-blue-900 underline underline-offset-2 hover:no-underline"
+          >
+            Open the custom order
+          </Link>
+        </div>
+      )}
 
       {/* A rider got there and came back with the box. Said before the
           timeline, because the timeline shows a journey this order has
@@ -809,8 +831,8 @@ export default function OrderDetailPage() {
       )}
 
       {/* Action buttons — hidden for a marketplace order, which MM does not
-          drive. */}
-      {!isAggregator && (
+          drive, and for a custom order, which is driven from its own page. */}
+      {!isAggregator && !isCustom && (
       <div className="flex gap-2 mb-4">
         {order.status === 'created' && (
           <Button size="sm" onClick={() => updateStatus('confirmed')} loading={actionLoading}>
@@ -1084,7 +1106,7 @@ export default function OrderDetailPage() {
           busy={actionLoading}
           onRedispatch={redispatch}
           onChangeFulfilment={openFulfilment}
-          canChangeFulfilment={MOVABLE_STATUSES.includes(order.status)}
+          canChangeFulfilment={!isCustom && MOVABLE_STATUSES.includes(order.status)}
           isSettled={isSettled(order)}
           onRefresh={refreshCourier}
         />

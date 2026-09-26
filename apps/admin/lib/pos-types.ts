@@ -123,32 +123,11 @@ export type ChannelClass = 'counter' | 'website' | 'aggregator';
  * Coffee") at the Barsha counter. The receipt shows the brand + TRN + the
  * entity's logo; the legal name is for records / the VAT return.
  */
-export interface LegalEntity {
-  id: string;
-  reference: string;
-  legal_name: string;
-  brand_name: string;
-  vat_registered: boolean;
-  tax_number: string | null;
-  invoice_title: string;
-  trade_license_number: string | null;
-  logo_url: string | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
+// From the generated contract (rule 8): the invoice fields (registered address,
+// bank details, CC emails) arrived with custom orders and are only there.
+export type LegalEntity = Schemas['LegalEntityResponse'];
 
-export interface LegalEntityWrite {
-  reference?: string;
-  legal_name: string;
-  brand_name: string;
-  vat_registered: boolean;
-  tax_number: string | null;
-  invoice_title: string;
-  trade_license_number: string | null;
-  logo_url: string | null;
-  is_active: boolean;
-}
+export type LegalEntityWrite = Schemas['LegalEntityCreate'];
 
 /**
  * Which legal entity a (branch, sales channel) trades under. A branch can trade
@@ -628,37 +607,10 @@ export interface SalesBreakdownRow {
   discounts: number;
 }
 
-export interface BusinessSettings {
-  id: string;
-  business_name: string;
-  currency_code: string;
-  currency_symbol: string;
-  decimal_places: number;
-  timezone: string;
-  receipt_header: string | null;
-  receipt_footer: string | null;
-  invoice_title: string;
-  receipt_show_order_number: boolean;
-  receipt_show_calories: boolean;
-  receipt_show_subtotal: boolean;
-  receipt_show_rounding: boolean;
-  receipt_show_closer_username: boolean;
-  receipt_show_creator_username: boolean;
-  receipt_show_check_number: boolean;
-  receipt_hide_free_modifiers: boolean;
-  receipt_show_pickup_phone: boolean;
-  receipt_show_qr: boolean;
-  kitchen_sorting: 'as_added' | 'by_category';
-  kitchen_show_default_modifiers: boolean;
-  kitchen_auto_print_on_send: boolean;
-  prevent_negative_stock: boolean;
-  require_customer_for_delivery: boolean;
-  default_order_type: OrderType;
-  cash_rounding_step: number;
-  auto_logout_seconds: number;
-  order_number_reset_daily: boolean;
-  enable_tips: boolean;
-}
+// From the generated contract (rule 8); the hand-written copy had drifted (it
+// lacked the receipt-language and custom-order settings).
+export type BusinessSettings = Schemas['BusinessSettingsResponse'];
+export type BusinessSettingsUpdate = Schemas['BusinessSettingsUpdate'];
 
 // ─── VAT ledger report ──────────────────────────────────────────────────────────
 //

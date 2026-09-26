@@ -40,6 +40,13 @@ export function CourierLogo({
   );
 }
 
+/** The icon standing in for a logo on the carrier-less channels. */
+const SHOP_CHANNEL_ICONS: Record<string, string> = {
+  counter: 'point_of_sale',
+  website_pickup: 'storefront',
+  custom: 'cake',
+};
+
 /**
  * A carrier mark by code — the logo for a courier, a POS icon for the counter.
  * Used by the dashboard scorecards and the orders-list filter chips, where all
@@ -54,14 +61,14 @@ export function CourierMark({
   logoUrl?: string | null;
   size?: number;
 }) {
-  if (code === 'counter' || code === 'website_pickup') {
+  if (SHOP_CHANNEL_ICONS[code]) {
     return (
       <span
         className="material-icons text-gray-400"
         style={{ fontSize: size + 1 }}
         aria-hidden
       >
-        {code === 'counter' ? 'point_of_sale' : 'storefront'}
+        {SHOP_CHANNEL_ICONS[code]}
       </span>
     );
   }

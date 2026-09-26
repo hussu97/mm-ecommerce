@@ -1,7 +1,8 @@
 /**
  * The carriers the shop delivers through, as one list the filters draw from.
  *
- * Mirrors the API's `courier_catalog` (and adds the synthetic `counter`), so the
+ * Mirrors the API's `courier_catalog` (and adds the synthetic `counter`,
+ * `website_pickup` and `custom` codes of `order_query`), so the
  * orders-list courier filter offers the full set even for a carrier with no
  * orders in the current window — the dashboard's live `by_courier` only lists
  * carriers that have some. Logos follow the same convention the API uses
@@ -9,7 +10,7 @@
  * `logo_url`, which is authoritative and swappable in the database.
  */
 
-export type CourierGroup = 'counter' | 'website' | 'aggregator';
+export type CourierGroup = 'counter' | 'website' | 'custom' | 'aggregator';
 
 export interface CourierOption {
   code: string;
@@ -23,6 +24,9 @@ export const COURIER_OPTIONS: CourierOption[] = [
   // pickup as its own channel — so it is a filter chip like the counter is,
   // mirroring the API's `order_query.WEBSITE_PICKUP_CODE`.
   { code: 'website_pickup', label: 'Store Pickup', group: 'website' },
+  // Every custom order, whoever carried it — the API's `order_query.CUSTOM_CODE`.
+  // A courier chip does not match a custom order that courier carried.
+  { code: 'custom', label: 'Custom orders', group: 'custom' },
   { code: 'lalamove', label: 'Lalamove', group: 'website' },
   { code: 'noon_send', label: 'noon Send', group: 'website' },
   // Slider's two vehicle tiers are each their own dispatch courier, so each gets
@@ -40,10 +44,13 @@ export const COURIER_OPTIONS: CourierOption[] = [
 
 const LOGO_BASE = 'https://storage.googleapis.com/mm-product-images/couriers';
 
+/** The synthetic channel codes, which have no carrier logo. */
+const SHOP_CHANNEL_CODES = new Set(['counter', 'website_pickup', 'custom']);
+
 /** The convention logo URL for a courier code, or null for the carrier-less
- * synthetic channels (the counter and store pickup). */
+ * synthetic channels (the counter, store pickup and custom orders). */
 export function courierLogo(code: string): string | null {
-  if (code === 'counter' || code === 'website_pickup') return null;
+  if (SHOP_CHANNEL_CODES.has(code)) return null;
   // Slider's bike and car share Slider's badge — the same fallback the API makes.
   const logoCode = code === 'slider_bike' || code === 'slider_car' ? 'slider' : code;
   return `${LOGO_BASE}/${logoCode}.png`;

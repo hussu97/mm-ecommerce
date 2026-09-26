@@ -8,7 +8,7 @@
 import { api, buildQs, request, requestBlob } from './api';
 import type { Schemas } from '@mm/types';
 import type {
-  Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, Device, DrawerOperation,
+  Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, BusinessSettingsUpdate, Charge, Device, DrawerOperation,
   BranchChannelTaxConfig, BranchChannelTaxConfigsWrite,
   LegalEntity, LegalEntityWrite,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
@@ -179,7 +179,7 @@ export const kitchenFlowsApi = {
 
 export const businessSettingsApi = {
   get: () => api.get<BusinessSettings>('/business-settings'),
-  update: (d: Partial<BusinessSettings>) => api.put<BusinessSettings>('/business-settings', d),
+  update: (d: BusinessSettingsUpdate) => api.put<BusinessSettings>('/business-settings', d),
 };
 
 // ─── Staff & roles ────────────────────────────────────────────────────────────

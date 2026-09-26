@@ -1,7 +1,7 @@
 import { PosConfigTabs } from './PosConfigTabs';
 
 /**
- * One frame for the five POS Configuration screens. The section title and tab
+ * One frame for the POS Configuration screens. The section title and tab
  * bar are rendered here, once, above whichever resource is showing — rather
  * than repeated at the top of each page.
  */

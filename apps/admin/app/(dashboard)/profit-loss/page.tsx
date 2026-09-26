@@ -41,6 +41,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   counter: 'Counter',
   website_delivery: 'Website delivery',
   website_pickup: 'Store pickup',
+  custom: 'Custom orders',
   talabat: 'Talabat',
   keeta: 'Keeta',
   noon_food: 'noon Food',

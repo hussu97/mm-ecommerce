@@ -235,7 +235,13 @@ export default function OrdersPage() {
           rows={orders}
           rowKey={o => o.id}
           stickyHeader
-          getRowHref={o => `/orders/${o.order_number}`}
+          // A custom order is taken, packed and sent from its own screen, so its
+          // row opens there; the generic page links back to it for the rest.
+          getRowHref={o =>
+            o.source === 'custom'
+              ? `/custom-orders/${encodeURIComponent(o.order_number)}`
+              : `/orders/${o.order_number}`
+          }
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">No orders found.</p>
           }
@@ -284,8 +290,15 @@ export default function OrdersPage() {
               // identifies it at a glance — in place of a bare badge; counter,
               // website delivery and store pickup keep their word. A website
               // pickup is its own channel (`online` + `delivery_method` pickup).
+              // A custom order is its own channel whoever carried it, so it keeps
+              // its word too, with the courier's mark beside it when there is one.
               render: (o: Order) =>
-                o.courier ? (
+                o.source === 'custom' ? (
+                  <span className="inline-flex items-center justify-center gap-1.5">
+                    <Badge variant="neutral">Custom order</Badge>
+                    {o.courier && <CourierLogo courier={o.courier} size={18} />}
+                  </span>
+                ) : o.courier ? (
                   <span className="inline-flex justify-center">
                     <CourierLogo courier={o.courier} size={22} showName />
                   </span>

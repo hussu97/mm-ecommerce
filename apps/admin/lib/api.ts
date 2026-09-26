@@ -487,11 +487,11 @@ export const ordersApi = {
     /** Multi-select order statuses (the OR of them). */
     statuses?: string[];
     search?: string;
-    /** `online` storefront, `counter` till, `aggregator` marketplace. Omit for all. */
+    /** `online` storefront, `counter` till, `aggregator` marketplace, `custom` custom order. Omit for all. */
     channel?: string;
     /** One carrier by code — a marketplace (`talabat`…) or a courier (`lalamove`…). */
     courier?: string;
-    /** Multi-select carrier codes (`counter`, marketplaces, dispatch couriers). */
+    /** Multi-select carrier codes (`counter`, `website_pickup`, `custom`, marketplaces, dispatch couriers). */
     couriers?: string[];
     /** Inclusive day range in the shop's timezone — the dashboard's window. */
     date_from?: string;
@@ -724,7 +724,7 @@ export const profitLossApi = {
   report: (params: {
     date_from: string;
     date_to: string;
-    /** `counter`, `website_delivery`, `website_pickup`, or a marketplace code. */
+    /** `counter`, `website_delivery`, `website_pickup`, `custom`, or a marketplace code. */
     channels?: string[];
     branch_ids?: string[];
     legal_entity_ids?: string[];
@@ -815,6 +815,62 @@ export const customOrderEnquiriesApi = {
     api.get<PaginatedCustomOrderEnquiries>(
       `/admin/custom-orders/enquiries${buildQs(params)}`,
     ),
+};
+
+// ─── Custom orders (bespoke cakes, `source = 'custom'`) ─────────────────────────
+//
+// Shapes straight from the generated contract (rule 8). The API prices every
+// order and decides which actions are open (`actions`); the screens render both.
+
+export type CustomOrder = Schemas['CustomOrderResponse'];
+export type CustomOrderListItem = Schemas['CustomOrderListItem'];
+export type CustomOrderCreate = Schemas['CustomOrderCreate'];
+export type CustomOrderUpdate = Schemas['CustomOrderUpdate'];
+export type CustomOrderContactUpdate = Schemas['CustomOrderContactUpdate'];
+export type CustomOrderRecipeLineIn = Schemas['CustomOrderRecipeLineIn'];
+export type CustomOrderDeliveryChoice = Schemas['CustomOrderDeliveryChoice'];
+export type CustomOrderDeliveryQuotes = Schemas['CustomOrderDeliveryQuotes'];
+export type CustomCakeItem = Schemas['CustomCakeItem'];
+export type CustomOrdersStatus = Schemas['CustomOrdersStatus'];
+export type CustomOrderStatusGroup = 'pending' | 'packed' | 'on_the_way' | 'delivered' | 'cancelled';
+
+const co = (orderNumber: string) => `/admin/custom-orders/${encodeURIComponent(orderNumber)}`;
+
+export const customOrdersApi = {
+  /** Whether the channel is configured (branch, product, category). */
+  status: () => api.get<CustomOrdersStatus>('/admin/custom-orders/status'),
+  /** The items a recipe may use, with the kitchen's on-hand in ingredient units. */
+  items: () => api.get<CustomCakeItem[]>('/admin/custom-orders/items'),
+  list: (params: {
+    status_group?: CustomOrderStatusGroup;
+    /** Inclusive delivery-date range, `YYYY-MM-DD`. */
+    date_from?: string;
+    date_to?: string;
+    q?: string;
+    page?: number;
+    per_page?: number;
+  }) =>
+    api.get<Schemas['PaginatedCustomOrders']>(`/admin/custom-orders${buildQs(params)}`),
+  create: (data: CustomOrderCreate) => api.post<CustomOrder>('/admin/custom-orders', data),
+  get: (orderNumber: string) => api.get<CustomOrder>(co(orderNumber)),
+  update: (orderNumber: string, data: CustomOrderUpdate) =>
+    api.put<CustomOrder>(co(orderNumber), data),
+  updateContact: (orderNumber: string, data: CustomOrderContactUpdate) =>
+    api.put<CustomOrder>(`${co(orderNumber)}/contact`, data),
+  updateRecipe: (orderNumber: string, recipe: CustomOrderRecipeLineIn[]) =>
+    api.put<CustomOrder>(`${co(orderNumber)}/recipe`, { recipe }),
+  pack: (orderNumber: string) => api.post<CustomOrder>(`${co(orderNumber)}/pack`),
+  collected: (orderNumber: string) => api.post<CustomOrder>(`${co(orderNumber)}/collected`),
+  cancel: (orderNumber: string) => api.post<CustomOrder>(`${co(orderNumber)}/cancel`),
+  deliveryQuotes: (orderNumber: string) =>
+    api.get<CustomOrderDeliveryQuotes>(`${co(orderNumber)}/delivery-quotes`),
+  chooseDelivery: (orderNumber: string, data: CustomOrderDeliveryChoice) =>
+    api.post<CustomOrder>(`${co(orderNumber)}/delivery`, data),
+  /** The tax invoice PDF, fetched with the session so it can open as an object URL. */
+  invoicePdf: (orderNumber: string) => requestBlob(`${co(orderNumber)}/invoice.pdf`),
+  /** Email the invoice to the customer; the legal entity's owners are CC'd. */
+  sendInvoice: (orderNumber: string) =>
+    api.post<CustomOrder>(`${co(orderNumber)}/invoice/send`),
 };
 
 export const adminUsersApi = {

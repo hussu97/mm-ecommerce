@@ -23,6 +23,7 @@ const TABS = [
   { href: '/pos-config/legal-entities', label: 'Legal Entities' },
   { href: '/pos-config/charges', label: 'Charges' },
   { href: '/pos-config/reasons', label: 'Reasons' },
+  { href: '/pos-config/custom-orders', label: 'Custom Orders' },
 ];
 
 export function PosConfigTabs() {

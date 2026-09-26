@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { customOrderEnquiriesApi } from '@/lib/api';
 import type { CustomOrderEnquiry } from '@/lib/types';
@@ -30,7 +31,7 @@ export default function EnquiriesPage() {
         <div>
           <h1 className="font-display text-2xl text-gray-800">Cake Enquiries</h1>
           <p className="text-xs text-gray-400 font-body mt-0.5">
-            {total} custom-order {total === 1 ? 'enquiry' : 'enquiries'} from the website — leads to follow up, not orders.
+            {total} custom-order {total === 1 ? 'enquiry' : 'enquiries'} from the website — leads to follow up. Convert one into a custom order once it is agreed.
           </p>
         </div>
       </div>
@@ -45,9 +46,12 @@ export default function EnquiriesPage() {
             <p className="py-16 text-center text-sm text-gray-400 font-body">No enquiries yet.</p>
           }
           actions={e => (
-            <Button variant="ghost" size="sm" className="w-full sm:w-auto" onClick={() => setSelected(e)}>
-              View
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" className="flex-1 sm:flex-none" onClick={() => setSelected(e)}>
+                View
+              </Button>
+              <ConvertLink enquiryId={e.id} />
+            </div>
           )}
           columns={[
             {
@@ -167,11 +171,29 @@ function EnquiryDetail({ enquiry, onClose }: { enquiry: CustomOrderEnquiry; onCl
           )}
         </div>
 
-        <div className="border-t border-gray-100 px-6 py-3 text-right">
+        <div className="border-t border-gray-100 px-6 py-3 flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+          <ConvertLink enquiryId={enquiry.id} />
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Turns the lead into a custom order: the new-order form opens prefilled with
+ * the enquiry's name, phone, request and wanted-by date, and the order records
+ * which enquiry it came from.
+ */
+function ConvertLink({ enquiryId }: { enquiryId: string }) {
+  return (
+    <Link
+      href={`/custom-orders/new?enquiry=${encodeURIComponent(enquiryId)}`}
+      className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 text-xs px-3 py-1.5 min-h-9 font-body font-medium uppercase tracking-wider bg-primary text-white hover:opacity-90"
+    >
+      <span className="material-icons text-[14px]">cake</span>
+      Convert
+    </Link>
   );
 }
 

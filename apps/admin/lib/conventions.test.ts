@@ -114,11 +114,12 @@ describe('F-ADM-16 — the Cancel button never offers what the server refuses', 
   const order = (status: string, source: string) =>
     ({ status, source }) as unknown as Pick<Order, 'status' | 'source'>;
 
-  it('only online/aggregator (never cashier) may cancel a packed order', () => {
+  it('only online/aggregator/custom (never cashier) may cancel a packed order', () => {
     // The whole bug: a packed COUNTER order showed a Cancel button the server
-    // 409s. Only ONLINE/AGGREGATOR have a packed hatch server-side.
+    // 409s. Only ONLINE/AGGREGATOR/CUSTOM have a packed hatch server-side.
     expect(canCancel(order('packed', 'online'))).toBe(true);
     expect(canCancel(order('packed', 'aggregator'))).toBe(true);
+    expect(canCancel(order('packed', 'custom'))).toBe(true);
     expect(canCancel(order('packed', 'cashier'))).toBe(false);
   });
 
@@ -130,10 +131,11 @@ describe('F-ADM-16 — the Cancel button never offers what the server refuses', 
     expect(canCancel(order('delivered', 'aggregator'))).toBe(true);
     expect(canCancel(order('delivered', 'online'))).toBe(false);
     expect(canCancel(order('delivered', 'cashier'))).toBe(false);
+    expect(canCancel(order('delivered', 'custom'))).toBe(false);
   });
 
   it('offers the live states for every source and offers nothing once shipped', () => {
-    for (const source of ['cashier', 'online', 'aggregator']) {
+    for (const source of ['cashier', 'online', 'aggregator', 'custom']) {
       for (const status of ['created', 'confirmed', 'arrived_at_pos']) {
         expect(canCancel(order(status, source)), `${status}/${source}`).toBe(true);
       }
@@ -147,7 +149,7 @@ describe('F-ADM-16 — the Cancel button never offers what the server refuses', 
     }
   });
 
-  it('matches the Python: the packed hatch is online+aggregator, delivered aggregator-only', () => {
+  it('matches the Python: the packed hatch is online+aggregator+custom, delivered aggregator-only', () => {
     const py = readFileSync(LIFECYCLE, 'utf8');
     const statesOf = (name: string) => {
       const block = py.match(new RegExp(`${name}[^=]*=\\s*frozenset\\(\\s*\\{([^}]*)\\}`));
@@ -167,6 +169,12 @@ describe('F-ADM-16 — the Cancel button never offers what the server refuses', 
       statesOf('AGGREGATOR_CANCELLABLE_FROM'),
       'AGGREGATOR_CANCELLABLE_FROM changed — revisit canCancel',
     ).toEqual(['delivered', 'packed']);
+    // … and the custom hatch is exactly {PACKED}: a boxed custom cake the
+    // customer calls off before it leaves (a delivered one stays delivered).
+    expect(
+      statesOf('CUSTOM_CANCELLABLE_FROM'),
+      'CUSTOM_CANCELLABLE_FROM changed — revisit canCancel',
+    ).toEqual(['packed']);
     // … and there is no cashier hatch, which is why a packed counter order stays
     // uncancellable. If one is ever added, canCancel must learn about it.
     expect(py.includes('CASHIER_CANCELLABLE_FROM')).toBe(false);

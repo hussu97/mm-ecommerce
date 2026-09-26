@@ -15,6 +15,31 @@ import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
  * and the VAT return. Which channel of which branch uses which entity is set on
  * the Branches page ("Legal entity by channel").
  */
+/**
+ * The form edits the CC list as one comma-separated line; the API stores a list.
+ * `ResourcePage` seeds a text input with `String(row.invoice_cc_emails)`, which
+ * already joins with commas, so only the way back needs converting.
+ */
+function withCcList(d: Record<string, unknown>): Record<string, unknown> {
+  const raw = d.invoice_cc_emails;
+  const text = Array.isArray(raw) ? raw.join(',') : String(raw ?? '');
+  const emails = text
+    .split(/[,;\s]+/)
+    .map(e => e.trim())
+    .filter(Boolean);
+  const blank = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? null : v);
+  return {
+    ...d,
+    registered_address: blank(d.registered_address),
+    bank_name: blank(d.bank_name),
+    bank_account_name: blank(d.bank_account_name),
+    bank_account_number: blank(d.bank_account_number),
+    iban: blank(d.iban),
+    swift_code: blank(d.swift_code),
+    invoice_cc_emails: emails.length ? emails : null,
+  };
+}
+
 export default function LegalEntitiesTab() {
   const load = useCallback(() => legalEntitiesApi.list(), []);
   return (
@@ -22,8 +47,8 @@ export default function LegalEntitiesTab() {
       title="Legal entities"
       description="The trade licences orders are booked under. The receipt shows the brand + TRN + logo; the legal name drives the VAT return. Assign one per branch channel on the Branches page."
       load={load}
-      create={(d) => legalEntitiesApi.create(d as never)}
-      update={(id, d) => legalEntitiesApi.update(id, d as never)}
+      create={(d) => legalEntitiesApi.create(withCcList(d) as never)}
+      update={(id, d) => legalEntitiesApi.update(id, withCcList(d) as never)}
       remove={(id) => legalEntitiesApi.remove(id)}
       searchKeys={['legal_name', 'brand_name', 'reference']}
       defaults={{ vat_registered: true, invoice_title: 'Tax Invoice', is_active: true }}
@@ -78,6 +103,25 @@ export default function LegalEntitiesTab() {
           type: 'image',
           folder: 'logos',
           helper: 'Printed on this entity’s receipts. PNG/JPEG; a clean, high-contrast image thresholds best on a thermal printer.',
+        },
+        // Printed on custom-order tax invoices (the bank block only when the
+        // customer pays by bank transfer).
+        {
+          name: 'registered_address',
+          label: 'Registered address (on invoices)',
+          type: 'textarea',
+          placeholder: 'Shop no. 1, Garden Tower 1, Al Majaz 3, Sharjah, UAE',
+        },
+        { name: 'bank_name', label: 'Bank name' },
+        { name: 'bank_account_name', label: 'Bank account name' },
+        { name: 'bank_account_number', label: 'Bank account number' },
+        { name: 'iban', label: 'IBAN' },
+        { name: 'swift_code', label: 'SWIFT / BIC' },
+        {
+          name: 'invoice_cc_emails',
+          label: 'Invoice CC emails',
+          placeholder: 'owner@example.com, accounts@example.com',
+          helper: 'Comma-separated. Copied on every custom-order invoice emailed to a customer.',
         },
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}

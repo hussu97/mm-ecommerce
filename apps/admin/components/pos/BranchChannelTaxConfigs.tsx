@@ -26,7 +26,7 @@ import { useToast } from '@/components/ui/feedback';
 
 const CHANNELS: { key: ChannelClass; label: string; hint: string }[] = [
   { key: 'counter', label: 'Counter', hint: 'POS / cashier sales at this branch' },
-  { key: 'website', label: 'Website', hint: 'Melting Moments storefront orders' },
+  { key: 'website', label: 'Website', hint: 'Melting Moments storefront and custom orders' },
   {
     key: 'aggregator',
     label: 'Aggregator',
