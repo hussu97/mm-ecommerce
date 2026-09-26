@@ -1042,3 +1042,49 @@ async def test_the_till_view_of_a_po_drops_admin_only_lines_and_their_money(
         with pytest.raises(NotFoundError):
             await _load_po(db, rent_only.id)
         await db.rollback()
+
+
+async def test_the_console_create_route_honours_the_restricted_permission(engine, env):
+    """`POST /inventory/purchase-orders` lets a holder file a line under Rent and
+    refuses anyone else — the route, not just the service, carries the gate."""
+    from app.api.v1.inventory import create_purchase_order
+    from app.schemas.inventory import PurchaseOrderCreate
+
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db,
+            SupplierCreate(
+                name=f"{MARKER} Landlord route",
+                is_vat_deductible=False,
+                allows_misc_items=True,
+            ),
+        )
+        body = PurchaseOrderCreate(
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            misc_items=[
+                PurchaseOrderMiscLineInput(
+                    name="Shop rent",
+                    quantity=D("1"),
+                    storage_unit="month",
+                    entered_total=D("5000"),
+                    **await _cat(db, "Rent"),
+                )
+            ],
+        )
+        owner = await db.get(User, user_id)
+        owner.is_admin = True
+        created = await create_purchase_order(body, db=db, user=owner)
+        assert [m.category_name for m in created.misc_items] == ["Rent"]
+
+        # A branch-assigned manager without the restricted permission.
+        from app.models.role import UserBranch
+
+        owner.is_admin = False
+        db.add(UserBranch(user_id=owner.id, branch_id=branch_id))
+        await db.flush()
+        with pytest.raises(BadRequestError, match="not available"):
+            await create_purchase_order(body, db=db, user=owner)
+        await db.rollback()

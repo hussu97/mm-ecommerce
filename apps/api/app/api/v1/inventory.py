@@ -1524,6 +1524,7 @@ async def create_purchase_order(
         is_vat_deductible=supplier.is_vat_deductible,
         misc_lines=data.misc_items,
         allows_misc=supplier.allows_misc_items,
+        allow_gated=po_misc_service.can_see_gated(user),
     )
     return await _serialise_po(
         db,
