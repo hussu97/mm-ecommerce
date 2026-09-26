@@ -112,7 +112,8 @@ jobs:
         # force-dynamic), so there is no SEO or caching change.
         env:
           NEXT_PUBLIC_API_URL: https://api.meltingmomentscakes.com/api/v1
-        run: pnpm --filter web build
+        # Retried: the Google Fonts fetch inside the build flakes (see the script).
+        run: scripts/retry-build.sh pnpm --filter web build
 
   lint-admin:
     name: Lint, Test & Build (Admin)
@@ -155,7 +156,8 @@ jobs:
         run: pnpm --filter admin exec tsc --noEmit
 
       - name: Build
-        run: pnpm --filter admin build
+        # Retried: the Google Fonts fetch inside the build flakes (see the script).
+        run: scripts/retry-build.sh pnpm --filter admin build
 
   lint-python:
     name: Lint & Test (Python)

@@ -156,7 +156,8 @@ jobs:
         run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build
-        run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        # Retried: the Google Fonts fetch inside the build flakes (see the script).
+        run: scripts/retry-build.sh npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy
         # `--archive=tgz` uploads one tarball instead of one request per file.
@@ -237,7 +238,8 @@ jobs:
         run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build
-        run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        # Retried: the Google Fonts fetch inside the build flakes (see the script).
+        run: scripts/retry-build.sh npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy
         # `--archive=tgz` uploads one tarball instead of one request per file.
