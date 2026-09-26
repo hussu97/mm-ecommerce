@@ -3,9 +3,9 @@ Custom orders on the register — the "Customized Cake Orders" section.
 
 Only at the custom-orders branch (every route checks the signed-in user may act
 there). A register takes an order, claims and prints its kitchen docket, fills
-in the customer and address, marks it packed or collected. Choosing a courier,
-recording a third-party one and the invoice are the console's alone and are
-not here. Custom-cake production is raised from `operations` beside the rest of
+in the customer and address, marks it packed or collected, or cancels it.
+Choosing a courier, recording a third-party one and the invoice are the
+console's alone and are not here. Custom-cake production is raised from `operations` beside the rest of
 production (`POST /pos/inventory/production/custom-cake`).
 
 Addressed by order id: the register holds ids, as it does for every order.
@@ -196,4 +196,19 @@ async def mark_custom_order_collected(
     await _allowed(db, user)
     order, _ = await custom_order_service.get_by_id(db, order_id)
     await custom_order_service.mark_collected(db, order, user=user, via="pos")
+    return await _respond(db, order_id)
+
+
+@router.post("/{order_id}/cancel", response_model=CustomOrderResponse)
+async def cancel_custom_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require(_MANAGE)),
+):
+    """Call the order off. Offered while `actions.can_cancel` — before it is
+    packed, or packed and not yet handed over; what packing consumed stays
+    consumed."""
+    await _allowed(db, user)
+    order, _ = await custom_order_service.get_by_id(db, order_id)
+    await custom_order_service.cancel(db, order, user=user, via="pos")
     return await _respond(db, order_id)

@@ -204,6 +204,34 @@ async def test_a_custom_order_is_taken_packed_and_finished():
             response = await custom_order_service.to_response(db, order, custom)
             assert response.actions.invoice_unavailable_reason is None
             assert response.recipe[0].quantity == Decimal("250")
+
+            # Cancelled straight after it was taken, and after its docket
+            # printed: both before packing, so nothing was consumed.
+            for claim_first in (False, True):
+                fresh = await custom_order_service.create(
+                    db,
+                    CustomOrderCreate(
+                        lines=[
+                            {"title": "Called off", "quantity": 1, "unit_price": "80"}
+                        ],
+                        delivery_date=date.today() + timedelta(days=5),
+                    ),
+                    user=user,
+                    via="pos",
+                )
+                await db.commit()
+                fresh, fresh_custom = await custom_order_service.get_by_id(db, fresh.id)
+                if claim_first:
+                    await custom_order_service.claim_print(db, fresh, user=user)
+                    assert fresh.status == OrderStatusEnum.ARRIVED_AT_POS
+                response = await custom_order_service.to_response(
+                    db, fresh, fresh_custom
+                )
+                assert response.actions.can_cancel
+                await custom_order_service.cancel(db, fresh, user=user, via="pos")
+                await db.commit()
+                assert fresh.status == OrderStatusEnum.CANCELLED
+                assert fresh.business_date is not None
     finally:
         await purge_inventory(Session, world)
         async with Session() as db:
