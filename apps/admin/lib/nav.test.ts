@@ -81,6 +81,9 @@ describe('page gate', () => {
   it('takes the owning entry\'s slug for an ordinary route and its detail pages', () => {
     expect(requiredPermissionFor('/purchase-orders')).toBe('inventory.purchase_orders.manage');
     expect(requiredPermissionFor('/purchase-orders/some-po-id')).toBe('inventory.purchase_orders.manage');
+    // The misc category / period tabs share the order list's gate, as their API does.
+    expect(requiredPermissionFor('/purchase-orders/misc-categories')).toBe('inventory.purchase_orders.manage');
+    expect(requiredPermissionFor('/purchase-orders/misc-periods')).toBe('inventory.purchase_orders.manage');
     expect(requiredPermissionFor('/security')).toBeNull();
     expect(requiredPermissionFor('/no-such-screen')).toBeNull();
   });

@@ -27,6 +27,8 @@ import { cn } from '@/lib/utils';
 const TABS: { href: string; label: string; exact?: boolean; requires: string }[] = [
   { href: '/purchase-orders', label: 'Purchase Orders', exact: true, requires: 'inventory.purchase_orders.manage' },
   { href: '/purchase-orders/suppliers', label: 'Suppliers', requires: 'inventory.read' },
+  { href: '/purchase-orders/misc-categories', label: 'Misc categories', requires: 'inventory.purchase_orders.manage' },
+  { href: '/purchase-orders/misc-periods', label: 'Misc periods', requires: 'inventory.purchase_orders.manage' },
 ];
 
 function tabFor(pathname: string) {
