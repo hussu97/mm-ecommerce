@@ -505,6 +505,84 @@ class PurchaseOrderMiscLineInput(BaseModel):
     quantity: Decimal = Field(gt=0)
     storage_unit: str = Field(min_length=1, max_length=30)
     entered_total: Decimal = Field(Decimal("0"), ge=0)
+    #: What the spend is (a ``PurchaseOrderMiscCategory``) — required.
+    category_id: UUID
+    #: The days the spend covers, inclusive — the P&L spreads it across them.
+    period_from: date
+    period_to: date
+
+    @model_validator(mode="after")
+    def _period_in_order(self):
+        if self.period_to < self.period_from:
+            raise ValueError("The period must end on or after the day it starts")
+        return self
+
+
+class PurchaseOrderMiscLineEdit(BaseModel):
+    """Re-categorise or re-date one misc line. Money is untouched, so this is
+    allowed on a received PO too (anything but voided)."""
+
+    category_id: UUID
+    period_from: date
+    period_to: date
+
+    @model_validator(mode="after")
+    def _period_in_order(self):
+        if self.period_to < self.period_from:
+            raise ValueError("The period must end on or after the day it starts")
+        return self
+
+
+class PurchaseOrderMiscCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    admin_only: bool = False
+    is_active: bool = True
+
+
+class PurchaseOrderMiscCategoryUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)
+    admin_only: bool | None = None
+    is_active: bool | None = None
+
+
+class PurchaseOrderMiscCategoryResponse(ORMModel):
+    id: UUID
+    name: str
+    admin_only: bool
+    is_active: bool
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PurchaseOrderMiscPeriodCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    unit: Literal["day", "week", "month"]
+    length: int = Field(1, ge=1, le=60)
+    is_default: bool = False
+    display_order: int = 0
+
+
+class PurchaseOrderMiscPeriodUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)
+    unit: Literal["day", "week", "month"] | None = None
+    length: int | None = Field(None, ge=1, le=60)
+    is_default: bool | None = None
+    display_order: int | None = None
+
+
+class PurchaseOrderMiscPeriodResponse(ORMModel):
+    id: UUID
+    name: str
+    unit: str
+    length: int
+    is_default: bool
+    display_order: int
+    deleted_at: datetime | None = None
+    #: The range this preset pre-fills for the shop's today — so the admin and
+    #: the till never reimplement the block arithmetic.
+    default_from: date
+    default_to: date
 
 
 class PurchaseOrderCreate(BaseModel):
@@ -612,6 +690,11 @@ class PurchaseOrderMiscLineResponse(ORMModel):
     vat_amount: Decimal
     net_total: Decimal
     unit_cost: Decimal
+    category_id: UUID
+    category_name: str | None = None
+    category_admin_only: bool = False
+    period_from: date
+    period_to: date
 
 
 class PurchaseOrderResponse(ORMModel):

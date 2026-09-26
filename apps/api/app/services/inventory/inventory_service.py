@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -72,7 +73,7 @@ from app.models.inventory_v2 import (
 )
 from app.models.order import Order
 from app.models.user import User
-from app.services.inventory import costing_service, supplier_service
+from app.services.inventory import costing_service, po_misc_service, supplier_service
 from app.services.pos import business_day_service
 
 __all__ = [
@@ -927,6 +928,8 @@ async def build_po_lines(
     is_vat_deductible: bool,
     misc_lines=None,
     allows_misc: bool = False,
+    allow_gated: bool = False,
+    keep_misc: Sequence[PurchaseOrderMiscItem] = (),
 ) -> None:
     """Replace a PO's lines from input, splitting VAT and freezing its totals.
 
@@ -937,20 +940,42 @@ async def build_po_lines(
     ``misc_lines`` are free-text, non-inventory lines (only for a supplier tagged
     ``allows_misc``): they never lay a FIFO layer or move stock, but their money
     is folded into the same frozen totals so purchase history and the VAT reclaim
-    (which reads the PO's totals, not its lines) include them.
+    (which reads the PO's totals, not its lines) include them. Each carries a
+    category and period (``po_misc_service.load_categories``); an admin-only
+    category needs ``allow_gated``.
+
+    ``keep_misc`` are existing misc lines to leave in place untouched — the
+    admin-only lines of an editor who cannot see them, so saving the lines they
+    can see never deletes the ones they cannot. Their money is re-split with
+    the current supplier's VAT setting and stays in the totals.
     """
     misc_lines = misc_lines or []
-    if misc_lines and not allows_misc:
+    if (misc_lines or keep_misc) and not allows_misc:
         raise BadRequestError("This supplier is not set up for miscellaneous items")
     await _assert_misc_names_not_inventory(db, misc_lines)
+    already_used = {
+        category_id
+        for (category_id,) in (
+            await db.execute(
+                select(PurchaseOrderMiscItem.category_id).where(
+                    PurchaseOrderMiscItem.purchase_order_id == purchase_order.id
+                )
+            )
+        ).all()
+    }
+    await po_misc_service.load_categories(
+        db, misc_lines, allow_gated=allow_gated, already_used=already_used
+    )
     await db.execute(
         delete(PurchaseOrderItem).where(
             PurchaseOrderItem.purchase_order_id == purchase_order.id
         )
     )
+    kept_ids = [line.id for line in keep_misc]
     await db.execute(
         delete(PurchaseOrderMiscItem).where(
-            PurchaseOrderMiscItem.purchase_order_id == purchase_order.id
+            PurchaseOrderMiscItem.purchase_order_id == purchase_order.id,
+            PurchaseOrderMiscItem.id.not_in(kept_ids),
         )
     )
     subtotal_net = Decimal("0")
@@ -1001,8 +1026,21 @@ async def build_po_lines(
                 vat_amount=split.vat_amount,
                 net_total=split.net_total,
                 unit_cost=split.unit_cost,
+                category_id=misc.category_id,
+                period_from=misc.period_from,
+                period_to=misc.period_to,
             )
         )
+    for kept in keep_misc:
+        split = supplier_service.split_line_vat(
+            kept.entered_total, kept.quantity, is_vat_deductible=is_vat_deductible
+        )
+        subtotal_net += split.net_total
+        vat_total += split.vat_amount
+        gross_total += split.total
+        kept.vat_amount = split.vat_amount
+        kept.net_total = split.net_total
+        kept.unit_cost = split.unit_cost
     additional = Decimal(str(purchase_order.additional_cost or 0))
     purchase_order.subtotal_net = _money(subtotal_net)
     purchase_order.vat_total = _money(vat_total)

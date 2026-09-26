@@ -26104,6 +26104,109 @@
         "title": "PnlChannelColumn",
         "type": "object"
       },
+      "PnlMiscExpenseRow": {
+        "description": "One misc PO category's spend in the window, spread per day over each\nline's own period.",
+        "properties": {
+          "admin_only": {
+            "title": "Admin Only",
+            "type": "boolean"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "number"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "category_id": {
+            "format": "uuid",
+            "title": "Category Id",
+            "type": "string"
+          },
+          "lines": {
+            "title": "Lines",
+            "type": "integer"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          }
+        },
+        "required": [
+          "category_id",
+          "category",
+          "admin_only",
+          "amount",
+          "share",
+          "lines"
+        ],
+        "title": "PnlMiscExpenseRow",
+        "type": "object"
+      },
+      "PnlMiscExpenses": {
+        "description": "Below PC3: overheads bought on misc PO lines. They belong to no channel,\nso only the total carries them.",
+        "properties": {
+          "included": {
+            "title": "Included",
+            "type": "boolean"
+          },
+          "pc4": {
+            "title": "Pc4",
+            "type": "number"
+          },
+          "pc4_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc4 Pct"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/PnlMiscExpenseRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "number"
+          },
+          "total_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Share"
+          }
+        },
+        "required": [
+          "included",
+          "rows",
+          "total",
+          "total_share",
+          "pc4",
+          "pc4_pct"
+        ],
+        "title": "PnlMiscExpenses",
+        "type": "object"
+      },
       "PnlPeriodChargeRow": {
         "description": "One category of non-order marketplace charges in the window.",
         "properties": {
@@ -26177,6 +26280,9 @@
             "title": "Date To",
             "type": "string"
           },
+          "misc_expenses": {
+            "$ref": "#/components/schemas/PnlMiscExpenses"
+          },
           "period_charges": {
             "items": {
               "$ref": "#/components/schemas/PnlPeriodChargeRow"
@@ -26202,7 +26308,8 @@
           "total",
           "period_charges",
           "period_charges_included",
-          "vat"
+          "vat",
+          "misc_expenses"
         ],
         "title": "PnlReportResponse",
         "type": "object"
@@ -31784,9 +31891,160 @@
         "title": "PurchaseOrderLineResponse",
         "type": "object"
       },
+      "PurchaseOrderMiscCategoryCreate": {
+        "properties": {
+          "admin_only": {
+            "default": false,
+            "title": "Admin Only",
+            "type": "boolean"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PurchaseOrderMiscCategoryCreate",
+        "type": "object"
+      },
+      "PurchaseOrderMiscCategoryResponse": {
+        "properties": {
+          "admin_only": {
+            "title": "Admin Only",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "admin_only",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PurchaseOrderMiscCategoryResponse",
+        "type": "object"
+      },
+      "PurchaseOrderMiscCategoryUpdate": {
+        "properties": {
+          "admin_only": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Only"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "PurchaseOrderMiscCategoryUpdate",
+        "type": "object"
+      },
+      "PurchaseOrderMiscLineEdit": {
+        "description": "Re-categorise or re-date one misc line. Money is untouched, so this is\nallowed on a received PO too (anything but voided).",
+        "properties": {
+          "category_id": {
+            "format": "uuid",
+            "title": "Category Id",
+            "type": "string"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category_id",
+          "period_from",
+          "period_to"
+        ],
+        "title": "PurchaseOrderMiscLineEdit",
+        "type": "object"
+      },
       "PurchaseOrderMiscLineInput": {
         "description": "One free-text, non-inventory PO line (supplier must allow misc items).\n\nThe user names it and keys quantity, its storage unit, and the VAT-inclusive\nline total. It never becomes an inventory item; the server derives the unit\ncost and recoverable VAT the same way it does for a regular line.",
         "properties": {
+          "category_id": {
+            "format": "uuid",
+            "title": "Category Id",
+            "type": "string"
+          },
           "entered_total": {
             "anyOf": [
               {
@@ -31805,6 +32063,16 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Name",
+            "type": "string"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
             "type": "string"
           },
           "quantity": {
@@ -31830,13 +32098,37 @@
         "required": [
           "name",
           "quantity",
-          "storage_unit"
+          "storage_unit",
+          "category_id",
+          "period_from",
+          "period_to"
         ],
         "title": "PurchaseOrderMiscLineInput",
         "type": "object"
       },
       "PurchaseOrderMiscLineResponse": {
         "properties": {
+          "category_admin_only": {
+            "default": false,
+            "title": "Category Admin Only",
+            "type": "boolean"
+          },
+          "category_id": {
+            "format": "uuid",
+            "title": "Category Id",
+            "type": "string"
+          },
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
           "entered_total": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Entered Total",
@@ -31854,6 +32146,16 @@
           "net_total": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Net Total",
+            "type": "string"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
             "type": "string"
           },
           "quantity": {
@@ -31884,9 +32186,187 @@
           "entered_total",
           "vat_amount",
           "net_total",
-          "unit_cost"
+          "unit_cost",
+          "category_id",
+          "period_from",
+          "period_to"
         ],
         "title": "PurchaseOrderMiscLineResponse",
+        "type": "object"
+      },
+      "PurchaseOrderMiscPeriodCreate": {
+        "properties": {
+          "display_order": {
+            "default": 0,
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "is_default": {
+            "default": false,
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "length": {
+            "default": 1,
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Length",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "unit": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "unit"
+        ],
+        "title": "PurchaseOrderMiscPeriodCreate",
+        "type": "object"
+      },
+      "PurchaseOrderMiscPeriodResponse": {
+        "properties": {
+          "default_from": {
+            "format": "date",
+            "title": "Default From",
+            "type": "string"
+          },
+          "default_to": {
+            "format": "date",
+            "title": "Default To",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "length": {
+            "title": "Length",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "unit",
+          "length",
+          "is_default",
+          "display_order",
+          "default_from",
+          "default_to"
+        ],
+        "title": "PurchaseOrderMiscPeriodResponse",
+        "type": "object"
+      },
+      "PurchaseOrderMiscPeriodUpdate": {
+        "properties": {
+          "display_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Order"
+          },
+          "is_default": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Default"
+          },
+          "length": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "enum": [
+                  "day",
+                  "week",
+                  "month"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "title": "PurchaseOrderMiscPeriodUpdate",
         "type": "object"
       },
       "PurchaseOrderResponse": {
@@ -56385,6 +56865,420 @@
         ]
       }
     },
+    "/api/v1/inventory/po-misc-categories": {
+      "get": {
+        "description": "Every category, alphabetical \u2014 admin-only ones only for their holders.",
+        "operationId": "list_misc_categories_api_v1_inventory_po_misc_categories_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_deleted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Deleted",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PurchaseOrderMiscCategoryResponse"
+                  },
+                  "title": "Response List Misc Categories Api V1 Inventory Po Misc Categories Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Misc Categories",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "post": {
+        "operationId": "create_misc_category_api_v1_inventory_po_misc_categories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseOrderMiscCategoryCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderMiscCategoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Misc Category",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/po-misc-categories/{category_id}": {
+      "delete": {
+        "description": "Soft delete: it leaves every picker; lines that already use it keep it.",
+        "operationId": "delete_misc_category_api_v1_inventory_po_misc_categories__category_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Misc Category",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "put": {
+        "operationId": "update_misc_category_api_v1_inventory_po_misc_categories__category_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseOrderMiscCategoryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderMiscCategoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Misc Category",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/po-misc-categories/{category_id}/restore": {
+      "post": {
+        "operationId": "restore_misc_category_api_v1_inventory_po_misc_categories__category_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderMiscCategoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Restore Misc Category",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/po-misc-periods": {
+      "get": {
+        "operationId": "list_misc_periods_api_v1_inventory_po_misc_periods_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PurchaseOrderMiscPeriodResponse"
+                  },
+                  "title": "Response List Misc Periods Api V1 Inventory Po Misc Periods Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Misc Periods",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "post": {
+        "operationId": "create_misc_period_api_v1_inventory_po_misc_periods_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseOrderMiscPeriodCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderMiscPeriodResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Misc Period",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/po-misc-periods/{period_id}": {
+      "delete": {
+        "operationId": "delete_misc_period_api_v1_inventory_po_misc_periods__period_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "period_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Period Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Misc Period",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "put": {
+        "operationId": "update_misc_period_api_v1_inventory_po_misc_periods__period_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "period_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Period Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseOrderMiscPeriodUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderMiscPeriodResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Misc Period",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
     "/api/v1/inventory/producible-item-bases": {
       "get": {
         "description": "The recipe basis (unit/batch + batch_yield) of every item with an active\nv2 recipe, so the transfer-and-production grid can render the \"qty to produce\"\ncell in batches and show the live unit conversion.",
@@ -57443,6 +58337,75 @@
           }
         ],
         "summary": "Upload Purchase Order Invoice",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/purchase-orders/{po_id}/misc-items/{line_id}": {
+      "patch": {
+        "description": "Re-categorise or re-date one misc line. It moves no money and no stock,\nso unlike the line set it stays editable once received \u2014 only a voided PO\nis frozen. The P&L reads the new period on its next load.",
+        "operationId": "edit_purchase_order_misc_line_api_v1_inventory_purchase_orders__po_id__misc_items__line_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "po_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Po Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Line Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseOrderMiscLineEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Edit Purchase Order Misc Line",
         "tags": [
           "Inventory"
         ]

@@ -20,10 +20,13 @@ from app.core.permissions import require
 from app.models import User
 from app.schemas.pnl import (
     PnlChannelColumn,
+    PnlMiscExpenseRow,
+    PnlMiscExpenses,
     PnlPeriodChargeRow,
     PnlReportResponse,
     PnlVatSummary,
 )
+from app.services.inventory import po_misc_service
 from app.services.orders import order_pnl, pnl_report
 
 router = APIRouter()
@@ -67,6 +70,7 @@ async def profit_and_loss(
         channels=channels,
         branch_ids=branch_ids,
         legal_entity_ids=legal_entity_ids,
+        include_gated_misc=po_misc_service.can_see_gated(_admin),
     )
     total = report.total
     return PnlReportResponse(
@@ -93,4 +97,26 @@ async def profit_and_loss(
             fees_vat_reclaimed=float(total.fees_vat),
             net_vat=float(total.net_vat),
         ),
+        misc_expenses=PnlMiscExpenses(
+            included=report.misc_expenses_included,
+            rows=[
+                PnlMiscExpenseRow(
+                    category_id=row.category_id,
+                    category=row.category,
+                    admin_only=row.admin_only,
+                    amount=float(row.amount),
+                    share=_float(total.share(row.amount)),
+                    lines=row.lines,
+                )
+                for row in report.misc_expenses
+            ],
+            total=float(report.misc_expenses_total),
+            total_share=_float(total.share(report.misc_expenses_total)),
+            pc4=float(report.pc4),
+            pc4_pct=_float(total.share(report.pc4)),
+        ),
     )
+
+
+def _float(value) -> float | None:
+    return None if value is None else float(value)
