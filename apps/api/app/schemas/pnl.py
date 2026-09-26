@@ -12,6 +12,36 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
+class PnlShares(BaseModel):
+    """Every line of `PnlStatement` as a % of GMV (VAT included), as a magnitude
+    like the line itself; null when there is no GMV or the line is unknown."""
+
+    gmv: float | None
+    refunds: float | None
+    output_vat: float | None
+    net_revenue: float | None
+    cogs: float | None
+    cogs_produced: float | None
+    cogs_raw: float | None
+    cogs_packaging: float | None
+    cogs_resale: float | None
+    pc1: float | None
+    delivery_fees: float | None
+    payment_fees: float | None
+    commission: float | None
+    marketplace_fees: float | None
+    delivery_cost: float | None
+    aggregator_and_delivery_fees: float | None
+    cancellation_charges: float | None
+    period_charges: float | None
+    misc_fees: float | None
+    fees_vat: float | None
+    pc2: float | None
+    discounts: float | None
+    pc3: float | None
+    net_vat: float | None
+
+
 class PnlStatement(BaseModel):
     """
     The P&L lines and subtotals, in statement order.
@@ -75,6 +105,8 @@ class PnlStatement(BaseModel):
     pc1_pct: float | None
     pc2_pct: float | None
     pc3_pct: float | None
+    #: Every line above as a % of GMV.
+    shares: PnlShares
 
 
 class OrderPnlResponse(PnlStatement):

@@ -901,10 +901,7 @@ async def get_order_pnl(
         cogs_missing=pnl.cogs is None,
         cogs_provisional=float(pnl.cogs_provisional),
         fees_pending=pnl.fees_pending,
-        **{
-            k: (None if v is None else float(v))
-            for k, v in order_pnl.statement_fields(pnl).items()
-        },
+        **order_pnl.statement_payload(pnl),
     )
 
 

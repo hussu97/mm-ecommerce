@@ -23187,6 +23187,9 @@
           "refunds": {
             "title": "Refunds",
             "type": "number"
+          },
+          "shares": {
+            "$ref": "#/components/schemas/PnlShares"
           }
         },
         "required": [
@@ -23217,6 +23220,7 @@
           "pc1_pct",
           "pc2_pct",
           "pc3_pct",
+          "shares",
           "order_number",
           "channel",
           "is_sale",
@@ -26056,6 +26060,9 @@
           "refunds": {
             "title": "Refunds",
             "type": "number"
+          },
+          "shares": {
+            "$ref": "#/components/schemas/PnlShares"
           }
         },
         "required": [
@@ -26086,6 +26093,7 @@
           "pc1_pct",
           "pc2_pct",
           "pc3_pct",
+          "shares",
           "channel",
           "orders",
           "charged_cancellations",
@@ -26197,6 +26205,303 @@
           "vat"
         ],
         "title": "PnlReportResponse",
+        "type": "object"
+      },
+      "PnlShares": {
+        "description": "Every line of `PnlStatement` as a % of GMV (VAT included), as a magnitude\nlike the line itself; null when there is no GMV or the line is unknown.",
+        "properties": {
+          "aggregator_and_delivery_fees": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator And Delivery Fees"
+          },
+          "cancellation_charges": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Charges"
+          },
+          "cogs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cogs"
+          },
+          "cogs_packaging": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cogs Packaging"
+          },
+          "cogs_produced": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cogs Produced"
+          },
+          "cogs_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cogs Raw"
+          },
+          "cogs_resale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cogs Resale"
+          },
+          "commission": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission"
+          },
+          "delivery_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Cost"
+          },
+          "delivery_fees": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Fees"
+          },
+          "discounts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discounts"
+          },
+          "fees_vat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees Vat"
+          },
+          "gmv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gmv"
+          },
+          "marketplace_fees": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace Fees"
+          },
+          "misc_fees": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Fees"
+          },
+          "net_revenue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Revenue"
+          },
+          "net_vat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Vat"
+          },
+          "output_vat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Vat"
+          },
+          "payment_fees": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Fees"
+          },
+          "pc1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc1"
+          },
+          "pc2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc2"
+          },
+          "pc3": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc3"
+          },
+          "period_charges": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Charges"
+          },
+          "refunds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refunds"
+          }
+        },
+        "required": [
+          "gmv",
+          "refunds",
+          "output_vat",
+          "net_revenue",
+          "cogs",
+          "cogs_produced",
+          "cogs_raw",
+          "cogs_packaging",
+          "cogs_resale",
+          "pc1",
+          "delivery_fees",
+          "payment_fees",
+          "commission",
+          "marketplace_fees",
+          "delivery_cost",
+          "aggregator_and_delivery_fees",
+          "cancellation_charges",
+          "period_charges",
+          "misc_fees",
+          "fees_vat",
+          "pc2",
+          "discounts",
+          "pc3",
+          "net_vat"
+        ],
+        "title": "PnlShares",
         "type": "object"
       },
       "PnlVatSummary": {

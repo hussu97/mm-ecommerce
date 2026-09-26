@@ -31,10 +31,6 @@ router = APIRouter()
 _DATE = r"^\d{4}-\d{2}-\d{2}$"
 
 
-def _floats(fields: dict) -> dict:
-    return {k: (None if v is None else float(v)) for k, v in fields.items()}
-
-
 def _column(code: str, totals: order_pnl.PnlTotals) -> PnlChannelColumn:
     return PnlChannelColumn(
         channel=code,
@@ -43,7 +39,7 @@ def _column(code: str, totals: order_pnl.PnlTotals) -> PnlChannelColumn:
         orders_with_cogs=totals.orders_with_cogs,
         orders_fees_pending=totals.orders_fees_pending,
         cogs_provisional=float(totals.cogs_provisional),
-        **_floats(order_pnl.statement_fields(totals)),
+        **order_pnl.statement_payload(totals),
     )
 
 

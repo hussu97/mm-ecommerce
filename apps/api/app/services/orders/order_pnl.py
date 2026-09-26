@@ -109,6 +109,8 @@ __all__ = [
     "order_pnl_from_mapping",
     "pnl_margin",
     "statement_fields",
+    "statement_payload",
+    "share_fields",
     "totals_by_channel",
     "with_cogs",
     "without_jit",
@@ -733,7 +735,7 @@ def pnl_margin(pnl: OrderPnl | None) -> Decimal | None:
     return None if pnl is None else pnl.share(pnl.pc3)
 
 
-def statement_fields(lines: _Lines) -> dict[str, Decimal | None]:
+def statement_fields(lines: _Lines) -> dict:
     """Every line and subtotal of a P&L, keyed as `schemas.pnl.PnlStatement`."""
     return {
         "gmv": lines.gmv,
@@ -760,4 +762,53 @@ def statement_fields(lines: _Lines) -> dict[str, Decimal | None]:
         "pc1_pct": lines.share(lines.pc1),
         "pc2_pct": lines.share(lines.pc2),
         "pc3_pct": lines.share(lines.pc3),
+        "shares": share_fields(lines),
     }
+
+
+#: The statement lines `share_fields` expresses as a % of GMV — every line and
+#: subtotal, keyed as `schemas.pnl.PnlShares`.
+SHARE_KEYS: tuple[str, ...] = (
+    "gmv",
+    "refunds",
+    "output_vat",
+    "net_revenue",
+    "cogs",
+    *COGS_KINDS,
+    "pc1",
+    "delivery_fees",
+    "payment_fees",
+    "commission",
+    "marketplace_fees",
+    "delivery_cost",
+    "aggregator_and_delivery_fees",
+    "cancellation_charges",
+    "period_charges",
+    "misc_fees",
+    "fees_vat",
+    "pc2",
+    "discounts",
+    "pc3",
+    "net_vat",
+)
+
+
+def share_fields(lines: _Lines) -> dict[str, Decimal | None]:
+    """Every line as a % of GMV (as a magnitude, like the line itself); null
+    when there is no GMV, or the line is unknown (an order's missing COGS)."""
+    out: dict[str, Decimal | None] = {}
+    for key in SHARE_KEYS:
+        value = getattr(lines, key)
+        out[key] = None if value is None else lines.share(value)
+    return out
+
+
+def statement_payload(lines: _Lines) -> dict:
+    """`statement_fields` as the JSON the API sends: money as floats."""
+
+    def to_float(value):
+        if isinstance(value, dict):
+            return {k: to_float(v) for k, v in value.items()}
+        return None if value is None else float(value)
+
+    return {k: to_float(v) for k, v in statement_fields(lines).items()}

@@ -17512,6 +17512,7 @@ export interface components {
             period_charges: number;
             /** Refunds */
             refunds: number;
+            shares: components["schemas"]["PnlShares"];
         };
         /**
          * OrderPreviewPromo
@@ -18537,6 +18538,7 @@ export interface components {
             period_charges: number;
             /** Refunds */
             refunds: number;
+            shares: components["schemas"]["PnlShares"];
         };
         /**
          * PnlPeriodChargeRow
@@ -18574,6 +18576,61 @@ export interface components {
             period_charges_included: boolean;
             total: components["schemas"]["PnlChannelColumn"];
             vat: components["schemas"]["PnlVatSummary"];
+        };
+        /**
+         * PnlShares
+         * @description Every line of `PnlStatement` as a % of GMV (VAT included), as a magnitude
+         *     like the line itself; null when there is no GMV or the line is unknown.
+         */
+        PnlShares: {
+            /** Aggregator And Delivery Fees */
+            aggregator_and_delivery_fees: number | null;
+            /** Cancellation Charges */
+            cancellation_charges: number | null;
+            /** Cogs */
+            cogs: number | null;
+            /** Cogs Packaging */
+            cogs_packaging: number | null;
+            /** Cogs Produced */
+            cogs_produced: number | null;
+            /** Cogs Raw */
+            cogs_raw: number | null;
+            /** Cogs Resale */
+            cogs_resale: number | null;
+            /** Commission */
+            commission: number | null;
+            /** Delivery Cost */
+            delivery_cost: number | null;
+            /** Delivery Fees */
+            delivery_fees: number | null;
+            /** Discounts */
+            discounts: number | null;
+            /** Fees Vat */
+            fees_vat: number | null;
+            /** Gmv */
+            gmv: number | null;
+            /** Marketplace Fees */
+            marketplace_fees: number | null;
+            /** Misc Fees */
+            misc_fees: number | null;
+            /** Net Revenue */
+            net_revenue: number | null;
+            /** Net Vat */
+            net_vat: number | null;
+            /** Output Vat */
+            output_vat: number | null;
+            /** Payment Fees */
+            payment_fees: number | null;
+            /** Pc1 */
+            pc1: number | null;
+            /** Pc2 */
+            pc2: number | null;
+            /** Pc3 */
+            pc3: number | null;
+            /** Period Charges */
+            period_charges: number | null;
+            /** Refunds */
+            refunds: number | null;
         };
         /**
          * PnlVatSummary
