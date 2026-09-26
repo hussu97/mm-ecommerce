@@ -798,3 +798,193 @@ async def export_recipes_workbook(db: AsyncSession) -> bytes:
     buf = io.BytesIO()
     workbook.save(buf)
     return buf.getvalue()
+
+
+_COST_SUMMARY_HEADERS = [
+    "Category",
+    "Product",
+    "SKU",
+    "Modifier",
+    "Option",
+    "Price (AED)",
+    "Cost (AED)",
+    "Cost % of price",
+    "Note",
+]
+_COST_RECIPE_HEADERS = [
+    "Product",
+    "Modifier",
+    "Option",
+    "Inventory item",
+    "Item SKU",
+    "Item kind",
+    "Qty",
+    "Unit",
+    "Unit cost (AED)",
+    "Line cost (AED)",
+]
+_MONEY_FORMAT = "#,##0.00;(#,##0.00);-"
+
+
+def _cost_sheet(sheet, headers: list[str], widths: list[int]) -> None:
+    body = Font(name="Arial", size=10)
+    head = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="5B3A29")
+    for column, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(column)].width = width
+    for row in sheet.iter_rows():
+        for cell in row:
+            cell.font = body
+    for cell in sheet[1]:
+        cell.font = head
+        cell.fill = fill
+    sheet.freeze_panes = "A2"
+    if len(headers) > 2:
+        sheet.auto_filter.ref = sheet.dimensions
+
+
+async def export_product_costs_workbook(db: AsyncSession, *, as_of: date) -> bytes:
+    """
+    Every active product's recipe cost against its price, and the recipe
+    behind it — the console's Price / Cost / Cost % columns as a workbook.
+
+    Tab 1 lists each product (or, for a product with options, each option at
+    base + option price, costed with the product's own recipe); tab 2 the leaf
+    ingredients of each product's own recipe and each option's, sorted by
+    product, modifier, option and ingredient. Cost % and line cost are live
+    formulas. Both tabs come from one pricing pass
+    (`product_cost_service.catalogue_report`).
+    """
+    from app.services.catalog import product_cost_service
+
+    report = await product_cost_service.catalogue_report(db)
+    products = {p.id: p for p in report.products}
+    workbook = Workbook()
+
+    summary = workbook.active
+    summary.title = "Cost summary"
+    summary.append(_COST_SUMMARY_HEADERS)
+    rows = []
+    for product in report.products:
+        cost = report.costs[product.id]
+        category = product.category.name if product.category else ""
+        base = [category, product.name, product.sku or ""]
+        if cost.options:
+            note = (
+                "Product has no recipe of its own; option recipe only"
+                if cost.missing_recipe
+                else ""
+            )
+            for option in cost.options:
+                rows.append(
+                    (
+                        *base,
+                        option.modifier_name,
+                        option.name,
+                        option.price,
+                        option.cost,
+                        note if option.cost is not None else "No recipe",
+                    )
+                )
+        else:
+            if not cost.consumes_stock:
+                note = "Does not track stock"
+            elif cost.cost is None:
+                note = "No recipe"
+            else:
+                note = ""
+            rows.append((*base, "", "", cost.price, cost.cost, note))
+    rows.sort(key=lambda r: (r[0].lower(), r[1].lower(), r[3].lower(), r[5], r[4]))
+    for category, name, sku, modifier, option, price, cost, note in rows:
+        summary.append(
+            [
+                category,
+                name,
+                sku,
+                modifier,
+                option,
+                float(price),
+                None if cost is None else float(cost),
+                None,
+                note,
+            ]
+        )
+        i = summary.max_row
+        summary.cell(i, 8).value = f'=IF(AND(ISNUMBER(G{i}),F{i}>0),G{i}/F{i},"")'
+        summary.cell(i, 6).number_format = _MONEY_FORMAT
+        summary.cell(i, 7).number_format = _MONEY_FORMAT
+        summary.cell(i, 8).number_format = "0.0%"
+    _cost_sheet(summary, _COST_SUMMARY_HEADERS, [16, 40, 10, 18, 22, 12, 12, 15, 44])
+
+    recipes = workbook.create_sheet("Recipes")
+    recipes.append(_COST_RECIPE_HEADERS)
+    lines = sorted(
+        report.recipe_lines,
+        key=lambda r: (
+            products[r.product_id].name.lower(),
+            (r.modifier_name or "").lower(),
+            (r.option_name or "").lower(),
+            (r.item_name or "").lower(),
+        ),
+    )
+    for line in lines:
+        recipes.append(
+            [
+                products[line.product_id].name,
+                line.modifier_name or "(product recipe)",
+                line.option_name or "",
+                line.item_name or "(no active recipe)",
+                line.item_sku or "",
+                (line.item_kind or "").replace("_", " "),
+                None if line.quantity is None else float(line.quantity),
+                line.unit or "",
+                None if line.unit_cost is None else float(line.unit_cost),
+                None,
+            ]
+        )
+        i = recipes.max_row
+        recipes.cell(
+            i, 10
+        ).value = f'=IF(AND(ISNUMBER(G{i}),ISNUMBER(I{i})),G{i}*I{i},"")'
+        recipes.cell(i, 7).number_format = "#,##0.####"
+        recipes.cell(i, 9).number_format = "#,##0.0000"
+        recipes.cell(i, 10).number_format = "#,##0.0000"
+    _cost_sheet(recipes, _COST_RECIPE_HEADERS, [40, 18, 22, 34, 11, 14, 10, 10, 15, 15])
+
+    notes = workbook.create_sheet("Notes")
+    notes.append(["Topic", "Detail"])
+    for topic, detail in (
+        ("As of", as_of.isoformat()),
+        (
+            "Items",
+            "Every active product, all categories. Inactive options are left out.",
+        ),
+        (
+            "Cost basis",
+            "Current recipe cost: each ingredient at its current FIFO average "
+            "cost across all warehouses (last known cost if out of stock). "
+            "Purchase prices are gross (VAT-inclusive), as booked.",
+        ),
+        (
+            "Options",
+            "For a product with options, Price = base price + option price and "
+            "Cost = the product's own recipe + the option's (what a sale "
+            "consumes). On Recipes the product's own recipe is the "
+            '"(product recipe)" rows.',
+        ),
+        (
+            "Blank cost",
+            "No active recipe, so the cost is unknown (not zero). A cost of 0 on "
+            "a resale item means it has never been priced.",
+        ),
+        (
+            "Same figures as",
+            "The Price / Cost / Cost % columns on the admin product list.",
+        ),
+    ):
+        notes.append([topic, detail])
+    _cost_sheet(notes, ["Topic", "Detail"], [18, 110])
+
+    buf = io.BytesIO()
+    workbook.save(buf)
+    return buf.getvalue()

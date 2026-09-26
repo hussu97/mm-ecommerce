@@ -126,3 +126,16 @@ async def export_recipes(
     return _xlsx_response(
         await export_service.export_recipes_workbook(db), "recipes.xlsx"
     )
+
+
+@router.get("/product-costs")
+async def export_product_costs(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("catalogue.recipes.read")),
+):
+    """The whole catalogue's recipe cost vs price, and the recipes behind it."""
+    today = business_day_service.shop_today()
+    return _xlsx_response(
+        await export_service.export_product_costs_workbook(db, as_of=today),
+        f"product-costs-{today.isoformat()}.xlsx",
+    )

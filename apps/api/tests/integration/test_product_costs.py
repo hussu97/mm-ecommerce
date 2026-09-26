@@ -265,3 +265,66 @@ async def test_cost_sort_pages_do_not_overlap(db):
         )
         seen.extend(p.id for p in items if p.id in mine)
     assert len(seen) == len(set(seen)) == len(w["extras"])
+
+
+async def test_the_catalogue_export_matches_the_cost_column(db):
+    import io
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.services.inventory import export_service
+
+    w = await _world(db)
+    tag = _tag()
+    for key in ("plain", "boxed", "bare", "orphan"):
+        w[key].name = f"{w[key].name} {tag}"  # the export is estate-wide
+    await db.flush()
+    content = await export_service.export_product_costs_workbook(
+        db, as_of=date(2026, 9, 26)
+    )
+    book = load_workbook(io.BytesIO(content))
+    assert book.sheetnames == ["Cost summary", "Recipes", "Notes"]
+    summary, recipes = book["Cost summary"], book["Recipes"]
+    assert [c.value for c in summary[1]][:8] == [
+        "Category",
+        "Product",
+        "SKU",
+        "Modifier",
+        "Option",
+        "Price (AED)",
+        "Cost (AED)",
+        "Cost % of price",
+    ]
+    brownie, boxed, orphan = (w[k].name for k in ("plain", "boxed", "orphan"))
+    rows = {
+        (r[1].value, r[4].value or ""): r
+        for r in summary.iter_rows(min_row=2)
+        if r[1].value and r[1].value.endswith(tag)
+    }
+    row = rows[(brownie, "")]
+    assert (row[5].value, row[6].value) == (10, 5)
+    n = row[0].row
+    assert row[7].value == f'=IF(AND(ISNUMBER(G{n}),F{n}>0),G{n}/F{n},"")'
+    lotus = rows[(boxed, "Lotus")]
+    # Base + option price; the product's own recipe + the option's.
+    assert (lotus[5].value, lotus[6].value) == (20, 9)
+    assert rows[(orphan, "")][8].value == "No recipe"
+
+    # Recipes: the product's own recipe and each option's, sorted by product,
+    # modifier, option, ingredient; line cost is a formula.
+    lines = [
+        tuple(c.value for c in r[:10])
+        for r in recipes.iter_rows(min_row=2)
+        if r[0].value and r[0].value.endswith(tag)
+    ]
+    assert [(x[1], x[3], x[6], x[8]) for x in lines if x[0] == brownie] == [
+        ("(product recipe)", "Box", 1, 1),
+        ("(product recipe)", "Cake", 1, 4),
+    ]
+    assert [(x[1], x[2], x[3]) for x in lines if x[0] == boxed] == [
+        ("(product recipe)", None, "Box"),
+        ("Filling", "Lotus", "Cake"),
+        ("Filling", "Plain", "(no active recipe)"),
+    ]
+    assert all(str(x[9]).startswith("=IF(AND(ISNUMBER(G") for x in lines)

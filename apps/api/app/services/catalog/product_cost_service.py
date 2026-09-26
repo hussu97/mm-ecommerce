@@ -15,8 +15,9 @@ sold-out item is not priced at zero). Everything is computed here, including
 the percentages (canon rule 10).
 
 One request is a fixed handful of queries whatever the page size: the products
-with their modifiers and options (selectin), the warehouse ids, the recipe
-catalogue, and one ingredient-cost query.
+with their category, modifiers and options (selectin), the warehouse ids, the
+recipe catalogue, and one ingredient-cost query. The catalogue export
+(`catalogue_report`) is the same pass over every active product.
 """
 
 from __future__ import annotations
@@ -75,84 +76,164 @@ class ProductCost:
     options: list[OptionCost] = field(default_factory=list)
 
 
+async def _load_products(
+    db: AsyncSession, product_ids: list[uuid.UUID] | None
+) -> list[Product]:
+    """The products (all active ones when *product_ids* is None) with their
+    category, modifiers and options — three selectin queries, not one per row."""
+    stmt = select(Product).options(
+        selectinload(Product.category),
+        selectinload(Product.product_modifiers)
+        .selectinload(ProductModifier.modifier)
+        .selectinload(Modifier.options),
+    )
+    stmt = (
+        stmt.where(Product.is_active.is_(True))
+        if product_ids is None
+        else stmt.where(Product.id.in_(product_ids))
+    )
+    return list((await db.execute(stmt)).scalars().unique().all())
+
+
+def _option_links(product: Product):
+    """(modifier, active options) per link, in display order."""
+    for link in sorted(product.product_modifiers, key=lambda link: link.display_order):
+        options = sorted(
+            (o for o in link.modifier.options if o.is_active),
+            key=lambda o: (o.display_order, o.name),
+        )
+        yield link.modifier, options
+
+
+async def _price(
+    db: AsyncSession, products: list[Product]
+) -> recipe_service.PricedOwners:
+    owners: set[tuple[str, uuid.UUID]] = set()
+    for product in products:
+        owners.add((_PRODUCT, product.id))
+        for _, options in _option_links(product):
+            owners.update((_OPTION, option.id) for option in options)
+    warehouse_ids = list(
+        (await db.execute(select(Warehouse.id).where(Warehouse.is_active))).scalars()
+    )
+    return await recipe_service.price_owners(db, owners, warehouse_ids=warehouse_ids)
+
+
+def _cost_of(product: Product, priced: recipe_service.PricedOwners) -> ProductCost:
+    base = Decimal(str(product.base_price or 0))
+    own = (
+        priced.unit_cost((_PRODUCT, product.id))
+        if product.consumes_stock
+        else Decimal(0)
+    )
+    entry = ProductCost(
+        product_id=product.id,
+        price=money(base),
+        consumes_stock=product.consumes_stock,
+        cost=None if own is None else money(own),
+        cost_pct=cost_share(own, base),
+        missing_recipe=own is None,
+    )
+    for modifier, options in _option_links(product):
+        for option in options:
+            price = base + Decimal(str(option.price or 0))
+            option_cost = priced.unit_cost((_OPTION, option.id))
+            # A product with no recipe of its own draws nothing for itself
+            # (the sale warns instead), so its options carry the whole cost.
+            total = None if option_cost is None else (own or Decimal(0)) + option_cost
+            entry.options.append(
+                OptionCost(
+                    modifier_option_id=option.id,
+                    modifier_name=modifier.name,
+                    name=option.name,
+                    price=money(price),
+                    cost=None if total is None else money(total),
+                    cost_pct=cost_share(total, price),
+                )
+            )
+    return entry
+
+
 async def product_costs(
     db: AsyncSession, product_ids: list[uuid.UUID]
 ) -> list[ProductCost]:
     if not product_ids:
         return []
-    products = (
-        (
-            await db.execute(
-                select(Product)
-                .where(Product.id.in_(product_ids))
-                .options(
-                    selectinload(Product.product_modifiers)
-                    .selectinload(ProductModifier.modifier)
-                    .selectinload(Modifier.options)
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    owners: set[tuple[str, uuid.UUID]] = set()
-    for product in products:
-        owners.add((_PRODUCT, product.id))
-        for link in product.product_modifiers:
-            owners.update(
-                (_OPTION, option.id)
-                for option in link.modifier.options
-                if option.is_active
-            )
-    warehouse_ids = list(
-        (await db.execute(select(Warehouse.id).where(Warehouse.is_active))).scalars()
-    )
-    costs = await recipe_service.owner_unit_costs(
-        db, owners, warehouse_ids=warehouse_ids
-    )
-
-    out: list[ProductCost] = []
-    for product in products:
-        base = Decimal(str(product.base_price or 0))
-        own = (
-            costs.get((_PRODUCT, product.id)) if product.consumes_stock else Decimal(0)
-        )
-        entry = ProductCost(
-            product_id=product.id,
-            price=money(base),
-            consumes_stock=product.consumes_stock,
-            cost=None if own is None else money(own),
-            cost_pct=cost_share(own, base),
-            missing_recipe=own is None,
-        )
-        links = sorted(product.product_modifiers, key=lambda link: link.display_order)
-        for link in links:
-            options = sorted(
-                (o for o in link.modifier.options if o.is_active),
-                key=lambda o: (o.display_order, o.name),
-            )
-            for option in options:
-                price = base + Decimal(str(option.price or 0))
-                option_cost = costs.get((_OPTION, option.id))
-                # A product with no recipe of its own draws nothing for itself
-                # (the sale warns instead), so its options carry the whole cost.
-                total = (
-                    None if option_cost is None else (own or Decimal(0)) + option_cost
-                )
-                entry.options.append(
-                    OptionCost(
-                        modifier_option_id=option.id,
-                        modifier_name=link.modifier.name,
-                        name=option.name,
-                        price=money(price),
-                        cost=None if total is None else money(total),
-                        cost_pct=cost_share(total, price),
-                    )
-                )
-        out.append(entry)
+    products = await _load_products(db, product_ids)
+    priced = await _price(db, products)
+    out = [_cost_of(product, priced) for product in products]
     order = {product_id: index for index, product_id in enumerate(product_ids)}
     out.sort(key=lambda entry: order.get(entry.product_id, len(order)))
     return out
+
+
+@dataclass
+class RecipeLineRow:
+    """One leaf ingredient of a product's own recipe or of one option's."""
+
+    product_id: uuid.UUID
+    #: Null for the product's own recipe.
+    modifier_name: str | None
+    option_name: str | None
+    #: Null when the owner has no active recipe (one placeholder row).
+    item_name: str | None
+    item_sku: str | None
+    item_kind: str | None
+    #: In the item's ingredient unit, per one product / one option.
+    quantity: Decimal | None
+    unit: str | None
+    #: Per ingredient unit, at the same current cost as `ProductCost`.
+    unit_cost: Decimal | None
+
+
+@dataclass
+class CostReport:
+    products: list[Product]
+    costs: dict[uuid.UUID, ProductCost]
+    recipe_lines: list[RecipeLineRow]
+
+
+async def catalogue_report(db: AsyncSession) -> CostReport:
+    """Every active product's cost against price, and the recipe lines behind
+    it — both from one pricing pass, so the two tabs of the export agree."""
+    products = await _load_products(db, None)
+    priced = await _price(db, products)
+    lines: list[RecipeLineRow] = []
+
+    def add(product, owner, modifier_name=None, option_name=None):
+        expanded = priced.expansions.get(owner)
+        if not expanded:
+            lines.append(
+                RecipeLineRow(product.id, modifier_name, option_name, *([None] * 6))
+            )
+            return
+        for item_id, line in expanded.items():
+            item = priced.catalog.items[item_id]
+            lines.append(
+                RecipeLineRow(
+                    product_id=product.id,
+                    modifier_name=modifier_name,
+                    option_name=option_name,
+                    item_name=item.name,
+                    item_sku=item.sku,
+                    item_kind=item.kind,
+                    quantity=Decimal(str(line.quantity)),
+                    unit=item.ingredient_unit,
+                    unit_cost=priced.ingredient_cost(item_id),
+                )
+            )
+
+    for product in products:
+        if product.consumes_stock:
+            add(product, (_PRODUCT, product.id))
+        for modifier, options in _option_links(product):
+            for option in options:
+                add(product, (_OPTION, option.id), modifier.name, option.name)
+    return CostReport(
+        products=products,
+        costs={p.id: _cost_of(p, priced) for p in products},
+        recipe_lines=lines,
+    )
 
 
 #: The console list's cost sorts (`product_service.get_all`).

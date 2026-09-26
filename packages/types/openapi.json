@@ -54124,6 +54124,31 @@
         ]
       }
     },
+    "/api/v1/export/product-costs": {
+      "get": {
+        "description": "The whole catalogue's recipe cost vs price, and the recipes behind it.",
+        "operationId": "export_product_costs_api_v1_export_product_costs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Product Costs",
+        "tags": [
+          "Export"
+        ]
+      }
+    },
     "/api/v1/export/product-modifiers": {
       "get": {
         "operationId": "export_product_modifiers_api_v1_export_product_modifiers_get",

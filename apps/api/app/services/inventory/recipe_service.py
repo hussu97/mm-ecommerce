@@ -882,20 +882,47 @@ async def owner_recipe_unit_cost(
     return expansion_cost(expanded, catalog.items, costs)
 
 
-async def owner_unit_costs(
+@dataclass
+class PricedOwners:
+    """Owners expanded to their leaf ingredients, with those ingredients priced.
+
+    ``expansions[owner]`` is None for an owner with no active recipe (or one
+    that cannot be expanded); ``storage_costs`` is per storage unit.
+    """
+
+    catalog: ActiveRecipeCatalog
+    expansions: dict[tuple[str, uuid.UUID], dict[uuid.UUID, ExpandedLine] | None]
+    storage_costs: dict[uuid.UUID, Decimal]
+
+    def unit_cost(self, owner: tuple[str, uuid.UUID]) -> Decimal | None:
+        expanded = self.expansions.get(owner)
+        if expanded is None:
+            return None
+        return expansion_cost(expanded, self.catalog.items, self.storage_costs)
+
+    def ingredient_cost(self, item_id: uuid.UUID) -> Decimal:
+        """One leaf's cost per *ingredient* unit — the rate `unit_cost` sums."""
+        from app.services.inventory import inventory_service
+
+        return inventory_service.canonical_cost_for_unit(
+            self.catalog.items[item_id],
+            self.storage_costs.get(item_id, Decimal("0")),
+            "ingredient",
+        )
+
+
+async def price_owners(
     db: AsyncSession,
     owners: Iterable[tuple[str, uuid.UUID]],
     *,
     warehouse_ids: list[uuid.UUID] | None = None,
     catalog: ActiveRecipeCatalog | None = None,
-) -> dict[tuple[str, uuid.UUID], Decimal | None]:
-    """:func:`owner_recipe_unit_cost` for many owners at once, for list screens.
+) -> PricedOwners:
+    """Expand and price many owners at once, for list screens and exports.
 
     Expansion is pure over the loaded catalogue, so the whole batch costs one
     catalogue load (skipped when passed) and **one** ingredient-cost query,
-    however many products and options are asked for. ``None`` for an owner with
-    no active recipe (or one that cannot be expanded), exactly as the single-owner
-    call answers.
+    however many products and options are asked for.
     """
     catalog = catalog or await load_active_catalog(db)
     expansions: dict[tuple[str, uuid.UUID], dict[uuid.UUID, ExpandedLine] | None] = {}
@@ -914,12 +941,22 @@ async def owner_unit_costs(
         if leaves
         else {}
     )
-    return {
-        owner: None
-        if expanded is None
-        else expansion_cost(expanded, catalog.items, costs)
-        for owner, expanded in expansions.items()
-    }
+    return PricedOwners(catalog=catalog, expansions=expansions, storage_costs=costs)
+
+
+async def owner_unit_costs(
+    db: AsyncSession,
+    owners: Iterable[tuple[str, uuid.UUID]],
+    *,
+    warehouse_ids: list[uuid.UUID] | None = None,
+    catalog: ActiveRecipeCatalog | None = None,
+) -> dict[tuple[str, uuid.UUID], Decimal | None]:
+    """:func:`owner_recipe_unit_cost` for many owners (see :func:`price_owners`);
+    ``None`` for an owner with no active recipe, as the single-owner call."""
+    priced = await price_owners(
+        db, owners, warehouse_ids=warehouse_ids, catalog=catalog
+    )
+    return {owner: priced.unit_cost(owner) for owner in priced.expansions}
 
 
 async def quote_lines(

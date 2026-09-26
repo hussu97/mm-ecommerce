@@ -1103,6 +1103,9 @@ export const exportApi = {
     downloadBlob(`/export/${entity}`, EXPORT_FILENAMES[entity] ?? `${entity}.csv`),
   exportOrders: (params?: { start_date?: string; end_date?: string; status?: string }) =>
     downloadBlob(`/export/orders${buildQs(params)}`, 'orders.csv'),
+  /** Every active product's recipe cost vs price + the recipes behind it (xlsx). */
+  productCosts: () =>
+    downloadBlob('/export/product-costs', `product-costs-${new Date().toISOString().slice(0, 10)}.xlsx`),
 };
 
 // ─── Uploads ──────────────────────────────────────────────────────────────────
