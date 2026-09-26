@@ -197,6 +197,7 @@ def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery
         ],
         misc_items=[
             SimpleNamespace(
+                id=uuid.uuid4(),
                 name="Gift wrap",
                 quantity=Decimal("2"),
                 storage_unit="roll",
@@ -204,6 +205,10 @@ def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery
                 net_total=Decimal("20"),
                 vat_amount=Decimal("1"),
                 entered_total=Decimal("21"),
+                category_name="Cake Supplies",
+                category_admin_only=False,
+                period_from=datetime.date(2026, 9, 1),
+                period_to=datetime.date(2026, 9, 30),
             )
         ],
     )
@@ -276,3 +281,89 @@ def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery
     assert (inv[10], inv[11], inv[13], inv[14], inv[15]) == (10, "g", 100, 5, 105)
     misc = body[1]
     assert (misc[10], misc[11], misc[13], misc[14], misc[15]) == (2, "roll", 20, 1, 21)
+    assert list(lines[1][i].value for i in (16, 17, 18)) == [
+        "category",
+        "period_from",
+        "period_to",
+    ]
+    assert (misc[16], misc[17], misc[18]) == (
+        "Cake Supplies",
+        "2026-09-01",
+        "2026-09-30",
+    )
+    assert (inv[16], inv[17], inv[18]) == (None, None, None)
+
+
+def _rent_po():
+    import datetime
+
+    rent = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="October rent",
+        quantity=Decimal("1"),
+        storage_unit="month",
+        unit_cost=Decimal("1000"),
+        net_total=Decimal("1000"),
+        vat_amount=Decimal("0"),
+        entered_total=Decimal("1000"),
+        category_name="Rent",
+        category_admin_only=True,
+        period_from=datetime.date(2026, 10, 1),
+        period_to=datetime.date(2026, 10, 31),
+    )
+    wrap = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="Gift wrap",
+        quantity=Decimal("2"),
+        storage_unit="roll",
+        unit_cost=Decimal("10.5"),
+        net_total=Decimal("20"),
+        vat_amount=Decimal("1"),
+        entered_total=Decimal("21"),
+        category_name="Cake Supplies",
+        category_admin_only=False,
+        period_from=datetime.date(2026, 10, 1),
+        period_to=datetime.date(2026, 10, 31),
+    )
+    return SimpleNamespace(
+        reference="PO-9",
+        supplier_id=uuid.uuid4(),
+        status="closed",
+        business_date="2026-10-01",
+        delivery_date=None,
+        supplier_reference=None,
+        invoice_object_key=None,
+        subtotal_net=Decimal("1020"),
+        vat_total=Decimal("1"),
+        total_gross=Decimal("1021"),
+        additional_cost=Decimal("0"),
+        total_cost=Decimal("1021"),
+        items=[],
+        misc_items=[rent, wrap],
+    )
+
+
+def test_purchase_orders_workbook_hides_admin_only_lines_and_their_money():
+    """A viewer blind to admin-only categories gets the PO without the rent line,
+    and its totals without the rent — the same view the PO screens give."""
+    content = export_service.export_purchase_orders_workbook([_rent_po()], {}, {})
+    workbook = load_workbook(io.BytesIO(content), data_only=True)
+    (header,) = list(workbook["Purchase orders"].iter_rows(min_row=2, values_only=True))
+    # misc_lines, net, vat, total_gross, additional_cost, total_cost
+    assert header[8:14] == (1, 20, 1, 21, 0, 21)
+    body = list(workbook["Lines"].iter_rows(min_row=2, values_only=True))
+    assert [r[8] for r in body] == ["Gift wrap"]
+
+
+def test_purchase_orders_workbook_keeps_admin_only_lines_for_holders():
+    content = export_service.export_purchase_orders_workbook(
+        [_rent_po()], {}, {}, sees_gated=True
+    )
+    workbook = load_workbook(io.BytesIO(content), data_only=True)
+    (header,) = list(workbook["Purchase orders"].iter_rows(min_row=2, values_only=True))
+    assert header[8:14] == (2, 1020, 1, 1021, 0, 1021)
+    body = list(workbook["Lines"].iter_rows(min_row=2, values_only=True))
+    assert [(r[8], r[16]) for r in body] == [
+        ("October rent", "Rent"),
+        ("Gift wrap", "Cake Supplies"),
+    ]

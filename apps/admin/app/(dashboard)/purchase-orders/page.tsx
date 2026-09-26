@@ -1,7 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { branchesApi, inventoryApi } from '@/lib/pos-api';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  branchesApi,
+  inventoryApi,
+  type PurchaseOrderMiscCategory,
+  type PurchaseOrderMiscPeriod,
+} from '@/lib/pos-api';
 import type {
   Branch,
   InventoryItem,
@@ -16,6 +21,12 @@ import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { InvoicePreview } from '@/components/ui/InvoicePreview';
 import { Modal } from '@/components/pos/ResourcePage';
+import {
+  MiscPeriodPicker,
+  defaultPeriodValue,
+  periodIsValid,
+  type MiscPeriodValue,
+} from '@/components/purchasing/MiscPeriodPicker';
 import { formatCost, formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
@@ -42,6 +53,8 @@ interface MiscDraft {
   quantity: string;
   storage_unit: string;
   entered_total: string;
+  category_id: string;
+  period: MiscPeriodValue;
 }
 
 const VAT_RATE = 0.05;
@@ -327,7 +340,7 @@ export default function PurchaseOrdersPage() {
                 </div>
               ),
             },
-            { header: 'Lines', className: 'text-right', sortable: true, sortAccessor: (po) => po.items.length, render: (po) => po.items.length },
+            { header: 'Lines', className: 'text-right', sortable: true, sortAccessor: (po) => po.items.length + po.misc_items.length, render: (po) => po.items.length + po.misc_items.length },
             {
               header: 'Total',
               className: 'text-right',
@@ -500,6 +513,11 @@ function CreateOrder({
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [lines, setLines] = useState<DraftLine[]>([{ item_id: '', quantity: '1', entered_total: '0' }]);
   const [miscLines, setMiscLines] = useState<MiscDraft[]>([]);
+  // What misc lines are filed under, and the period presets. Alphabetical from
+  // the API; admin-only categories arrive only for those allowed to use them.
+  const [miscCategories, setMiscCategories] = useState<PurchaseOrderMiscCategory[]>([]);
+  const [miscPeriods, setMiscPeriods] = useState<PurchaseOrderMiscPeriod[]>([]);
+  const [miscAttempted, setMiscAttempted] = useState(false);
   // The items this supplier can supply — prefilled once a supplier is chosen.
   const [supplierItems, setSupplierItems] = useState<SupplierItem[] | null>(null);
   const [saving, setSaving] = useState(false);
@@ -533,6 +551,49 @@ function CreateOrder({
       : activeItems;
 
   const allowsMisc = supplier?.allows_misc_items ?? false;
+
+  useEffect(() => {
+    if (!allowsMisc || miscPeriods.length > 0) return;
+    let cancelled = false;
+    Promise.all([inventoryApi.miscCategories(), inventoryApi.miscPeriods()])
+      .then(([categories, periods]) => {
+        if (cancelled) return;
+        setMiscCategories(categories.filter((c) => c.is_active && !c.deleted_at));
+        setMiscPeriods(periods);
+        // A line added before the presets arrived gets the default now.
+        setMiscLines((prev) =>
+          prev.map((l) => (l.period.from ? l : { ...l, period: defaultPeriodValue(periods) })),
+        );
+      })
+      .catch(() => { if (!cancelled) setError('Could not load misc categories — reload to try again.'); });
+    return () => { cancelled = true; };
+  }, [allowsMisc, miscPeriods.length]);
+
+  function newMiscLine(): MiscDraft {
+    return {
+      name: '',
+      quantity: '1',
+      storage_unit: '',
+      entered_total: '0',
+      category_id: '',
+      period: defaultPeriodValue(miscPeriods),
+    };
+  }
+
+  // A misc line is started once anything is typed into it; a started line must
+  // be complete — category and period included — rather than silently dropped.
+  function miscStarted(l: MiscDraft): boolean {
+    return !!(l.name.trim() || l.storage_unit.trim() || Number(l.entered_total) > 0);
+  }
+  function miscProblem(l: MiscDraft): string | null {
+    if (!l.name.trim() || !l.storage_unit.trim()) return 'Name and unit are required.';
+    if (!(Number(l.quantity) > 0) || !(Number(l.entered_total) > 0)) {
+      return 'Quantity and total cost must be above zero.';
+    }
+    if (!l.category_id) return 'Pick a category.';
+    if (!periodIsValid(l.period)) return 'The period must end on or after it starts.';
+    return null;
+  }
   const grossTotal =
     lines.reduce((sum, l) => sum + Number(l.entered_total || 0), 0) +
     miscLines.reduce((sum, l) => sum + Number(l.entered_total || 0), 0);
@@ -556,9 +617,13 @@ function CreateOrder({
     const valid = lines.filter(
       (l) => l.item_id && Number(l.quantity) > 0 && Number(l.entered_total) > 0,
     );
-    const validMisc = miscLines.filter(
-      (l) => l.name.trim() && l.storage_unit.trim() && Number(l.quantity) > 0 && Number(l.entered_total) > 0,
-    );
+    const startedMisc = allowsMisc ? miscLines.filter(miscStarted) : [];
+    if (startedMisc.some((l) => miscProblem(l) !== null)) {
+      setMiscAttempted(true);
+      setError('Finish or remove the highlighted misc lines.');
+      return;
+    }
+    const validMisc = startedMisc;
     if (!supplierId || !branchId || (valid.length === 0 && validMisc.length === 0)) {
       setError('Add at least one line (item or misc.) with a quantity and a total cost above zero.');
       return;
@@ -583,6 +648,9 @@ function CreateOrder({
           quantity: Number(l.quantity),
           storage_unit: l.storage_unit.trim(),
           entered_total: Number(l.entered_total),
+          category_id: l.category_id,
+          period_from: l.period.from,
+          period_to: l.period.to,
         })),
       });
     } catch (err) {
@@ -752,7 +820,7 @@ function CreateOrder({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setMiscLines((prev) => [...prev, { name: '', quantity: '1', storage_unit: '', entered_total: '0' }])}
+              onClick={() => setMiscLines((prev) => [...prev, newMiscLine()])}
             >
               Add misc item
             </Button>
@@ -772,8 +840,11 @@ function CreateOrder({
                 </tr>
               </thead>
               <tbody>
-                {miscLines.map((line, index) => (
-                  <tr key={index} className={`border-b border-gray-100 ${interactiveRowClass}`}>
+                {miscLines.map((line, index) => {
+                  const problem = miscAttempted && miscStarted(line) ? miscProblem(line) : null;
+                  return (
+                  <Fragment key={index}>
+                  <tr className={interactiveRowClass}>
                     <td className="py-2 pr-2">
                       <Input value={line.name} onChange={(e) => updateMisc(index, { name: e.target.value })} placeholder="e.g. Gift wrap" />
                     </td>
@@ -792,7 +863,37 @@ function CreateOrder({
                       </button>
                     </td>
                   </tr>
-                ))}
+                  <tr className="border-b border-gray-100">
+                    <td colSpan={5} className="pb-3 pr-2">
+                      <div className="flex flex-wrap items-start gap-3">
+                        <div className="w-56">
+                          <Select
+                            label="Category"
+                            value={line.category_id}
+                            onChange={(e) => updateMisc(index, { category_id: e.target.value })}
+                            options={miscCategories.map((c) => ({
+                              value: c.id,
+                              label: c.admin_only ? `${c.name} (admin only)` : c.name,
+                            }))}
+                            placeholder="Choose…"
+                            error={problem === 'Pick a category.' ? problem : undefined}
+                          />
+                        </div>
+                        <MiscPeriodPicker
+                          periods={miscPeriods}
+                          value={line.period}
+                          onChange={(period) => updateMisc(index, { period })}
+                          error={problem?.startsWith('The period') ? problem : undefined}
+                        />
+                      </div>
+                      {problem && problem !== 'Pick a category.' && !problem.startsWith('The period') && (
+                        <p className="mt-1 text-xs text-red-600 font-body">{problem}</p>
+                      )}
+                    </td>
+                  </tr>
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}

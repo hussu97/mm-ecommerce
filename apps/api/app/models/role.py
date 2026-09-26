@@ -75,6 +75,12 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         # Voiding reverses received stock and its costing, so it is gated apart
         # from raising/approving.
         ("inventory.purchase_orders.void", "Void purchase orders"),
+        # Rent, salary and the like are confidential. The till never shows
+        # those lines to anyone; in the console only holders of this see them.
+        (
+            "inventory.purchase_orders.restricted_misc",
+            "See and use admin-only misc categories (rent, salary…) on purchase orders",
+        ),
         ("inventory.reports.submit", "Submit and defer branch inventory reports"),
         ("inventory.counts.approve", "Approve stock counts and variances"),
         ("inventory.projection.rebuild", "Rebuild cached balances from the ledger"),

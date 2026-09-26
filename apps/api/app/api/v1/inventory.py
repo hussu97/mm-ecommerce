@@ -37,6 +37,7 @@ from app.models import (
     ProductionOrder,
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseOrderMiscItem,
     PurchaseOrderStatusEnum,
     Supplier,
     SupplierItem,
@@ -69,6 +70,8 @@ from app.schemas.inventory import (
     PosPurchaseOrderCreate,
     PurchaseOrderCreate,
     PurchaseOrderItemOption,
+    PurchaseOrderLineInput,
+    PurchaseOrderMiscLineEdit,
     PurchaseOrderResponse,
     PurchaseOrderUpdate,
     QuantityAdjustmentRequest,
@@ -98,6 +101,7 @@ from app.services.inventory import (
     export_service,
     inventory_service,
     ledger_service,
+    po_misc_service,
     recipe_service,
     supplier_service,
 )
@@ -1169,6 +1173,7 @@ async def _serialise_po(
     items_lookup: dict[uuid.UUID, InventoryItem] | None = None,
     suppliers_lookup: dict[uuid.UUID, Supplier] | None = None,
     sign_invoice: bool = False,
+    sees_gated: bool = False,
 ) -> PurchaseOrderResponse:
     """Serialise one purchase order, resolving its line items and supplier.
 
@@ -1181,8 +1186,14 @@ async def _serialise_po(
     ``sign_invoice`` mints the invoice's signed URL — a per-order IAM signBlob
     round-trip, so lists leave it off (they set ``has_invoice`` instead) and only
     the single-order read pays for it.
+
+    ``sees_gated`` is whether the viewer may see admin-only misc categories
+    (``po_misc_service.can_see_gated``). It defaults to no — the till's answer
+    — so a caller that forgets to ask hides rent rather than leaking it.
     """
     payload = PurchaseOrderResponse.model_validate(purchase_order)
+    if not sees_gated:
+        po_misc_service.hide_gated_lines(payload, purchase_order)
     if items_lookup is None:
         ids = {line.item_id for line in purchase_order.items}
         items = (
@@ -1215,7 +1226,7 @@ async def _serialise_po(
 
 
 async def _serialise_po_list(
-    db: AsyncSession, orders: list[PurchaseOrder]
+    db: AsyncSession, orders: list[PurchaseOrder], *, sees_gated: bool = False
 ) -> list[PurchaseOrderResponse]:
     """Serialise many POs with their line items and suppliers resolved in one
     query each, not two per order — the N+1 that scaled with the page (F-INV-24).
@@ -1246,16 +1257,46 @@ async def _serialise_po_list(
         }
     return [
         await _serialise_po(
-            db, o, items_lookup=items_lookup, suppliers_lookup=suppliers_lookup
+            db,
+            o,
+            items_lookup=items_lookup,
+            suppliers_lookup=suppliers_lookup,
+            sees_gated=sees_gated,
         )
         for o in orders
     ]
 
 
-async def _load_po(db: AsyncSession, po_id: uuid.UUID) -> PurchaseOrder:
-    return await crud_service.get_or_404(
-        db, PurchaseOrder, po_id, options=[selectinload(PurchaseOrder.items)]
+async def _load_po(
+    db: AsyncSession, po_id: uuid.UUID, *, sees_gated: bool = False
+) -> PurchaseOrder:
+    """Load one PO with fresh lines. A PO holding only admin-only misc lines is
+    not found for a viewer who may not see them (the till: always)."""
+    purchase_order = (
+        (
+            await db.execute(
+                select(PurchaseOrder)
+                .where(PurchaseOrder.id == po_id)
+                .options(
+                    selectinload(PurchaseOrder.items),
+                    selectinload(PurchaseOrder.misc_items).selectinload(
+                        PurchaseOrderMiscItem.category
+                    ),
+                )
+                # Lines are rebuilt with bulk DELETE/INSERT, which the identity
+                # map does not see — reload them rather than serve stale ones.
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .unique()
+        .one_or_none()
     )
+    if purchase_order is None or not po_misc_service.po_is_visible(
+        purchase_order, sees_gated=sees_gated
+    ):
+        raise NotFoundError("PurchaseOrder not found")
+    return purchase_order
 
 
 def _apply_po_filters(
@@ -1316,6 +1357,8 @@ async def list_purchase_orders(
     if branch_id:
         await access_service.assert_branch_access(db, user, branch_id)
     stmt = _scope_po_to_access(stmt, user, branch_id)
+    if not po_misc_service.can_see_gated(user):
+        stmt = stmt.where(po_misc_service.visible_po_clause())
     stmt = _apply_po_filters(
         stmt,
         supplier_id=supplier_id,
@@ -1327,7 +1370,9 @@ async def list_purchase_orders(
     stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
     orders = list((await db.execute(stmt)).scalars().unique().all())
 
-    return await _serialise_po_list(db, orders)
+    return await _serialise_po_list(
+        db, orders, sees_gated=po_misc_service.can_see_gated(user)
+    )
 
 
 @purchase_orders_router.get(
@@ -1374,9 +1419,14 @@ async def export_purchase_orders(
         await access_service.assert_branch_access(db, user, branch_id)
     stmt = select(PurchaseOrder).options(
         selectinload(PurchaseOrder.items),
-        selectinload(PurchaseOrder.misc_items),
+        selectinload(PurchaseOrder.misc_items).selectinload(
+            PurchaseOrderMiscItem.category
+        ),
     )
     stmt = _scope_po_to_access(stmt, user, branch_id)
+    sees_gated = po_misc_service.can_see_gated(user)
+    if not sees_gated:
+        stmt = stmt.where(po_misc_service.visible_po_clause())
     stmt = _apply_po_filters(
         stmt,
         supplier_id=supplier_id,
@@ -1417,7 +1467,7 @@ async def export_purchase_orders(
         else {}
     )
     content = export_service.export_purchase_orders_workbook(
-        orders, suppliers, items_lookup
+        orders, suppliers, items_lookup, sees_gated=sees_gated
     )
     return Response(
         content=content,
@@ -1474,8 +1524,15 @@ async def create_purchase_order(
         is_vat_deductible=supplier.is_vat_deductible,
         misc_lines=data.misc_items,
         allows_misc=supplier.allows_misc_items,
+        allow_gated=po_misc_service.can_see_gated(user),
     )
-    return await _serialise_po(db, await _load_po(db, purchase_order.id))
+    return await _serialise_po(
+        db,
+        await _load_po(
+            db, purchase_order.id, sees_gated=po_misc_service.can_see_gated(user)
+        ),
+        sees_gated=po_misc_service.can_see_gated(user),
+    )
 
 
 @purchase_orders_router.get("/{po_id}", response_model=PurchaseOrderResponse)
@@ -1484,9 +1541,16 @@ async def get_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
-    return await _serialise_po(db, purchase_order, sign_invoice=True)
+    return await _serialise_po(
+        db,
+        purchase_order,
+        sign_invoice=True,
+        sees_gated=po_misc_service.can_see_gated(user),
+    )
 
 
 @purchase_orders_router.put("/{po_id}", response_model=PurchaseOrderResponse)
@@ -1496,7 +1560,9 @@ async def update_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     received = purchase_order.status in (
         PurchaseOrderStatusEnum.CLOSED.value,
@@ -1533,15 +1599,43 @@ async def update_purchase_order(
         supplier = await crud_service.get_or_404(
             db, Supplier, purchase_order.supplier_id
         )
+        sees_gated = po_misc_service.can_see_gated(user)
+        # Either list may be omitted, meaning "leave those lines alone" — so an
+        # omitted list is rebuilt from what is there rather than emptied.
+        items = (
+            data.items
+            if data.items is not None
+            else [
+                PurchaseOrderLineInput(
+                    item_id=line.item_id,
+                    quantity=line.quantity,
+                    unit=line.unit,
+                    entered_total=line.entered_total,
+                )
+                for line in purchase_order.items
+            ]
+        )
+        keep_misc = [
+            line
+            for line in purchase_order.misc_items
+            # Lines this editor cannot see are never theirs to delete.
+            if data.misc_items is None or (line.category_admin_only and not sees_gated)
+        ]
         await inventory_service.build_po_lines(
             db,
             purchase_order,
-            data.items or [],
+            items,
             is_vat_deductible=supplier.is_vat_deductible,
             misc_lines=data.misc_items or [],
             allows_misc=supplier.allows_misc_items,
+            allow_gated=sees_gated,
+            keep_misc=keep_misc,
         )
-    return await _serialise_po(db, await _load_po(db, po_id))
+    return await _serialise_po(
+        db,
+        await _load_po(db, po_id, sees_gated=po_misc_service.can_see_gated(user)),
+        sees_gated=po_misc_service.can_see_gated(user),
+    )
 
 
 # The three state changes below are one line each, and that is the point of
@@ -1559,7 +1653,9 @@ async def submit_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await inventory_service.transition_purchase_order(
         db,
@@ -1568,7 +1664,11 @@ async def submit_purchase_order(
         user=user,
     )
     await db.flush()
-    return await _serialise_po(db, await _load_po(db, po_id))
+    return await _serialise_po(
+        db,
+        await _load_po(db, po_id, sees_gated=po_misc_service.can_see_gated(user)),
+        sees_gated=po_misc_service.can_see_gated(user),
+    )
 
 
 @purchase_orders_router.post("/{po_id}/approve", response_model=PurchaseOrderResponse)
@@ -1577,7 +1677,9 @@ async def approve_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.approve")),
 ):
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await inventory_service.transition_purchase_order(
         db,
@@ -1586,7 +1688,11 @@ async def approve_purchase_order(
         user=user,
     )
     await db.flush()
-    return await _serialise_po(db, await _load_po(db, po_id))
+    return await _serialise_po(
+        db,
+        await _load_po(db, po_id, sees_gated=po_misc_service.can_see_gated(user)),
+        sees_gated=po_misc_service.can_see_gated(user),
+    )
 
 
 @purchase_orders_router.post("/{po_id}/decline", response_model=PurchaseOrderResponse)
@@ -1595,7 +1701,9 @@ async def decline_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.approve")),
 ):
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await inventory_service.transition_purchase_order(
         db,
@@ -1604,7 +1712,11 @@ async def decline_purchase_order(
         user=user,
     )
     await db.flush()
-    return await _serialise_po(db, await _load_po(db, po_id))
+    return await _serialise_po(
+        db,
+        await _load_po(db, po_id, sees_gated=po_misc_service.can_see_gated(user)),
+        sees_gated=po_misc_service.can_see_gated(user),
+    )
 
 
 @purchase_orders_router.post("/{po_id}/void", response_model=PurchaseOrderResponse)
@@ -1621,14 +1733,18 @@ async def void_purchase_order(
     consumed); the order moves to ``voided`` and drops off valuation, spend and
     the VAT reclaim. Kept as an audit record — amounts and the invoice stay.
     """
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await ledger_service.void_purchase_order(
         db, purchase_order_id=po_id, user=user, reason=data.reason
     )
-    reloaded = await _load_po(db, po_id)
+    reloaded = await _load_po(db, po_id, sees_gated=po_misc_service.can_see_gated(user))
     await _refresh_vat_ledger_for_po(db, reloaded)
-    return await _serialise_po(db, reloaded)
+    return await _serialise_po(
+        db, reloaded, sees_gated=po_misc_service.can_see_gated(user)
+    )
 
 
 @purchase_orders_router.post(
@@ -1647,7 +1763,9 @@ async def receive_purchase_order(
     emailed the short/excess. An order of only miscellaneous lines closes with
     no stock receipt, and the response is ``null``.
     """
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     received = {line.purchase_order_item_id: line.quantity for line in data.lines}
     reasons = {
@@ -1658,7 +1776,7 @@ async def receive_purchase_order(
     transaction = await inventory_service.receive_purchase_order(
         db, purchase_order=purchase_order, user=user, received=received, reasons=reasons
     )
-    reloaded = await _load_po(db, po_id)
+    reloaded = await _load_po(db, po_id, sees_gated=po_misc_service.can_see_gated(user))
     await _email_po_receiving_variance(db, reloaded, user)
     await _refresh_vat_ledger_for_po(db, reloaded)
     if transaction is None:
@@ -1906,10 +2024,82 @@ async def upload_purchase_order_invoice(
     The body is the raw file bytes; the content type comes from the request
     header. Stored under a deterministic key and signed on read — never public.
     """
-    purchase_order = await _load_po(db, po_id)
+    purchase_order = await _load_po(
+        db, po_id, sees_gated=po_misc_service.can_see_gated(user)
+    )
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await _store_invoice_from_request(db, purchase_order, request)
-    return await _serialise_po(db, await _load_po(db, po_id), sign_invoice=True)
+    return await _serialise_po(
+        db,
+        await _load_po(db, po_id, sees_gated=po_misc_service.can_see_gated(user)),
+        sign_invoice=True,
+        sees_gated=po_misc_service.can_see_gated(user),
+    )
+
+
+@purchase_orders_router.patch(
+    "/{po_id}/misc-items/{line_id}", response_model=PurchaseOrderResponse
+)
+async def edit_purchase_order_misc_line(
+    request: Request,
+    po_id: uuid.UUID,
+    line_id: uuid.UUID,
+    data: PurchaseOrderMiscLineEdit,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Re-categorise or re-date one misc line. It moves no money and no stock,
+    so unlike the line set it stays editable once received — only a voided PO
+    is frozen. The P&L reads the new period on its next load."""
+    sees_gated = po_misc_service.can_see_gated(user)
+    purchase_order = await _load_po(db, po_id, sees_gated=sees_gated)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    if purchase_order.status == PurchaseOrderStatusEnum.VOIDED.value:
+        raise ConflictError("A voided purchase order cannot be edited")
+    line = next((m for m in purchase_order.misc_items if m.id == line_id), None)
+    if line is None or (line.category_admin_only and not sees_gated):
+        raise NotFoundError("Misc line not found")
+    await po_misc_service.load_categories(
+        db,
+        [_NamedEdit(line.name, data)],
+        allow_gated=sees_gated,
+        already_used=[line.category_id],
+    )
+    before = {
+        "category_id": str(line.category_id),
+        "period_from": line.period_from.isoformat(),
+        "period_to": line.period_to.isoformat(),
+    }
+    line.category_id = data.category_id
+    line.period_from = data.period_from
+    line.period_to = data.period_to
+    await db.flush()
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="purchase_order_misc_item",
+        entity_id=str(line.id),
+        entity_label=f"{purchase_order.reference} · {line.name}",
+        admin=user,
+        changes={"before": before, "after": data.model_dump(mode="json")},
+        request=request,
+    )
+    return await _serialise_po(
+        db,
+        await _load_po(db, po_id, sees_gated=sees_gated),
+        sees_gated=sees_gated,
+    )
+
+
+class _NamedEdit:
+    """A line edit shaped like a misc input for ``load_categories``, which names
+    the line in its refusals."""
+
+    def __init__(self, name: str, data: PurchaseOrderMiscLineEdit):
+        self.name = name
+        self.category_id = data.category_id
+        self.period_from = data.period_from
+        self.period_to = data.period_to
 
 
 # ─── Purchase orders on the till ───────────────────────────────────────────────
@@ -2012,6 +2202,9 @@ async def pos_purchase_orders_to_receive(
                     PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value,
                 ]
             ),
+            # The till never sees admin-only misc lines, so a PO of only those
+            # (rent, salary) is not on it at all.
+            po_misc_service.visible_po_clause(),
         )
         # Ordered by supplier first so the till's supplier-grouped list stays
         # contiguous across pages (a supplier can't reappear in a later page and
@@ -2061,6 +2254,7 @@ async def pos_completed_purchases(
         .where(
             PurchaseOrder.branch_id == branch_id,
             PurchaseOrder.status == PurchaseOrderStatusEnum.CLOSED.value,
+            po_misc_service.visible_po_clause(),
         )
         .order_by(
             PurchaseOrder.created_at.desc(),

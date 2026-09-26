@@ -9,10 +9,22 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 
-import { inventoryApi } from '@/lib/pos-api';
-import type { PurchaseOrder, PurchaseOrderStatus } from '@/lib/pos-types';
+import {
+  inventoryApi,
+  type PurchaseOrderMiscCategory,
+  type PurchaseOrderMiscPeriod,
+} from '@/lib/pos-api';
+import type { PurchaseOrder, PurchaseOrderMiscItem, PurchaseOrderStatus } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Spinner } from '@/components/ui';
+import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
+import { Modal } from '@/components/pos/ResourcePage';
+import {
+  MiscPeriodPicker,
+  inferPeriodValue,
+  periodIsValid,
+  type MiscPeriodValue,
+} from '@/components/purchasing/MiscPeriodPicker';
+import { periodLabel } from '@/lib/purchasing';
 import { InvoicePreview } from '@/components/ui/InvoicePreview';
 import { formatCost, formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
@@ -34,6 +46,7 @@ export default function PurchaseOrderDetailPage() {
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [editingMisc, setEditingMisc] = useState<PurchaseOrderMiscItem | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -123,20 +136,44 @@ export default function PurchaseOrderDetailPage() {
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
                 <tr>
                   <th className="px-2 py-1">Name</th>
+                  <th className="px-2 py-1">Category</th>
+                  <th className="px-2 py-1">Period</th>
                   <th className="px-2 py-1">Unit</th>
                   <th className="px-2 py-1 text-right">Qty</th>
                   <th className="px-2 py-1 text-right">Unit cost</th>
                   <th className="px-2 py-1 text-right">Line total</th>
+                  <th className="w-8" />
                 </tr>
               </thead>
               <tbody>
                 {po.misc_items.map((m) => (
                   <tr key={m.id} className={`border-t border-gray-100 ${interactiveRowClass}`}>
                     <td className="px-2 py-1 font-medium">{m.name}</td>
+                    <td className="px-2 py-1">
+                      {m.category_name ?? '—'}
+                      {m.category_admin_only && (
+                        <Badge variant="warning" className="ml-2">Admin only</Badge>
+                      )}
+                    </td>
+                    <td className="px-2 py-1 text-gray-600 whitespace-nowrap">
+                      {periodLabel(m.period_from, m.period_to)}
+                    </td>
                     <td className="px-2 py-1 text-gray-500">{m.storage_unit}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(m.quantity)}</td>
                     <td className="px-2 py-1 text-right tabular-nums text-gray-500">{formatCost(m.unit_cost)}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(m.entered_total)}</td>
+                    <td className="px-2 py-1 text-right">
+                      {po.status !== 'voided' && (
+                        <button
+                          onClick={() => setEditingMisc(m)}
+                          className="text-gray-400 hover:text-primary"
+                          aria-label={`Change category or period of ${m.name}`}
+                          title="Change category or period"
+                        >
+                          <span className="material-icons text-[16px]">edit</span>
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -151,7 +188,111 @@ export default function PurchaseOrderDetailPage() {
         <Total label="Additional cost" value={po.additional_cost} />
         <Total label="Total" value={po.total_cost} strong />
       </div>
+
+      {editingMisc && (
+        <EditMiscLine
+          po={po}
+          line={editingMisc}
+          onClose={() => setEditingMisc(null)}
+          onSaved={(next) => {
+            setPo(next);
+            setEditingMisc(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Re-file one misc line under another category or period. No money moves, so
+ *  this stays open on a received order; the P&L reads it on its next load. */
+function EditMiscLine({
+  po,
+  line,
+  onClose,
+  onSaved,
+}: {
+  po: PurchaseOrder;
+  line: PurchaseOrderMiscItem;
+  onClose: () => void;
+  onSaved: (po: PurchaseOrder) => void;
+}) {
+  const [categories, setCategories] = useState<PurchaseOrderMiscCategory[]>([]);
+  const [periods, setPeriods] = useState<PurchaseOrderMiscPeriod[]>([]);
+  const [categoryId, setCategoryId] = useState(line.category_id);
+  const [period, setPeriod] = useState<MiscPeriodValue>({
+    preset: 'custom',
+    from: line.period_from,
+    to: line.period_to,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([inventoryApi.miscCategories(), inventoryApi.miscPeriods()])
+      .then(([cats, presets]) => {
+        if (cancelled) return;
+        // Live categories, plus the line's own even if it has since been retired.
+        setCategories(
+          cats.filter((c) => (c.is_active && !c.deleted_at) || c.id === line.category_id),
+        );
+        setPeriods(presets);
+        setPeriod(inferPeriodValue(presets, line.period_from, line.period_to));
+      })
+      .catch(() => { if (!cancelled) setError('Could not load categories.'); });
+    return () => { cancelled = true; };
+  }, [line.category_id, line.period_from, line.period_to]);
+
+  async function save() {
+    if (!categoryId || !periodIsValid(period)) {
+      setError('Pick a category and a period that ends on or after it starts.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      onSaved(
+        await inventoryApi.editPurchaseOrderMiscLine(po.id, line.id, {
+          category_id: categoryId,
+          period_from: period.from,
+          period_to: period.to,
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Save failed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`${line.name} — category & period`} onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="max-w-xs">
+          <Select
+            label="Category"
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            options={categories.map((c) => ({
+              value: c.id,
+              label: c.admin_only ? `${c.name} (admin only)` : c.name,
+            }))}
+            placeholder="Choose…"
+          />
+        </div>
+        <MiscPeriodPicker periods={periods} value={period} onChange={setPeriod} />
+        {error && <p className="text-xs text-red-600 font-body">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={save} loading={saving}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

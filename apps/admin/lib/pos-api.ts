@@ -28,6 +28,9 @@ export type RecipeOwnerRow = Schemas['RecipeOwnerRow'];
 export type ResetCostFromRecipeResponse = Schemas['ResetCostFromRecipeResponse'];
 export type ItemCostLayers = Schemas['ItemCostLayersResponse'];
 export type ItemCostHistory = Schemas['ItemCostHistoryResponse'];
+export type PurchaseOrderMiscCategory = Schemas['PurchaseOrderMiscCategoryResponse'];
+export type PurchaseOrderMiscPeriod = Schemas['PurchaseOrderMiscPeriodResponse'];
+export type PurchaseOrderMiscLineEdit = Schemas['PurchaseOrderMiscLineEdit'];
 export type RecipeQuoteRequest = Schemas['RecipeQuoteRequest'];
 export type RecipeQuote = Schemas['RecipeQuoteResponse'];
 export type PaginatedRecipeOwners = Schemas['PaginatedRecipeOwners'];
@@ -314,6 +317,26 @@ export const inventoryApi = {
     id: string,
     lines: Array<{ purchase_order_item_id: string; quantity: number; variance_reason?: string | null }>,
   ) => api.post<InventoryTransaction | null>(`/inventory/purchase-orders/${id}/receive`, { lines }),
+  editPurchaseOrderMiscLine: (id: string, lineId: string, d: PurchaseOrderMiscLineEdit) =>
+    api.patch<PurchaseOrder>(`/inventory/purchase-orders/${id}/misc-items/${lineId}`, d),
+
+  // Misc-line categories and period presets (Purchase Orders → Misc tabs).
+  miscCategories: (params?: { include_deleted?: boolean }) =>
+    api.get<PurchaseOrderMiscCategory[]>(`/inventory/po-misc-categories${buildQs(params)}`),
+  createMiscCategory: (d: Record<string, unknown>) =>
+    api.post<PurchaseOrderMiscCategory>('/inventory/po-misc-categories', d),
+  updateMiscCategory: (id: string, d: Record<string, unknown>) =>
+    api.put<PurchaseOrderMiscCategory>(`/inventory/po-misc-categories/${id}`, d),
+  removeMiscCategory: (id: string) => api.delete<void>(`/inventory/po-misc-categories/${id}`),
+  restoreMiscCategory: (id: string) =>
+    api.post<PurchaseOrderMiscCategory>(`/inventory/po-misc-categories/${id}/restore`, {}),
+  miscPeriods: () => api.get<PurchaseOrderMiscPeriod[]>('/inventory/po-misc-periods'),
+  createMiscPeriod: (d: Record<string, unknown>) =>
+    api.post<PurchaseOrderMiscPeriod>('/inventory/po-misc-periods', d),
+  updateMiscPeriod: (id: string, d: Record<string, unknown>) =>
+    api.put<PurchaseOrderMiscPeriod>(`/inventory/po-misc-periods/${id}`, d),
+  removeMiscPeriod: (id: string) => api.delete<void>(`/inventory/po-misc-periods/${id}`),
+
   uploadPurchaseOrderInvoice: (id: string, file: File) =>
     request<PurchaseOrder>(`/inventory/purchase-orders/${id}/invoice`, {
       method: 'POST',

@@ -20,7 +20,7 @@ from app.models.inventory_v2 import Recipe, RecipeVersion, RecipeVersionStatusEn
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order, OrderStatusEnum
 from app.models.product import Product
-from app.services.inventory import cost_layer_service, recipe_service
+from app.services.inventory import cost_layer_service, po_misc_service, recipe_service
 
 __all__ = [
     "export_categories",
@@ -657,6 +657,9 @@ PURCHASE_ORDER_LINE_EXPORT_HEADERS = [
     "net",
     "vat",
     "gross",
+    "category",
+    "period_from",
+    "period_to",
     "po_additional_cost",
     "po_net",
     "po_vat",
@@ -674,6 +677,8 @@ def export_purchase_orders_workbook(
     orders: Sequence[PurchaseOrder],
     supplier_names: dict,
     items_lookup: dict | None = None,
+    *,
+    sees_gated: bool = False,
 ) -> bytes:
     """Two sheets: one row per purchase order, and one row per line.
 
@@ -682,13 +687,18 @@ def export_purchase_orders_workbook(
     ``line_type`` column, and repeats the PO header fields and totals on each row
     so a line stands alone. Money columns are written as numbers so the operator
     can sum them; text passes through ``_safe`` in the shared sheet writer.
-    ``orders``, their items and misc_items are already loaded by the caller."""
+    ``orders``, their items and misc_items are already loaded by the caller.
+
+    A viewer who may not see admin-only misc categories (``sees_gated`` false)
+    gets the workbook without those lines and with totals that exclude them,
+    exactly as the PO screens show it (``po_misc_service.visible_misc``)."""
     items_lookup = items_lookup or {}
     ordered = sorted(orders, key=_po_sort_key)
 
     header_rows: list[list[str | int | float]] = []
     line_rows: list[list[str | int | float]] = []
     for order in ordered:
+        view = po_misc_service.visible_misc(order, sees_gated=sees_gated)
         supplier = supplier_names.get(order.supplier_id, "")
         status = order.status.replace("_", " ")
         delivery = order.delivery_date.isoformat() if order.delivery_date else ""
@@ -704,12 +714,12 @@ def export_purchase_orders_workbook(
                 invoice_ref,
                 invoice_attached,
                 len(order.items),
-                len(order.misc_items),
-                float(order.subtotal_net or 0),
-                float(order.vat_total or 0),
-                float(order.total_gross or 0),
+                len(view.misc_items),
+                float(view.subtotal_net),
+                float(view.vat_total),
+                float(view.total_gross),
                 float(order.additional_cost or 0),
-                float(order.total_cost or 0),
+                float(view.total_cost),
             ]
         )
 
@@ -725,10 +735,10 @@ def export_purchase_orders_workbook(
         ]
         po_totals: list[str | int | float] = [
             float(order.additional_cost or 0),
-            float(order.subtotal_net or 0),
-            float(order.vat_total or 0),
-            float(order.total_gross or 0),
-            float(order.total_cost or 0),
+            float(view.subtotal_net),
+            float(view.vat_total),
+            float(view.total_gross),
+            float(view.total_cost),
         ]
         for line in order.items:
             item = items_lookup.get(line.item_id)
@@ -744,10 +754,13 @@ def export_purchase_orders_workbook(
                     float(line.net_total or 0),
                     float(line.vat_amount or 0),
                     float(line.entered_total or 0),
+                    "",
+                    "",
+                    "",
                 ]
                 + po_totals
             )
-        for misc in order.misc_items:
+        for misc in view.misc_items:
             line_rows.append(
                 po_prefix
                 + [
@@ -760,6 +773,9 @@ def export_purchase_orders_workbook(
                     float(misc.net_total or 0),
                     float(misc.vat_amount or 0),
                     float(misc.entered_total or 0),
+                    misc.category_name or "",
+                    misc.period_from.isoformat() if misc.period_from else "",
+                    misc.period_to.isoformat() if misc.period_to else "",
                 ]
                 + po_totals
             )

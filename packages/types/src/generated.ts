@@ -4057,6 +4057,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/po-misc-categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Misc Categories
+         * @description Every category, alphabetical — admin-only ones only for their holders.
+         */
+        get: operations["list_misc_categories_api_v1_inventory_po_misc_categories_get"];
+        put?: never;
+        /** Create Misc Category */
+        post: operations["create_misc_category_api_v1_inventory_po_misc_categories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/po-misc-categories/{category_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Misc Category */
+        put: operations["update_misc_category_api_v1_inventory_po_misc_categories__category_id__put"];
+        post?: never;
+        /**
+         * Delete Misc Category
+         * @description Soft delete: it leaves every picker; lines that already use it keep it.
+         */
+        delete: operations["delete_misc_category_api_v1_inventory_po_misc_categories__category_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/po-misc-categories/{category_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Misc Category */
+        post: operations["restore_misc_category_api_v1_inventory_po_misc_categories__category_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/po-misc-periods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Misc Periods */
+        get: operations["list_misc_periods_api_v1_inventory_po_misc_periods_get"];
+        put?: never;
+        /** Create Misc Period */
+        post: operations["create_misc_period_api_v1_inventory_po_misc_periods_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/po-misc-periods/{period_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Misc Period */
+        put: operations["update_misc_period_api_v1_inventory_po_misc_periods__period_id__put"];
+        post?: never;
+        /** Delete Misc Period */
+        delete: operations["delete_misc_period_api_v1_inventory_po_misc_periods__period_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/producible-item-bases": {
         parameters: {
             query?: never;
@@ -4331,6 +4426,28 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/purchase-orders/{po_id}/misc-items/{line_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit Purchase Order Misc Line
+         * @description Re-categorise or re-date one misc line. It moves no money and no stock,
+         *     so unlike the line set it stays editable once received — only a voided PO
+         *     is frozen. The P&L reads the new period on its next load.
+         */
+        patch: operations["edit_purchase_order_misc_line_api_v1_inventory_purchase_orders__po_id__misc_items__line_id__patch"];
         trace?: never;
     };
     "/api/v1/inventory/purchase-orders/{po_id}/receive": {
@@ -18587,6 +18704,47 @@ export interface components {
             shares: components["schemas"]["PnlShares"];
         };
         /**
+         * PnlMiscExpenseRow
+         * @description One misc PO category's spend in the window, spread per day over each
+         *     line's own period.
+         */
+        PnlMiscExpenseRow: {
+            /** Admin Only */
+            admin_only: boolean;
+            /** Amount */
+            amount: number;
+            /** Category */
+            category: string;
+            /**
+             * Category Id
+             * Format: uuid
+             */
+            category_id: string;
+            /** Lines */
+            lines: number;
+            /** Share */
+            share: number | null;
+        };
+        /**
+         * PnlMiscExpenses
+         * @description Below PC3: overheads bought on misc PO lines. They belong to no channel,
+         *     so only the total carries them.
+         */
+        PnlMiscExpenses: {
+            /** Included */
+            included: boolean;
+            /** Pc4 */
+            pc4: number;
+            /** Pc4 Pct */
+            pc4_pct: number | null;
+            /** Rows */
+            rows: components["schemas"]["PnlMiscExpenseRow"][];
+            /** Total */
+            total: number;
+            /** Total Share */
+            total_share: number | null;
+        };
+        /**
          * PnlPeriodChargeRow
          * @description One category of non-order marketplace charges in the window.
          */
@@ -18616,6 +18774,7 @@ export interface components {
             date_from: string;
             /** Date To */
             date_to: string;
+            misc_expenses: components["schemas"]["PnlMiscExpenses"];
             /** Period Charges */
             period_charges: components["schemas"]["PnlPeriodChargeRow"][];
             /** Period Charges Included */
@@ -20386,6 +20545,78 @@ export interface components {
             /** Vat Amount */
             vat_amount: string;
         };
+        /** PurchaseOrderMiscCategoryCreate */
+        PurchaseOrderMiscCategoryCreate: {
+            /**
+             * Admin Only
+             * @default false
+             */
+            admin_only: boolean;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /** Name */
+            name: string;
+        };
+        /** PurchaseOrderMiscCategoryResponse */
+        PurchaseOrderMiscCategoryResponse: {
+            /** Admin Only */
+            admin_only: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Deleted At */
+            deleted_at?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** PurchaseOrderMiscCategoryUpdate */
+        PurchaseOrderMiscCategoryUpdate: {
+            /** Admin Only */
+            admin_only?: boolean | null;
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Name */
+            name?: string | null;
+        };
+        /**
+         * PurchaseOrderMiscLineEdit
+         * @description Re-categorise or re-date one misc line. Money is untouched, so this is
+         *     allowed on a received PO too (anything but voided).
+         */
+        PurchaseOrderMiscLineEdit: {
+            /**
+             * Category Id
+             * Format: uuid
+             */
+            category_id: string;
+            /**
+             * Period From
+             * Format: date
+             */
+            period_from: string;
+            /**
+             * Period To
+             * Format: date
+             */
+            period_to: string;
+        };
         /**
          * PurchaseOrderMiscLineInput
          * @description One free-text, non-inventory PO line (supplier must allow misc items).
@@ -20396,12 +20627,27 @@ export interface components {
          */
         PurchaseOrderMiscLineInput: {
             /**
+             * Category Id
+             * Format: uuid
+             */
+            category_id: string;
+            /**
              * Entered Total
              * @default 0
              */
             entered_total: number | string;
             /** Name */
             name: string;
+            /**
+             * Period From
+             * Format: date
+             */
+            period_from: string;
+            /**
+             * Period To
+             * Format: date
+             */
+            period_to: string;
             /** Quantity */
             quantity: number | string;
             /** Storage Unit */
@@ -20409,6 +20655,18 @@ export interface components {
         };
         /** PurchaseOrderMiscLineResponse */
         PurchaseOrderMiscLineResponse: {
+            /**
+             * Category Admin Only
+             * @default false
+             */
+            category_admin_only: boolean;
+            /**
+             * Category Id
+             * Format: uuid
+             */
+            category_id: string;
+            /** Category Name */
+            category_name?: string | null;
             /** Entered Total */
             entered_total: string;
             /**
@@ -20420,6 +20678,16 @@ export interface components {
             name: string;
             /** Net Total */
             net_total: string;
+            /**
+             * Period From
+             * Format: date
+             */
+            period_from: string;
+            /**
+             * Period To
+             * Format: date
+             */
+            period_to: string;
             /** Quantity */
             quantity: string;
             /** Storage Unit */
@@ -20428,6 +20696,74 @@ export interface components {
             unit_cost: string;
             /** Vat Amount */
             vat_amount: string;
+        };
+        /** PurchaseOrderMiscPeriodCreate */
+        PurchaseOrderMiscPeriodCreate: {
+            /**
+             * Display Order
+             * @default 0
+             */
+            display_order: number;
+            /**
+             * Is Default
+             * @default false
+             */
+            is_default: boolean;
+            /**
+             * Length
+             * @default 1
+             */
+            length: number;
+            /** Name */
+            name: string;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "day" | "week" | "month";
+        };
+        /** PurchaseOrderMiscPeriodResponse */
+        PurchaseOrderMiscPeriodResponse: {
+            /**
+             * Default From
+             * Format: date
+             */
+            default_from: string;
+            /**
+             * Default To
+             * Format: date
+             */
+            default_to: string;
+            /** Deleted At */
+            deleted_at?: string | null;
+            /** Display Order */
+            display_order: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Length */
+            length: number;
+            /** Name */
+            name: string;
+            /** Unit */
+            unit: string;
+        };
+        /** PurchaseOrderMiscPeriodUpdate */
+        PurchaseOrderMiscPeriodUpdate: {
+            /** Display Order */
+            display_order?: number | null;
+            /** Is Default */
+            is_default?: boolean | null;
+            /** Length */
+            length?: number | null;
+            /** Name */
+            name?: string | null;
+            /** Unit */
+            unit?: ("day" | "week" | "month") | null;
         };
         /** PurchaseOrderResponse */
         PurchaseOrderResponse: {
@@ -31920,6 +32256,282 @@ export interface operations {
             };
         };
     };
+    list_misc_categories_api_v1_inventory_po_misc_categories_get: {
+        parameters: {
+            query?: {
+                include_deleted?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderMiscCategoryResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_misc_category_api_v1_inventory_po_misc_categories_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurchaseOrderMiscCategoryCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderMiscCategoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_misc_category_api_v1_inventory_po_misc_categories__category_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                category_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurchaseOrderMiscCategoryUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderMiscCategoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_misc_category_api_v1_inventory_po_misc_categories__category_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                category_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_misc_category_api_v1_inventory_po_misc_categories__category_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                category_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderMiscCategoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_misc_periods_api_v1_inventory_po_misc_periods_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderMiscPeriodResponse"][];
+                };
+            };
+        };
+    };
+    create_misc_period_api_v1_inventory_po_misc_periods_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurchaseOrderMiscPeriodCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderMiscPeriodResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_misc_period_api_v1_inventory_po_misc_periods__period_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                period_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurchaseOrderMiscPeriodUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderMiscPeriodResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_misc_period_api_v1_inventory_po_misc_periods__period_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                period_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     producible_item_bases_api_v1_inventory_producible_item_bases_get: {
         parameters: {
             query?: never;
@@ -32428,6 +33040,42 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_purchase_order_misc_line_api_v1_inventory_purchase_orders__po_id__misc_items__line_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                po_id: string;
+                line_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurchaseOrderMiscLineEdit"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

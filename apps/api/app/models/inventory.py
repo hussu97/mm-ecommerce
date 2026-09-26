@@ -969,6 +969,9 @@ class PurchaseOrderMiscItem(Base, UUIDMixin):
     __tablename__ = "purchase_order_misc_items"
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_purchase_order_misc_items_quantity"),
+        CheckConstraint(
+            "period_to >= period_from", name="ck_purchase_order_misc_items_period"
+        ),
     )
 
     purchase_order_id: Mapped[uuid.UUID] = mapped_column(
@@ -992,6 +995,19 @@ class PurchaseOrderMiscItem(Base, UUIDMixin):
     unit_cost: Mapped[Any] = mapped_column(
         Numeric(20, 10), nullable=False, server_default="0"
     )
+    #: What the spend is — shared across suppliers. An ``admin_only`` category
+    #: hides the line from the till and from admins without the restricted
+    #: permission (``po_misc_service``).
+    category_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_order_misc_categories.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    #: The days the spend covers (inclusive). The P&L spreads ``net_total``
+    #: equally over them rather than booking it on the PO date.
+    period_from: Mapped[date] = mapped_column(Date, nullable=False)
+    period_to: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -999,9 +1015,85 @@ class PurchaseOrderMiscItem(Base, UUIDMixin):
     purchase_order: Mapped[PurchaseOrder] = relationship(
         "PurchaseOrder", back_populates="misc_items"
     )
+    category: Mapped[PurchaseOrderMiscCategory] = relationship(
+        "PurchaseOrderMiscCategory", lazy="selectin"
+    )
+
+    @property
+    def category_name(self) -> str | None:
+        return self.category.name if self.category is not None else None
+
+    @property
+    def category_admin_only(self) -> bool:
+        return bool(self.category is not None and self.category.admin_only)
 
     def __repr__(self) -> str:
         return f"<PurchaseOrderMiscItem {self.name} qty={self.quantity}>"
+
+
+class PurchaseOrderMiscCategory(Base, UUIDMixin, TimestampMixin):
+    """What a misc PO line is for (Groceries, Rent, …) — not supplier-specific.
+
+    ``admin_only`` marks a confidential category: its lines never reach the till
+    (as if they were not on the PO) and admin shows them only to holders of
+    ``inventory.purchase_orders.restricted_misc``.
+    """
+
+    __tablename__ = "purchase_order_misc_categories"
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    admin_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<PurchaseOrderMiscCategory {self.name}>"
+
+
+class PurchaseOrderMiscPeriodUnitEnum(str, enum.Enum):
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+
+
+class PurchaseOrderMiscPeriod(Base, UUIDMixin, TimestampMixin):
+    """A preset the misc-line period picker offers ("This month", "This year").
+
+    ``unit`` × ``length`` says how the picker asks for the range (a month picker
+    for ``month``) and what it pre-fills: the current ``length``-long block. It
+    is only a convenience — a line stores its dates, never the preset.
+    """
+
+    __tablename__ = "purchase_order_misc_periods"
+    __table_args__ = (
+        CheckConstraint(
+            "unit IN ('day', 'week', 'month')",
+            name="ck_purchase_order_misc_periods_unit",
+        ),
+        CheckConstraint("length >= 1", name="ck_purchase_order_misc_periods_length"),
+    )
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    unit: Mapped[str] = mapped_column(String(10), nullable=False)
+    length: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    display_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<PurchaseOrderMiscPeriod {self.name}>"
 
 
 # ─── FIFO cost layers ───────────────────────────────────────────────────────────

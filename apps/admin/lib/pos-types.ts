@@ -526,6 +526,13 @@ export interface PurchaseOrderMiscItem {
   vat_amount: number;
   net_total: number;
   unit_cost: number;
+  category_id: string;
+  category_name: string | null;
+  // Rent, salary… — only ever present for holders of the restricted permission.
+  category_admin_only: boolean;
+  // The days the spend covers (inclusive, YYYY-MM-DD); the P&L spreads it over them.
+  period_from: string;
+  period_to: string;
 }
 
 export interface PurchaseOrder {

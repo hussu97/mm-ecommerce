@@ -94,6 +94,67 @@ const ROWS: Row[] = [
   { label: 'PC3', value: c => c.pc3, share: 'pc3', kind: 'result' },
 ];
 
+/**
+ * Below PC3: misc purchase-order spend (rent, groceries, a licence…) by
+ * category, each line spread equally per day over its own period — so only the
+ * days inside this window count. It is overhead with no channel, so only the
+ * total column carries it; the rest show a dash.
+ */
+function MiscExpenseRows({ report, columns }: { report: PnlReport; columns: Column[] }) {
+  const misc = report.misc_expenses;
+  // The total column carries them — or the only column, which is the total when
+  // a single channel had activity.
+  const carries = (c: Column) => c.channel === 'total' || columns.length === 1;
+  const cell = (c: Column, value: number | null, kind: Row['kind'], pct: number | null) => (
+    <td
+      key={c.channel}
+      className={cn(
+        'whitespace-nowrap px-3 py-1.5 text-right tabular-nums',
+        kind === 'result' && value !== null && value < 0 && 'text-red-600',
+      )}
+    >
+      {carries(c) ? money(value, kind) : '—'}
+      <span className="block text-[10px] text-gray-400">
+        {carries(c) && pct !== null ? `${pct.toFixed(1)}%` : ''}
+      </span>
+    </td>
+  );
+  if (!misc.included) {
+    return (
+      <tr className="border-b border-gray-100 text-gray-400">
+        <td className="sticky left-0 bg-white px-3 py-1.5">
+          Misc. expenses
+          <span className="block text-[11px]">Not shown under a channel filter — they belong to no channel.</span>
+        </td>
+        {columns.map(c => (
+          <td key={c.channel} className="px-3 py-1.5 text-right">—</td>
+        ))}
+      </tr>
+    );
+  }
+  return (
+    <>
+      <tr className="border-b border-gray-100 text-gray-600">
+        <td className="sticky left-0 bg-white px-3 py-1.5">Misc. expenses (purchase orders)</td>
+        {columns.map(c => cell(c, misc.total, 'cost', misc.total_share))}
+      </tr>
+      {misc.rows.map(row => (
+        <tr key={row.category_id} className="border-b border-gray-100 text-[11px] text-gray-400">
+          <td className="sticky left-0 bg-white px-3 py-1.5 pl-6">
+            {row.category}
+            {row.admin_only && <span className="ml-1 text-amber-600">· admin only</span>}
+          </td>
+          {columns.map(c => cell(c, row.amount, 'detail', row.share))}
+        </tr>
+      ))}
+      <tr className="bg-gray-50 text-sm font-medium text-gray-800">
+        <td className="sticky left-0 bg-gray-50 px-3 py-1.5">PC4</td>
+        {columns.map(c => cell(c, misc.pc4, 'result', misc.pc4_pct))}
+      </tr>
+    </>
+  );
+}
+
 function money(value: number | null, kind: Row['kind']) {
   if (value === null) return '—';
   if (value !== 0 && (kind === 'cost' || kind === 'detail')) return `−${formatCurrency(value)}`;
@@ -266,11 +327,23 @@ export default function ProfitLossPage() {
         </div>
       ) : report && total ? (
         <div className={cn('space-y-6', loading && 'opacity-60')}>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div
+            className={cn(
+              'grid grid-cols-2 gap-3',
+              report.misc_expenses.included ? 'md:grid-cols-5' : 'md:grid-cols-4',
+            )}
+          >
             <Tile label="GMV" value={total.gmv} />
             <Tile label="PC1 · after COGS" value={total.pc1} pct={total.pc1_pct} />
             <Tile label="PC2 · after fees" value={total.pc2} pct={total.pc2_pct} />
             <Tile label="PC3 · after discounts" value={total.pc3} pct={total.pc3_pct} />
+            {report.misc_expenses.included && (
+              <Tile
+                label="PC4 · after misc expenses"
+                value={report.misc_expenses.pc4}
+                pct={report.misc_expenses.pc4_pct}
+              />
+            )}
           </div>
 
           <div className="overflow-x-auto border border-gray-200 bg-white">
@@ -334,6 +407,7 @@ export default function ProfitLossPage() {
                     </tr>
                   );
                 })}
+                <MiscExpenseRows report={report} columns={columns} />
               </tbody>
             </table>
           </div>

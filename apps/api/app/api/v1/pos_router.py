@@ -38,6 +38,7 @@ from .operations import (
     pos_production_router,
     pos_transfers_router,
 )
+from .po_misc import pos_po_misc_router
 from .pos_config import (
     charges_router,
     courses_router,
@@ -138,6 +139,11 @@ pos_api_router.include_router(
 )
 # Raise a purchase order at the till (create-and-receive) or receive an
 # admin-raised one.
+# The misc-line category/period pickers — mounted first so the purchase-order
+# router's UUID-typed `/{po_id}` does not claim `/misc-categories`.
+pos_api_router.include_router(
+    pos_po_misc_router, prefix="/pos/purchase-orders", tags=["POS Purchasing"]
+)
 pos_api_router.include_router(
     pos_purchase_orders_router,
     prefix="/pos/purchase-orders",

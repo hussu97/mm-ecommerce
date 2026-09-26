@@ -81,6 +81,7 @@ from .operations import (
 from .orders import router as orders_router
 from .payment_gateways import router as payment_gateways_router
 from .payments import router as payments_router
+from .po_misc import po_misc_categories_router, po_misc_periods_router
 from .pos_config import (
     charges_router,
     courses_router,
@@ -241,6 +242,16 @@ api_router.include_router(
     purchase_orders_router,
     prefix="/inventory/purchase-orders",
     tags=["Inventory"],
+)
+# Misc PO line categories and period presets (own prefixes: the PO router's
+# UUID-typed `/{po_id}` would otherwise swallow them).
+api_router.include_router(
+    po_misc_categories_router,
+    prefix="/inventory/po-misc-categories",
+    tags=["Inventory"],
+)
+api_router.include_router(
+    po_misc_periods_router, prefix="/inventory/po-misc-periods", tags=["Inventory"]
 )
 api_router.include_router(
     recipes_router, prefix="/inventory/recipes", tags=["Inventory"]

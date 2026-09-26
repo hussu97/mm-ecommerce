@@ -1,5 +1,6 @@
 """
-The profit & loss page: `order_pnl` summed per channel, plus period charges.
+The profit & loss page: `order_pnl` summed per channel, plus period charges,
+then misc purchase-order spend below PC3 (`misc_expenses`).
 
 Kept apart from `order_pnl` because it is the one reader that adds something no
 order carries — the marketplaces' non-order statement charges
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +26,7 @@ from app.models.order import Order
 from app.models.pos_order import OrderSourceEnum
 from app.services.aggregators.period_charges import PeriodCharge, period_charges
 from app.services.orders import tax_identity_service
+from app.services.orders.misc_expenses import MiscExpense, misc_expenses
 from app.services.orders.order_pnl import (
     CHANNELS,
     PnlTotals,
@@ -43,6 +46,20 @@ class PnlReport:
     total: PnlTotals
     period_charges: list[PeriodCharge]
     period_charges_included: bool
+    #: Misc PO spend per category, prorated into the window. Overhead with no
+    #: channel, so it sits below PC3 on the total only.
+    misc_expenses: list[MiscExpense]
+    #: False under a channel filter — overhead belongs to no channel.
+    misc_expenses_included: bool
+
+    @property
+    def misc_expenses_total(self) -> Decimal:
+        return money(sum((row.amount for row in self.misc_expenses), Decimal("0")))
+
+    @property
+    def pc4(self) -> Decimal:
+        """PC3 less the misc spend: what the period made after overheads."""
+        return money(self.total.pc3 - self.misc_expenses_total)
 
 
 async def build(
@@ -53,6 +70,7 @@ async def build(
     channels: list[str] | None = None,
     branch_ids: list[uuid.UUID] | None = None,
     legal_entity_ids: list[uuid.UUID] | None = None,
+    include_gated_misc: bool = False,
 ) -> PnlReport:
     if date_from > date_to:
         date_from, date_to = date_to, date_from
@@ -96,6 +114,20 @@ async def build(
     total = PnlTotals()
     for _, column in ordered:
         total.add(column)
+
+    include_misc = not channels
+    misc = (
+        await misc_expenses(
+            db,
+            date_from,
+            date_to,
+            branch_ids=branch_ids,
+            legal_entity_ids=legal_entity_ids,
+            include_gated=include_gated_misc,
+        )
+        if include_misc
+        else []
+    )
     return PnlReport(
         date_from=date_from,
         date_to=date_to,
@@ -103,4 +135,6 @@ async def build(
         total=total,
         period_charges=charges,
         period_charges_included=include_period,
+        misc_expenses=misc,
+        misc_expenses_included=include_misc,
     )

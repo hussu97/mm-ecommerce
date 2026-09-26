@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -26,6 +27,7 @@ from app.models.inventory import (
     InventoryTransactionItem,
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseOrderMiscCategory,
     PurchaseOrderMiscItem,
     PurchaseOrderStatusEnum,
     Supplier,
@@ -43,7 +45,12 @@ from app.schemas.inventory import (
     SupplierCreate,
     SupplierItemUpsert,
 )
-from app.services.inventory import inventory_service, supplier_service
+from app.services.inventory import (
+    inventory_service,
+    po_misc_service,
+    supplier_service,
+)
+from app.services.orders.misc_expenses import misc_expenses
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -290,6 +297,31 @@ async def test_deactivate_blocked_by_active_mapping_then_reversible(engine, env)
         await db.rollback()
 
 
+SEPT = (date(2026, 9, 1), date(2026, 9, 30))
+
+
+async def _category(db, name: str) -> PurchaseOrderMiscCategory:
+    """A category seeded by migration 293."""
+    return (
+        await db.execute(
+            select(PurchaseOrderMiscCategory).where(
+                PurchaseOrderMiscCategory.name == name,
+                PurchaseOrderMiscCategory.deleted_at.is_(None),
+            )
+        )
+    ).scalar_one()
+
+
+async def _cat(db, name: str, period: tuple[date, date] = SEPT) -> dict:
+    """The category + period fields every misc line input now carries."""
+    category = await _category(db, name)
+    return {
+        "category_id": category.id,
+        "period_from": period[0],
+        "period_to": period[1],
+    }
+
+
 async def test_po_misc_items_price_into_totals_and_dedup(engine, env):
     """A tagged supplier's PO may carry non-inventory misc lines.
 
@@ -334,6 +366,7 @@ async def test_po_misc_items_price_into_totals_and_dedup(engine, env):
                     quantity=D("2"),
                     storage_unit="roll",
                     entered_total=D("21"),
+                    **await _cat(db, "Cake Supplies"),
                 )
             ],
             allows_misc=True,
@@ -368,6 +401,7 @@ async def test_po_misc_items_price_into_totals_and_dedup(engine, env):
                         quantity=D("1"),
                         storage_unit="pc",
                         entered_total=D("5"),
+                        **await _cat(db, "Cake Supplies"),
                     )
                 ],
                 allows_misc=True,
@@ -405,6 +439,7 @@ async def test_po_misc_items_refused_when_supplier_not_tagged(engine, env):
                         quantity=D("1"),
                         storage_unit="pc",
                         entered_total=D("5"),
+                        **await _cat(db, "Cake Supplies"),
                     )
                 ],
                 allows_misc=False,
@@ -710,4 +745,346 @@ async def test_pos_create_and_receive_lands_cost_in_one_call(engine, env):
         )
         assert level.quantity == D("20.0000")
         assert level.average_cost == D("10.000000")
+        await db.rollback()
+
+
+async def _misc_po(db, supplier, branch_id, user_id, *, status, lines, allow_gated):
+    po = PurchaseOrder(
+        reference=await inventory_service.next_inventory_reference(db, "PO"),
+        status=status,
+        origin="admin",
+        supplier_id=supplier.id,
+        branch_id=branch_id,
+        business_date="2026-09-20",
+        creator_id=user_id,
+    )
+    db.add(po)
+    await db.flush()
+    await inventory_service.build_po_lines(
+        db,
+        po,
+        [],
+        is_vat_deductible=supplier.is_vat_deductible,
+        misc_lines=lines,
+        allows_misc=True,
+        allow_gated=allow_gated,
+    )
+    return po
+
+
+async def test_misc_lines_store_category_and_period_and_gate_admin_only(engine, env):
+    """Every misc line keeps its category and period. An admin-only category is
+    refused unless the caller may see it (the till never may), and a retired
+    category is refused for a new line."""
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db,
+            SupplierCreate(
+                name=f"{MARKER} Landlord",
+                is_vat_deductible=False,
+                allows_misc_items=True,
+            ),
+        )
+        rent = PurchaseOrderMiscLineInput(
+            name="Shop rent",
+            quantity=D("1"),
+            storage_unit="year",
+            entered_total=D("12000"),
+            **await _cat(db, "Rent", (date(2026, 1, 1), date(2026, 12, 31))),
+        )
+        with pytest.raises(BadRequestError, match="not available"):
+            await _misc_po(
+                db,
+                supplier,
+                branch_id,
+                user_id,
+                status=PurchaseOrderStatusEnum.DRAFT.value,
+                lines=[rent],
+                allow_gated=False,
+            )
+        po = await _misc_po(
+            db,
+            supplier,
+            branch_id,
+            user_id,
+            status=PurchaseOrderStatusEnum.DRAFT.value,
+            lines=[rent],
+            allow_gated=True,
+        )
+        stored = (
+            await db.execute(
+                select(PurchaseOrderMiscItem).where(
+                    PurchaseOrderMiscItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        assert stored.category_id == rent.category_id
+        assert (stored.period_from, stored.period_to) == (
+            date(2026, 1, 1),
+            date(2026, 12, 31),
+        )
+
+        # The till's picker never offers it, and a PO of only rent is invisible
+        # to anyone who may not see it.
+        till = await po_misc_service.list_categories(
+            db, include_gated=False, include_inactive=False
+        )
+        assert "Rent" not in {c.name for c in till}
+        assert [c.name for c in till] == sorted((c.name for c in till), key=str.lower)
+        visible = select(PurchaseOrder.id).where(PurchaseOrder.id == po.id)
+        assert (
+            await db.execute(visible.where(po_misc_service.visible_po_clause()))
+        ).first() is None
+        assert (await db.execute(visible)).first() is not None
+
+        # Saving the lines a gated-blind editor can see keeps the rent line.
+        soap = PurchaseOrderMiscLineInput(
+            name="Soap",
+            quantity=D("2"),
+            storage_unit="bottle",
+            entered_total=D("30"),
+            **await _cat(db, "Cleaning Supplies"),
+        )
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [],
+            is_vat_deductible=False,
+            misc_lines=[soap],
+            allows_misc=True,
+            allow_gated=False,
+            keep_misc=[stored],
+        )
+        names = set(
+            (
+                await db.execute(
+                    select(PurchaseOrderMiscItem.name).where(
+                        PurchaseOrderMiscItem.purchase_order_id == po.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert names == {"Shop rent", "Soap"}
+        assert po.total_gross == D("12030.00")
+
+        # A retired category cannot be chosen for a new line.
+        groceries = await _category(db, "Groceries")
+        groceries.is_active = False
+        await db.flush()
+        with pytest.raises(BadRequestError, match="no longer in use"):
+            await _misc_po(
+                db,
+                supplier,
+                branch_id,
+                user_id,
+                status=PurchaseOrderStatusEnum.DRAFT.value,
+                lines=[
+                    PurchaseOrderMiscLineInput(
+                        name="Milk",
+                        quantity=D("1"),
+                        storage_unit="l",
+                        entered_total=D("7"),
+                        **await _cat(db, "Groceries"),
+                    )
+                ],
+                allow_gated=False,
+            )
+        await db.rollback()
+
+
+async def test_pnl_misc_expenses_spread_per_day_over_received_pos(engine, env):
+    """The P&L section: received POs only, each line spread equally over its
+    own period and clipped to the window, admin-only kept only for holders."""
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db,
+            SupplierCreate(
+                name=f"{MARKER} Misc", is_vat_deductible=True, allows_misc_items=True
+            ),
+        )
+        year = (date(2026, 1, 1), date(2026, 12, 31))
+        await _misc_po(
+            db,
+            supplier,
+            branch_id,
+            user_id,
+            status=PurchaseOrderStatusEnum.CLOSED.value,
+            lines=[
+                # 12,600 gross → 12,000 net over 365 days.
+                PurchaseOrderMiscLineInput(
+                    name="Shop rent",
+                    quantity=D("1"),
+                    storage_unit="year",
+                    entered_total=D("12600"),
+                    **await _cat(db, "Rent", year),
+                ),
+                # 315 gross → 300 net over September.
+                PurchaseOrderMiscLineInput(
+                    name="Boxes",
+                    quantity=D("100"),
+                    storage_unit="pc",
+                    entered_total=D("315"),
+                    **await _cat(db, "Cake Supplies"),
+                ),
+            ],
+            allow_gated=True,
+        )
+        # Not received → not spend.
+        for status in (
+            PurchaseOrderStatusEnum.VOIDED.value,
+            PurchaseOrderStatusEnum.APPROVED.value,
+        ):
+            await _misc_po(
+                db,
+                supplier,
+                branch_id,
+                user_id,
+                status=status,
+                lines=[
+                    PurchaseOrderMiscLineInput(
+                        name="Ignored",
+                        quantity=D("1"),
+                        storage_unit="pc",
+                        entered_total=D("999"),
+                        **await _cat(db, "Cake Supplies"),
+                    )
+                ],
+                allow_gated=True,
+            )
+
+        rows = await misc_expenses(
+            db, "2026-09-21", "2026-09-30", branch_ids=[branch_id], include_gated=True
+        )
+        assert [(r.category, r.amount, r.lines) for r in rows] == [
+            ("Cake Supplies", D("100.00"), 1),  # 10 of 30 days
+            ("Rent", D("328.77"), 1),  # 12,000 × 10 / 365
+        ]
+        blind = await misc_expenses(
+            db, "2026-09-21", "2026-09-30", branch_ids=[branch_id], include_gated=False
+        )
+        assert [r.category for r in blind] == ["Cake Supplies"]
+        october = await misc_expenses(
+            db, "2026-10-01", "2026-10-31", branch_ids=[branch_id], include_gated=True
+        )
+        assert [(r.category, r.amount) for r in october] == [("Rent", D("1019.18"))]
+        await db.rollback()
+
+
+async def test_the_till_view_of_a_po_drops_admin_only_lines_and_their_money(
+    engine, env
+):
+    """What `/pos/purchase-orders/{id}` serves: rent is not on the PO, and the
+    totals are the soap alone. A PO of only rent is not found."""
+    from app.api.v1.inventory import _load_po, _serialise_po
+    from app.core.exceptions import NotFoundError
+
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db,
+            SupplierCreate(
+                name=f"{MARKER} Mixed", is_vat_deductible=True, allows_misc_items=True
+            ),
+        )
+        rent = PurchaseOrderMiscLineInput(
+            name="Shop rent",
+            quantity=D("1"),
+            storage_unit="month",
+            entered_total=D("2100"),
+            **await _cat(db, "Rent"),
+        )
+        soap = PurchaseOrderMiscLineInput(
+            name="Soap",
+            quantity=D("2"),
+            storage_unit="bottle",
+            entered_total=D("21"),
+            **await _cat(db, "Cleaning Supplies"),
+        )
+        mixed = await _misc_po(
+            db,
+            supplier,
+            branch_id,
+            user_id,
+            status=PurchaseOrderStatusEnum.CLOSED.value,
+            lines=[rent, soap],
+            allow_gated=True,
+        )
+        till = await _serialise_po(db, await _load_po(db, mixed.id))
+        assert [m.name for m in till.misc_items] == ["Soap"]
+        assert (till.subtotal_net, till.vat_total, till.total_gross) == (
+            D("20.00"),
+            D("1.00"),
+            D("21.00"),
+        )
+        assert till.misc_items[0].category_name == "Cleaning Supplies"
+        holder = await _serialise_po(
+            db, await _load_po(db, mixed.id, sees_gated=True), sees_gated=True
+        )
+        assert {m.name for m in holder.misc_items} == {"Shop rent", "Soap"}
+        assert holder.total_gross == D("2121.00")
+
+        rent_only = await _misc_po(
+            db,
+            supplier,
+            branch_id,
+            user_id,
+            status=PurchaseOrderStatusEnum.CLOSED.value,
+            lines=[rent],
+            allow_gated=True,
+        )
+        with pytest.raises(NotFoundError):
+            await _load_po(db, rent_only.id)
+        await db.rollback()
+
+
+async def test_the_console_create_route_honours_the_restricted_permission(engine, env):
+    """`POST /inventory/purchase-orders` lets a holder file a line under Rent and
+    refuses anyone else — the route, not just the service, carries the gate."""
+    from app.api.v1.inventory import create_purchase_order
+    from app.schemas.inventory import PurchaseOrderCreate
+
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db,
+            SupplierCreate(
+                name=f"{MARKER} Landlord route",
+                is_vat_deductible=False,
+                allows_misc_items=True,
+            ),
+        )
+        body = PurchaseOrderCreate(
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            misc_items=[
+                PurchaseOrderMiscLineInput(
+                    name="Shop rent",
+                    quantity=D("1"),
+                    storage_unit="month",
+                    entered_total=D("5000"),
+                    **await _cat(db, "Rent"),
+                )
+            ],
+        )
+        owner = await db.get(User, user_id)
+        owner.is_admin = True
+        created = await create_purchase_order(body, db=db, user=owner)
+        assert [m.category_name for m in created.misc_items] == ["Rent"]
+
+        # A branch-assigned manager without the restricted permission.
+        from app.models.role import UserBranch
+
+        owner.is_admin = False
+        db.add(UserBranch(user_id=owner.id, branch_id=branch_id))
+        await db.flush()
+        with pytest.raises(BadRequestError, match="not available"):
+            await create_purchase_order(body, db=db, user=owner)
         await db.rollback()

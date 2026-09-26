@@ -9,6 +9,8 @@ derives nothing. `float` for transport, like the other report schemas.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from pydantic import BaseModel
 
 
@@ -180,6 +182,35 @@ class PnlVatSummary(BaseModel):
     net_vat: float
 
 
+class PnlMiscExpenseRow(BaseModel):
+    """One misc PO category's spend in the window, spread per day over each
+    line's own period."""
+
+    category_id: UUID
+    category: str
+    #: Admin-only (rent, salary…) — only shown to holders of the permission.
+    admin_only: bool
+    #: Net of reclaimable VAT; the full gross where the entity cannot reclaim.
+    amount: float
+    #: `amount` as a % of the total column's GMV; null with no GMV.
+    share: float | None
+    lines: int
+
+
+class PnlMiscExpenses(BaseModel):
+    """Below PC3: overheads bought on misc PO lines. They belong to no channel,
+    so only the total carries them."""
+
+    #: False under a channel filter (overhead has no channel).
+    included: bool
+    rows: list[PnlMiscExpenseRow]
+    total: float
+    total_share: float | None
+    #: PC3 − `total`.
+    pc4: float
+    pc4_pct: float | None
+
+
 class PnlReportResponse(BaseModel):
     date_from: str
     date_to: str
@@ -193,3 +224,4 @@ class PnlReportResponse(BaseModel):
     #: orders are booked under.
     period_charges_included: bool
     vat: PnlVatSummary
+    misc_expenses: PnlMiscExpenses
