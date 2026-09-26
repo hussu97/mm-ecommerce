@@ -8,6 +8,7 @@ import logging
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import DateTime, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -290,60 +291,26 @@ async def _competing_movement_since(
     ).scalar_one() > 0
 
 
-async def upsert_template(
-    db: AsyncSession,
-    *,
-    template: InventoryReportTemplate | None,
-    data,
-) -> InventoryReportTemplate:
-    if await db.get(Branch, data.branch_id) is None:
-        raise NotFoundError("Branch not found")
-    if template is not None:
-        if template.branch_id != data.branch_id:
-            raise ConflictError("A report template cannot move between branches")
-        if template.report_type != data.report_type:
-            raise ConflictError(
-                "Create a new template instead of changing its report type"
-            )
-    # This also serializes adjacent template revisions.  The unique constraint
-    # remains the database backstop for imports or future writers that do not
-    # use this service.
-    await source_event_service.lock_branch_inventory(db, data.branch_id)
-    next_version = await _next_template_version(
-        db, branch_id=data.branch_id, report_type=data.report_type
-    )
+#: The template columns an admin sets. One list for both the create and the
+#: edit path, so an API field can never be initialised one way and edited another.
+_TEMPLATE_FIELDS = (
+    "name",
+    "cadence",
+    "is_required",
+    "is_active",
+    "display_order",
+    "configuration",
+    "approval_cost_threshold",
+    "approval_variance_percent",
+)
 
-    # PostgreSQL validates NOT NULL columns on ``flush()``, not when attributes
-    # are subsequently assigned below.  A new template needs its complete
-    # persisted shape before the flush that obtains its ID for template lines.
-    # Keep this list shared by both the creation and update paths so an API
-    # field cannot silently be initialised differently from later edits.
-    template_values = {
-        field: getattr(data, field)
-        for field in (
-            "name",
-            "report_type",
-            "cadence",
-            "is_required",
-            "is_active",
-            "display_order",
-            "configuration",
-            "approval_cost_threshold",
-            "approval_variance_percent",
-        )
-    }
-    # Templates are append-only revisions. Existing issued reports keep their
-    # original template FK and snapshot, while the POS resolver selects this
-    # newest version for subsequent checklist creation.
-    template = InventoryReportTemplate(
-        branch_id=data.branch_id,
-        version_number=next_version,
-        **template_values,
-    )
-    db.add(template)
-    await db.flush()
+
+async def _validated_item_rows(db: AsyncSession, items) -> list[tuple[int, Any]]:
+    """The requested lines as ``(display_order, input)``, refusing a duplicate, a
+    missing item, or one nobody stocks any more."""
+    rows: list[tuple[int, Any]] = []
     seen: set[uuid.UUID] = set()
-    for index, item_data in enumerate(data.items):
+    for index, item_data in enumerate(items):
         if item_data.item_id in seen:
             raise BadRequestError(
                 f"Inventory item {item_data.item_id} appears more than once"
@@ -356,27 +323,123 @@ async def upsert_template(
             raise BadRequestError(
                 f"Inventory item {candidate.name} is inactive and cannot be added"
             )
+        rows.append((item_data.display_order or index, item_data))
+    return rows
+
+
+async def _load_template(
+    db: AsyncSession, template_id: uuid.UUID, *, lock: bool = False
+) -> InventoryReportTemplate:
+    stmt = (
+        select(InventoryReportTemplate)
+        .where(InventoryReportTemplate.id == template_id)
+        .options(selectinload(InventoryReportTemplate.items))
+        .execution_options(populate_existing=True)
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    return (await db.execute(stmt)).scalars().unique().one()
+
+
+async def create_template(db: AsyncSession, *, data) -> InventoryReportTemplate:
+    """Add a template for a branch's report type, as that type's newest revision.
+
+    A branch runs one template per report type — the highest ``version_number``
+    (``latest_active_templates``) — so creating one for a type that already has a
+    template replaces it for every report issued from now on. The older row stays
+    as history; editing is ``update_template``, which changes a row in place.
+    """
+    if await db.get(Branch, data.branch_id) is None:
+        raise NotFoundError("Branch not found")
+    # Serializes revision allocation; the unique constraint is the database
+    # backstop for imports or any other writer that skips this service.
+    await source_event_service.lock_branch_inventory(db, data.branch_id)
+    rows = await _validated_item_rows(db, data.items)
+    next_version = await _next_template_version(
+        db, branch_id=data.branch_id, report_type=data.report_type
+    )
+    # PostgreSQL validates NOT NULL columns on ``flush()``, so the new row gets its
+    # complete shape before the flush that gives its lines a template ID.
+    template = InventoryReportTemplate(
+        branch_id=data.branch_id,
+        report_type=data.report_type,
+        version_number=next_version,
+        **{field: getattr(data, field) for field in _TEMPLATE_FIELDS},
+    )
+    db.add(template)
+    await db.flush()
+    for display_order, item_data in rows:
         db.add(
             InventoryReportTemplateItem(
                 template_id=template.id,
                 item_id=item_data.item_id,
-                display_order=item_data.display_order or index,
+                display_order=display_order,
                 required_input=item_data.required_input,
             )
         )
     await db.flush()
-    return (
-        (
-            await db.execute(
-                select(InventoryReportTemplate)
-                .where(InventoryReportTemplate.id == template.id)
-                .options(selectinload(InventoryReportTemplate.items))
-            )
+    return await _load_template(db, template.id)
+
+
+async def update_template(
+    db: AsyncSession, *, template: InventoryReportTemplate, data
+) -> InventoryReportTemplate:
+    """Edit a branch's current template in place.
+
+    Safe because nothing issued reads a template back: a report copies what it
+    needs into ``template_snapshot`` and materialises its lines when it is
+    created, so a report already raised keeps the list it was raised with and
+    the edit applies from the next report on. Keeping the row (and its id) also
+    keeps the day's report idempotency key stable — a fresh revision mid-day had
+    the next close raise a second report for the same day.
+
+    Only the current revision is editable: an older one is history the register
+    never reads, and changing it would suggest otherwise.
+    """
+    if template.branch_id != data.branch_id:
+        raise ConflictError("A report template cannot move between branches")
+    if template.report_type != data.report_type:
+        raise ConflictError("Create a new template instead of changing its report type")
+    await source_event_service.lock_branch_inventory(db, template.branch_id)
+    latest_version = await db.scalar(
+        select(func.max(InventoryReportTemplate.version_number)).where(
+            InventoryReportTemplate.branch_id == template.branch_id,
+            InventoryReportTemplate.report_type == template.report_type,
         )
-        .scalars()
-        .unique()
-        .one()
     )
+    if template.version_number != latest_version:
+        raise ConflictError(
+            "This version has been replaced by a newer one — edit the current version"
+        )
+    rows = await _validated_item_rows(db, data.items)
+    template = await _load_template(db, template.id, lock=True)
+    for field in _TEMPLATE_FIELDS:
+        setattr(template, field, getattr(data, field))
+    # Diff by item rather than replace every line: a delete and a re-insert of the
+    # same item in one flush would hit uq_inventory_report_template_item, because
+    # the unit of work inserts before it deletes.
+    existing = {row.item_id: row for row in template.items}
+    wanted = {item_data.item_id for _, item_data in rows}
+    for row in [row for row in template.items if row.item_id not in wanted]:
+        template.items.remove(row)
+    for display_order, item_data in rows:
+        row = existing.get(item_data.item_id)
+        if row is None:
+            template.items.append(
+                InventoryReportTemplateItem(
+                    item_id=item_data.item_id,
+                    display_order=display_order,
+                    required_input=item_data.required_input,
+                )
+            )
+        else:
+            row.display_order = display_order
+            row.required_input = item_data.required_input
+    # Stamped explicitly: an edit that only touches the item list writes no
+    # template column, so ``onupdate`` alone would leave "last edited" stale.
+    template.updated_at = utcnow()
+    await db.flush()
+    return await _load_template(db, template.id)
 
 
 async def deactivate_template(

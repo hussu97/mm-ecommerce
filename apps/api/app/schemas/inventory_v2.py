@@ -347,6 +347,9 @@ class ReportTemplateResponse(ORMModel):
     configuration: dict[str, Any]
     approval_cost_threshold: Decimal | None
     approval_variance_percent: Decimal | None
+    #: When the template was last changed — an edit rewrites the current version
+    #: in place, so this, not the version number, says whether it moved.
+    updated_at: datetime
     items: list[ReportTemplateItemResponse] = []
 
 

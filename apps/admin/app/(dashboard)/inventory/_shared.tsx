@@ -14,7 +14,7 @@ import {
   type ShiftInventoryReport,
   type Transfer,
 } from '@/lib/pos-api';
-import type { Branch, InventoryItem, InventoryTransaction } from '@/lib/pos-types';
+import type { Branch, InventoryCategory, InventoryItem, InventoryTransaction } from '@/lib/pos-types';
 import { Button, Input, Pagination, Select } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -26,6 +26,56 @@ export function BranchFilter({ value, onChange }: { value: string; onChange: (id
   const [branches, setBranches] = useState<Branch[]>([]);
   useEffect(() => { void branchesApi.list().then(setBranches); }, []);
   return <Select label="Branch" value={value} onChange={(e) => onChange(e.target.value)} placeholder="Choose branch" className="w-64" options={branches.map((b) => ({ value: b.id, label: b.name }))} />;
+}
+
+// ─── Items grouped by category ────────────────────────────────────────────────
+
+export interface ItemGroup {
+  name: string;
+  order: number;
+  items: InventoryItem[];
+}
+
+/** Items bucketed by category — category display order, then category name,
+ *  items by name within each, Uncategorised last. The order the shop counts in,
+ *  and the one every item picker on these pages lists in. */
+export function groupItemsByCategory(items: InventoryItem[], categories: InventoryCategory[]): ItemGroup[] {
+  const meta = new Map(categories.map((c) => [c.id, { name: c.name, order: c.display_order }]));
+  const map = new Map<string, ItemGroup>();
+  for (const item of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
+    const category = item.category_id ? meta.get(item.category_id) : undefined;
+    const name = category?.name ?? 'Uncategorised';
+    const order = category ? category.order : Number.MAX_SAFE_INTEGER;
+    const bucket = map.get(name) ?? { name, order, items: [] };
+    bucket.order = Math.min(bucket.order, order);
+    bucket.items.push(item);
+    map.set(name, bucket);
+  }
+  return [...map.values()].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+}
+
+/** A multi-select of items under one heading per category. */
+export function GroupedItemSelect({ groups, value, onChange, label }: {
+  groups: ItemGroup[];
+  value: string[];
+  onChange: (ids: string[]) => void;
+  label: string;
+}) {
+  return (
+    <select
+      multiple
+      aria-label={label}
+      value={value}
+      onChange={(event) => onChange(Array.from(event.target.selectedOptions, (option) => option.value))}
+      className="min-h-44 w-full border border-gray-300 bg-white p-2 text-sm"
+    >
+      {groups.map((group) => (
+        <optgroup key={group.name} label={group.name}>
+          {group.items.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
 }
 
 // ─── Report-template guidance ─────────────────────────────────────────────────

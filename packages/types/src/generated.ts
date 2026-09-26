@@ -22022,6 +22022,11 @@ export interface components {
             name: string;
             /** Report Type */
             report_type: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
             /** Version Number */
             version_number: number;
         };

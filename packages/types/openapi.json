@@ -35877,6 +35877,11 @@
             "title": "Report Type",
             "type": "string"
           },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
           "version_number": {
             "title": "Version Number",
             "type": "integer"
@@ -35894,7 +35899,8 @@
           "version_number",
           "configuration",
           "approval_cost_threshold",
-          "approval_variance_percent"
+          "approval_variance_percent",
+          "updated_at"
         ],
         "title": "ReportTemplateResponse",
         "type": "object"

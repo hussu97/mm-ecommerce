@@ -102,7 +102,7 @@ async def test_new_report_template_has_required_columns_before_first_flush():
 
     db.execute.side_effect = execute
 
-    result = await report_service.upsert_template(db, template=None, data=data)
+    result = await report_service.create_template(db, data=data)
 
     assert result.report_type == "packaging"
     assert result.cadence == "per_business_day"
@@ -154,73 +154,6 @@ def test_pos_template_selection_never_falls_back_after_latest_is_deactivated():
     assert [
         (template.report_type, template.version_number) for template in current
     ] == [("packaging", 1)]
-
-
-@pytest.mark.asyncio
-async def test_template_update_appends_a_same_name_revision():
-    branch_id = uuid4()
-    item_id = uuid4()
-    existing = InventoryReportTemplate(
-        id=uuid4(),
-        branch_id=branch_id,
-        name="Production Report - SHJ",
-        report_type="production",
-        cadence="per_business_day",
-        version_number=1,
-        is_active=True,
-    )
-    added: list[object] = []
-    db = SimpleNamespace(
-        get=AsyncMock(
-            side_effect=[
-                SimpleNamespace(id=branch_id),
-                SimpleNamespace(
-                    id=item_id, name="Item", deleted_at=None, is_active=True
-                ),
-            ]
-        ),
-        add=MagicMock(side_effect=added.append),
-        flush=AsyncMock(),
-        scalar=AsyncMock(return_value=1),
-        execute=AsyncMock(),
-    )
-    data = ReportTemplateUpsert(
-        branch_id=branch_id,
-        name="Production Report - SHJ",
-        report_type="production",
-        cadence="per_till",
-        is_required=True,
-        is_active=True,
-        configuration={},
-        # 'production' is no longer a per-item input (F-INV-5): a production report
-        # posts through its Produced column, and the count trues up.
-        items=[{"item_id": item_id, "required_input": "physical_count"}],
-    )
-
-    async def flush_assigns_id():
-        created = next(
-            value for value in added if isinstance(value, InventoryReportTemplate)
-        )
-        created.id = uuid4()
-
-    async def execute(_statement):
-        created = next(
-            (value for value in added if isinstance(value, InventoryReportTemplate)),
-            None,
-        )
-        return _TemplateResult(created) if created else SimpleNamespace()
-
-    db.flush.side_effect = flush_assigns_id
-    db.execute.side_effect = execute
-
-    created = await report_service.upsert_template(db, template=existing, data=data)
-
-    assert created.id != existing.id
-    assert created.name == existing.name
-    assert created.version_number == 2
-    assert created.cadence == "per_till"
-    assert existing.version_number == 1
-    assert existing.cadence == "per_business_day"
 
 
 @pytest.mark.asyncio

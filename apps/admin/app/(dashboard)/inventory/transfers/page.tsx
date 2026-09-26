@@ -17,7 +17,7 @@ import type { Branch, InventoryCategory, InventoryItem } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, LoadError, Select } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
-import { BranchFilter } from '../_shared';
+import { BranchFilter, GroupedItemSelect, groupItemsByCategory } from '../_shared';
 
 export default function TransfersPage() {
   const [branchId, setBranchId] = useState('');
@@ -63,34 +63,15 @@ function TransferTemplatesSection({ branchId, branches, branchName }: {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
 
-  const selectableItems = useMemo(() => {
-    const search = itemSearch.trim().toLocaleLowerCase();
-    return items
-      .filter((item) => item.is_active && !item.deleted_at)
-      .filter((item) => !search || `${item.name} ${item.sku}`.toLocaleLowerCase().includes(search))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [items, itemSearch]);
-
-  // Resolve category id → name/order the way items/page.tsx does, so the picker
-  // can group options. Category order (min per bucket) → category name → item
-  // name (selectableItems is already name-sorted); Uncategorised last.
-  const categoryMeta = useMemo(
-    () => new Map(categories.map((category) => [category.id, { name: category.name, order: category.display_order }])),
-    [categories],
-  );
   const groupedItems = useMemo(() => {
-    const map = new Map<string, { name: string; order: number; items: InventoryItem[] }>();
-    for (const item of selectableItems) {
-      const meta = item.category_id ? categoryMeta.get(item.category_id) : undefined;
-      const name = meta?.name ?? 'Uncategorised';
-      const order = meta ? meta.order : Number.MAX_SAFE_INTEGER;
-      const bucket = map.get(name) ?? { name, order, items: [] };
-      bucket.order = Math.min(bucket.order, order);
-      bucket.items.push(item);
-      map.set(name, bucket);
-    }
-    return [...map.values()].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
-  }, [selectableItems, categoryMeta]);
+    const search = itemSearch.trim().toLocaleLowerCase();
+    return groupItemsByCategory(
+      items
+        .filter((item) => item.is_active && !item.deleted_at)
+        .filter((item) => !search || `${item.name} ${item.sku}`.toLocaleLowerCase().includes(search)),
+      categories,
+    );
+  }, [items, itemSearch, categories]);
 
   const reload = useCallback(async () => {
     if (!branchId) { setTemplates([]); setLoadError(false); return; }
@@ -227,13 +208,7 @@ function TransferTemplatesSection({ branchId, branches, branchName }: {
             </label>
             <span className="pb-2 text-xs text-gray-500">{selectedItems.length} selected · sorted by name</span>
           </div>
-          <select multiple value={selectedItems} onChange={(event) => setSelectedItems(Array.from(event.target.selectedOptions, (option) => option.value))} className="min-h-44 w-full border border-gray-300 bg-white p-2 text-sm">
-            {groupedItems.map((group) => (
-              <optgroup key={group.name} label={group.name}>
-                {group.items.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku}</option>)}
-              </optgroup>
-            ))}
-          </select>
+          <GroupedItemSelect label="Transfer-template items" groups={groupedItems} value={selectedItems} onChange={setSelectedItems} />
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-500">Select multiple items with Shift/Cmd.</span>
             <div className="flex gap-2">

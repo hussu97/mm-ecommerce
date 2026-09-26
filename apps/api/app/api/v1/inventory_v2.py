@@ -623,7 +623,7 @@ async def create_report_template(
     user: User = Depends(require("inventory.manage")),
 ):
     await _assert_branch_access(db, user, data.branch_id)
-    return await report_service.upsert_template(db, template=None, data=data)
+    return await report_service.create_template(db, data=data)
 
 
 @control_router.put(
@@ -640,7 +640,7 @@ async def update_report_template(
         raise NotFoundError("Inventory report template not found")
     await _assert_branch_access(db, user, template.branch_id)
     await _assert_branch_access(db, user, data.branch_id)
-    return await report_service.upsert_template(db, template=template, data=data)
+    return await report_service.update_template(db, template=template, data=data)
 
 
 @control_router.post(

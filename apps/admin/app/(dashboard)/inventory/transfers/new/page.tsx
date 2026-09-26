@@ -37,6 +37,7 @@ import { Badge, Button, Input, Select, Spinner, Textarea } from '@/components/ui
 import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/components/ui/feedback';
 import { formatQuantity, interactiveRowClass } from '@/lib/utils';
+import { groupItemsByCategory } from '../../_shared';
 
 const parseNum = (value: string | undefined): number => {
   if (value === undefined) return 0;
@@ -213,31 +214,17 @@ export default function NewTransferOrderPage() {
   const stockAt = (itemId: string, branchId: string): number =>
     onHandByItemBranch.get(itemId)?.get(branchId) ?? 0;
 
-  const categoryMeta = useMemo(
-    () => new Map(categories.map((c) => [c.id, { name: c.name, order: c.display_order }])),
-    [categories],
-  );
-
-  // Active items, filtered by the search box, grouped by category (category order
-  // → category name → item name), Uncategorised last — the order the shop counts in.
+  // Active items, filtered by the search box, grouped by category —
+  // Uncategorised last, the order the shop counts in.
   const groups = useMemo(() => {
     const q = search.trim().toLocaleLowerCase();
-    const selectable = items
-      .filter((item) => item.is_active && !item.deleted_at)
-      .filter((item) => !q || `${item.name} ${item.sku}`.toLocaleLowerCase().includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const map = new Map<string, { name: string; order: number; items: InventoryItem[] }>();
-    for (const item of selectable) {
-      const meta = item.category_id ? categoryMeta.get(item.category_id) : undefined;
-      const name = meta?.name ?? 'Uncategorised';
-      const order = meta ? meta.order : Number.MAX_SAFE_INTEGER;
-      const bucket = map.get(name) ?? { name, order, items: [] };
-      bucket.order = Math.min(bucket.order, order);
-      bucket.items.push(item);
-      map.set(name, bucket);
-    }
-    return [...map.values()].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
-  }, [items, search, categoryMeta]);
+    return groupItemsByCategory(
+      items
+        .filter((item) => item.is_active && !item.deleted_at)
+        .filter((item) => !q || `${item.name} ${item.sku}`.toLocaleLowerCase().includes(q)),
+      categories,
+    );
+  }, [items, search, categories]);
 
   const setCell = (itemId: string, branchId: string, value: string) =>
     setCells((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [branchId]: value } }));

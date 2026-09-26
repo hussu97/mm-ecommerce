@@ -101,6 +101,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(({ label, error
         className={cn(
           'w-full px-3 py-2 min-h-[var(--tap-min)] md:min-h-0 text-sm font-body bg-white border rounded-sm outline-none transition-colors cursor-pointer',
           'focus:border-primary focus:ring-1 focus:ring-primary/30',
+          // Same disabled look as Input, so a locked select reads as locked.
+          'disabled:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed',
           error ? 'border-red-400' : 'border-gray-300',
           className,
         )}
