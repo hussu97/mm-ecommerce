@@ -882,6 +882,46 @@ async def owner_recipe_unit_cost(
     return expansion_cost(expanded, catalog.items, costs)
 
 
+async def owner_unit_costs(
+    db: AsyncSession,
+    owners: Iterable[tuple[str, uuid.UUID]],
+    *,
+    warehouse_ids: list[uuid.UUID] | None = None,
+    catalog: ActiveRecipeCatalog | None = None,
+) -> dict[tuple[str, uuid.UUID], Decimal | None]:
+    """:func:`owner_recipe_unit_cost` for many owners at once, for list screens.
+
+    Expansion is pure over the loaded catalogue, so the whole batch costs one
+    catalogue load (skipped when passed) and **one** ingredient-cost query,
+    however many products and options are asked for. ``None`` for an owner with
+    no active recipe (or one that cannot be expanded), exactly as the single-owner
+    call answers.
+    """
+    catalog = catalog or await load_active_catalog(db)
+    expansions: dict[tuple[str, uuid.UUID], dict[uuid.UUID, ExpandedLine] | None] = {}
+    for kind, owner_id in set(owners):
+        try:
+            expansions[(kind, owner_id)], _ = await expand_owner(
+                db, kind=kind, owner_id=owner_id, catalog=catalog
+            )
+        except (NotFoundError, ConflictError):
+            expansions[(kind, owner_id)] = None
+    leaves = {
+        item_id for expanded in expansions.values() if expanded for item_id in expanded
+    }
+    costs = (
+        await ingredient_storage_costs(db, leaves, warehouse_ids=warehouse_ids)
+        if leaves
+        else {}
+    )
+    return {
+        owner: None
+        if expanded is None
+        else expansion_cost(expanded, catalog.items, costs)
+        for owner, expanded in expansions.items()
+    }
+
+
 async def quote_lines(
     db: AsyncSession,
     *,

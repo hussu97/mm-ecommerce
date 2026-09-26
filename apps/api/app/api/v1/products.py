@@ -28,13 +28,19 @@ from app.models.modifier import ModifierOption
 from app.models.product import Product
 from app.models.user import User
 from app.schemas.product import (
+    ProductCostResponse,
     ProductCreate,
     ProductModifierLink,
     ProductResponse,
     ProductUpdate,
 )
 from app.services import audit_service, indexnow_service
-from app.services.catalog import availability_service, catalogue_cache, product_service
+from app.services.catalog import (
+    availability_service,
+    catalogue_cache,
+    product_cost_service,
+    product_service,
+)
 from app.services.grubops import grubops_service
 
 logger = logging.getLogger(__name__)
@@ -305,6 +311,52 @@ async def list_all_modifier_availability(
     """
     rows = (await db.execute(select(BranchModifierOption))).scalars().all()
     return [BranchModifierOptionResponse.model_validate(r) for r in rows]
+
+
+#: A page of the console's product list at its largest (W8).
+_MAX_COST_IDS = 2000
+
+
+@router.get("/costs", response_model=list[ProductCostResponse])
+async def product_costs(
+    ids: list[uuid.UUID] = Query(..., description="Product ids (repeat the param)"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.recipes.read")),
+):
+    """
+    Recipe cost against price for the given products — product-level for a
+    product without options, per option (with the product's base) for one with.
+
+    The console asks once per page of its product list, with that page's ids,
+    so the cost never rides on the public `/products` response. A fixed handful
+    of queries however many ids (`product_cost_service`). Declared above
+    `/{slug}` so it is not read as a product called "costs".
+    """
+    if len(ids) > _MAX_COST_IDS:
+        raise BadRequestError(f"At most {_MAX_COST_IDS} products per request")
+    rows = await product_cost_service.product_costs(db, list(dict.fromkeys(ids)))
+    return [
+        ProductCostResponse(
+            product_id=row.product_id,
+            price=float(row.price),
+            consumes_stock=row.consumes_stock,
+            cost=None if row.cost is None else float(row.cost),
+            cost_pct=None if row.cost_pct is None else float(row.cost_pct),
+            missing_recipe=row.missing_recipe,
+            options=[
+                {
+                    "modifier_option_id": o.modifier_option_id,
+                    "modifier_name": o.modifier_name,
+                    "name": o.name,
+                    "price": float(o.price),
+                    "cost": None if o.cost is None else float(o.cost),
+                    "cost_pct": None if o.cost_pct is None else float(o.cost_pct),
+                }
+                for o in row.options
+            ],
+        )
+        for row in rows
+    ]
 
 
 @router.get("/{slug}", response_model=ProductResponse)
