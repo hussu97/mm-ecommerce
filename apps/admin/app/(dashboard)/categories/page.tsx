@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { categoriesApi, uploadsApi, bulkApi, ApiError } from '@/lib/api';
 import type { Category } from '@/lib/types';
 import { Button, Input, LoadError, Pagination, TabBar, Textarea } from '@/components/ui';
@@ -26,6 +26,7 @@ export default function CategoriesPage() {
   const [reorderingSlug, setReorderingSlug] = useState<string | null>(null);
   const [apiError, setApiError] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [translations, setTranslations] = useState<Record<string, Record<string, string>>>({});
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -284,13 +285,13 @@ export default function CategoriesPage() {
             <div className="flex-1">
               <Input label="Image URL" value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://... or upload below" />
             </div>
-            <label className="shrink-0">
-              <Button type="button" variant="ghost" size="sm" loading={uploadingImage} className="cursor-pointer">
+            <div className="shrink-0">
+              <Button type="button" variant="ghost" size="sm" loading={uploadingImage} onClick={() => imageInputRef.current?.click()}>
                 <span className="material-icons text-[14px]">upload</span>
                 Upload
               </Button>
-              <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-            </label>
+              <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+            </div>
           </div>
           <div className="flex gap-3 mt-5">
             <Button onClick={handleSave} loading={saving}>{editSlug ? 'Save Changes' : 'Create Category'}</Button>
