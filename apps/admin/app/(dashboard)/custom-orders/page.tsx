@@ -5,27 +5,24 @@
  *
  * Each is an ordinary order (`source = 'custom'`) made at the custom-orders
  * branch, so it reaches stock, the P&L and couriers like any other; this screen
- * is where they are taken, followed and finished. Two views of one list:
+ * is where they are taken and found. Two views of one list:
  *
- * - **List**, tabbed by where the order is (pending → packed → on the way →
- *   delivered, plus cancelled), searchable and filterable by delivery date.
+ * - **List**, every custom order in one table with its status, searchable and
+ *   filterable by delivery date.
  * - **Calendar**, a month by delivery date — what the kitchen owes on which day.
  *   There is no capacity here: the old per-day limits went with the booking
  *   calendar this replaced.
  *
- * Every filter lives in the URL (`useUrlFilters`), so a view survives a refresh
- * and pastes to a colleague.
+ * Every row and chip opens the one order page (`/orders/[orderNumber]`), where
+ * a custom order is packed, sent, edited and invoiced like any other order is
+ * followed. Every filter lives in the URL (`useUrlFilters`), so a view survives
+ * a refresh and pastes to a colleague.
  */
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  customOrdersApi,
-  type CustomOrderListItem,
-  type CustomOrderStatusGroup,
-  type CustomOrdersStatus,
-} from '@/lib/api';
-import { Button, LoadError, Pagination, Spinner, TabBar } from '@/components/ui';
+import { customOrdersApi, type CustomOrderListItem, type CustomOrdersStatus } from '@/lib/api';
+import { Button, LoadError, Pagination, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { Page } from '@/components/ui/Page';
@@ -42,7 +39,6 @@ import {
 import { SetupNotice } from '@/components/custom-orders/SetupNotice';
 
 type Filters = {
-  tab: string;
   q: string;
   from: string;
   to: string;
@@ -51,7 +47,6 @@ type Filters = {
 };
 
 const FIELDS: FilterFieldSpec[] = [
-  { key: 'tab', kind: 'single' },
   { key: 'q', kind: 'single' },
   { key: 'from', kind: 'single' },
   { key: 'to', kind: 'single' },
@@ -59,20 +54,14 @@ const FIELDS: FilterFieldSpec[] = [
   { key: 'month', kind: 'single' },
 ];
 
-const TABS: { key: CustomOrderStatusGroup; label: string }[] = [
-  { key: 'pending', label: 'Pending' },
-  { key: 'packed', label: 'Packed' },
-  { key: 'on_the_way', label: 'On the way' },
-  { key: 'delivered', label: 'Delivered' },
-  { key: 'cancelled', label: 'Cancelled' },
-];
+/** The one order page — a custom order is opened where every order is. */
+const orderHref = (orderNumber: string) => `/orders/${encodeURIComponent(orderNumber)}`;
 
 const DATE_INPUT =
   'px-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary';
 
 export default function CustomOrdersPage() {
   const { filters, patch } = useUrlFilters<Filters>(FIELDS);
-  const tab = (TABS.some(t => t.key === filters.tab) ? filters.tab : 'pending') as CustomOrderStatusGroup;
   const view = filters.view === 'calendar' ? 'calendar' : 'list';
 
   const [status, setStatus] = useState<CustomOrdersStatus | null>(null);
@@ -141,7 +130,6 @@ export default function CustomOrdersPage() {
 
       {view === 'list' ? (
         <>
-          <TabBar tabs={TABS} active={tab} onChange={key => patch({ tab: key === 'pending' ? '' : key })} />
           <FilterBar
             hasAny={hasDateOrSearch}
             onClear={() => {
@@ -188,7 +176,7 @@ export default function CustomOrdersPage() {
               />
             </div>
           </FilterBar>
-          <OrdersList tab={tab} q={filters.q} from={filters.from} to={filters.to} />
+          <OrdersList q={filters.q} from={filters.from} to={filters.to} />
         </>
       ) : (
         <CalendarView month={filters.month} onMonth={m => patch({ month: m })} />
@@ -200,27 +188,26 @@ export default function CustomOrdersPage() {
 // ─── List ──────────────────────────────────────────────────────────────────────
 
 function OrdersList({
-  tab,
   q,
   from,
   to,
 }: {
-  tab: CustomOrderStatusGroup;
   q: string;
   from: string;
   to: string;
 }) {
   const fetchOrders = useCallback(
     (page: number, perPage: number) =>
+      // Every custom order, whatever its status — the Status column says where
+      // each one is.
       customOrdersApi.list({
-        status_group: tab,
         q: q || undefined,
         date_from: from || undefined,
         date_to: to || undefined,
         page,
         per_page: perPage,
       }),
-    [tab, q, from, to],
+    [q, from, to],
   );
 
   const {
@@ -239,10 +226,10 @@ function OrdersList({
           rows={items}
           rowKey={o => o.id}
           stickyHeader
-          getRowHref={o => `/custom-orders/${encodeURIComponent(o.order_number)}`}
+          getRowHref={o => orderHref(o.order_number)}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">
-              No custom orders here.
+              No custom orders found.
             </p>
           }
           columns={[
@@ -252,6 +239,11 @@ function OrdersList({
               render: o => (
                 <span className="font-body font-medium text-primary text-xs">{o.order_number}</span>
               ),
+            },
+            {
+              header: 'Status',
+              className: 'text-center',
+              render: o => <CustomOrderStatusBadge status={o.status} />,
             },
             {
               header: 'Delivery',
@@ -272,11 +264,6 @@ function OrdersList({
               header: 'Total',
               className: 'text-right',
               render: o => <span className="tabular-nums">{formatCurrency(o.total)}</span>,
-            },
-            {
-              header: 'Status',
-              className: 'text-center',
-              render: o => <CustomOrderStatusBadge status={o.status} />,
             },
             {
               header: 'Courier',
@@ -487,7 +474,7 @@ function CalendarView({ month, onMonth }: { month: string; onMonth: (m: string) 
 function OrderChip({ order }: { order: CustomOrderListItem }) {
   return (
     <Link
-      href={`/custom-orders/${encodeURIComponent(order.order_number)}`}
+      href={orderHref(order.order_number)}
       title={`${order.order_number} · ${order.summary}${order.customer_name ? ` · ${order.customer_name}` : ''}`}
       className={cn(
         'block border px-1.5 py-1 text-[11px] font-body leading-tight hover:opacity-80',

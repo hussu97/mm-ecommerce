@@ -139,7 +139,7 @@ export default function NewCustomOrderPage() {
         client_request_id: requestId.current,
       });
       toast.success(`${order.order_number} created.`);
-      router.push(`/custom-orders/${encodeURIComponent(order.order_number)}`);
+      router.push(`/orders/${encodeURIComponent(order.order_number)}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the order.');
       setSaving(false);

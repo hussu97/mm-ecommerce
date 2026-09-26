@@ -46,6 +46,16 @@ import { RefundDialog } from './components/RefundDialog';
 import { DeliveryPanel } from './components/DeliveryPanel';
 import { OrderPnlPanel } from '@/components/orders/PnlBreakdown';
 import { PROVIDER_LABEL } from './components/courier-labels';
+import { useAuth } from '@/lib/auth-context';
+import { holdsPermission } from '@/lib/nav';
+import { useCustomOrder } from '@/components/custom-orders/useCustomOrder';
+import {
+  CustomDeliveryCard,
+  CustomInvoiceCard,
+  CustomOrderActionBar,
+  CustomOrderDetailsCard,
+  CustomRecipeCard,
+} from '@/components/custom-orders/CustomOrderPanels';
 
 /**
  * A status word made human. Ours arrive `snake_case` (`out_for_delivery`); a
@@ -104,13 +114,27 @@ export default function OrderDetailPage() {
   // second confirm is visibly a second decision rather than the same click
   // going through at a different number.
   const [quoteExpired, setQuoteExpired] = useState(false);
+  // Bumped to re-read everything the page shows about the order — after a
+  // custom-order action (pack, cancel, a courier, an edit), which moves the
+  // status, the timeline, the courier record and the P&L all at once.
+  const [reloadTick, setReloadTick] = useState(0);
+  const reloadOrder = useCallback(() => setReloadTick(t => t + 1), []);
 
   useEffect(() => {
     ordersApi.get(orderNumber)
       .then(o => { setOrder(o); })
       .catch(() => setError('Order not found.'))
       .finally(() => setLoading(false));
-  }, [orderNumber]);
+  }, [orderNumber, reloadTick]);
+
+  // A custom order is driven from here too: its own record carries the API's
+  // `actions` (pack, collected, cancel, courier, edits, invoice). Read only for
+  // a custom order, and only by someone who may manage them — the endpoints
+  // behind it need `orders.custom.manage`, where this page needs `orders.read`.
+  const { user } = useAuth();
+  const isCustomOrder = order?.source === 'custom';
+  const canManageCustom = holdsPermission('orders.custom.manage', user);
+  const custom = useCustomOrder(isCustomOrder && canManageCustom ? orderNumber : null, reloadOrder);
 
   // A fulfilment record is only ever opened for delivery orders, so asking for
   // one on a pickup order — every POS check included — is a guaranteed 404.
@@ -125,7 +149,7 @@ export default function OrderDetailPage() {
       .catch(err => { if (!(err instanceof ApiError && err.status === 404)) console.error(err); });
   }, [orderNumber, isDeliveryOrder]);
 
-  useEffect(() => { loadDelivery(); }, [loadDelivery]);
+  useEffect(() => { loadDelivery(); }, [loadDelivery, reloadTick]);
 
   // ── while somebody is on their way ────────────────────────────────────────
   //
@@ -147,22 +171,31 @@ export default function OrderDetailPage() {
   // Reloaded alongside the order rather than once: a refund, a re-dispatch or a
   // courier finally invoicing all move the net, and a stale figure here is
   // worse than none — somebody would price against it.
+  // The notes box is seeded once: a reload after an action must not throw away
+  // a note somebody is halfway through typing.
+  const notesSeeded = useRef(false);
   useEffect(() => {
     ordersApi.details(orderNumber)
-      .then(d => { setDetails(d); setNotes(d.admin_notes ?? ''); })
+      .then(d => {
+        setDetails(d);
+        if (!notesSeeded.current) {
+          notesSeeded.current = true;
+          setNotes(d.admin_notes ?? '');
+        }
+      })
       .catch(() => setDetails(null));
-  }, [orderNumber]);
+  }, [orderNumber, reloadTick]);
 
   useEffect(() => {
     ordersApi.getEconomics(orderNumber).then(setEconomics).catch(() => setEconomics(null));
-  }, [orderNumber, order?.status, order?.refunded_amount, delivery?.cost_total]);
+  }, [orderNumber, order?.status, order?.refunded_amount, delivery?.cost_total, reloadTick]);
 
   useEffect(() => {
     if (!order?.id) return;
     ordersApi.inventoryConsumption(order.id)
       .then(setInventoryConsumption)
       .catch(() => setInventoryConsumption(null));
-  }, [order?.id, order?.status]);
+  }, [order?.id, order?.status, reloadTick]);
 
   async function recordInventoryReturn(
     disposition: 'restock' | 'waste' | 'no_inventory_effect',
@@ -448,6 +481,8 @@ export default function OrderDetailPage() {
       // the order there, and leaving the header showing "packed" would make the
       // refresh look like it did nothing.
       setOrder(fresh);
+      // … and with it what a custom order may do next.
+      if (fresh.source === 'custom') void custom.reload();
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -490,10 +525,12 @@ export default function OrderDetailPage() {
   // neither packs, dispatches, delivers nor marks it undelivered from here; the
   // fulfilment actions are hidden and the page is a read-only record.
   const isAggregator = order.source === 'aggregator';
-  // A custom order's own screen owns its lifecycle (pack consumes the recipe,
-  // delivery is a chosen courier or collection), so the generic status buttons
-  // and courier reassignment — which the API refuses for it — are not offered.
+  // A custom order's lifecycle is its own (pack consumes the recipe, delivery is
+  // a chosen courier or collection): its buttons are the custom-order ones
+  // below, and the generic status buttons, dispatch and courier reassignment —
+  // which the API refuses for it — are not offered.
   const isCustom = order.source === 'custom';
+  const customOrder = isCustom ? custom.order : null;
   const currentStepIdx = STATUS_STEPS.indexOf(order.status as OrderStatus);
   const promisedLabel = promisedFor(order);
   // Built here rather than in the JSX so the guard and the URL stay together:
@@ -587,24 +624,6 @@ export default function OrderDetailPage() {
         <Badge variant={STATUS_VARIANT[order.status]}>{order.status}</Badge>
       </div>
 
-      {/* A custom order is driven from its own screen (pack, courier choice,
-          recipe, invoice); this page is its timeline and money view. */}
-      {order.source === 'custom' && (
-        <div className="bg-blue-50 border border-blue-200 p-4 mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="material-icons text-[18px] text-blue-600">cake</span>
-          <p className="flex-1 text-sm font-body text-blue-900">
-            This is a custom order. Packing, the courier, the recipe and the invoice are managed on
-            its custom-order page.
-          </p>
-          <Link
-            href={`/custom-orders/${encodeURIComponent(order.order_number)}`}
-            className="text-sm font-body font-medium text-blue-900 underline underline-offset-2 hover:no-underline"
-          >
-            Open the custom order
-          </Link>
-        </div>
-      )}
-
       {/* A rider got there and came back with the box. Said before the
           timeline, because the timeline shows a journey this order has
           stepped out of. */}
@@ -612,8 +631,9 @@ export default function OrderDetailPage() {
         <div className="bg-red-50 border border-red-200 p-4 mb-4">
           <p className="text-[11px] font-body uppercase tracking-widest text-red-500 mb-1">Undelivered</p>
           <p className="text-sm font-body text-red-800">
-            A rider reached the address and could not hand the order over. It is paid for
-            and still ours to deliver — re-dispatch it below, or cancel and refund.
+            {isCustom
+              ? 'A courier could not hand the order over. Choose how it goes out again below, or cancel it.'
+              : 'A rider reached the address and could not hand the order over. It is paid for and still ours to deliver — re-dispatch it below, or cancel and refund.'}
           </p>
         </div>
       )}
@@ -830,8 +850,32 @@ export default function OrderDetailPage() {
         </div>
       )}
 
+      {/* A custom order's own actions and what makes it custom, from its
+          record's `actions` flags. Without the permission (or while it loads)
+          the rest of the page is still the ordinary order view. */}
+      {isCustom && !canManageCustom && (
+        <div className="bg-blue-50 border border-blue-200 p-3 mb-4 text-sm font-body text-blue-900">
+          This is a custom order. Packing, the courier, the recipe and the invoice need the
+          custom-orders permission.
+        </div>
+      )}
+      {isCustom && canManageCustom && custom.loadError && !customOrder && (
+        <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 font-body">
+          <span className="flex-1">{custom.loadError}</span>
+          <Button size="sm" variant="ghost" onClick={() => void custom.reload()}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {customOrder && (
+        <>
+          <CustomOrderActionBar order={customOrder} busy={custom.busy} run={custom.run} error={custom.actionError} />
+          <CustomOrderDetailsCard order={customOrder} busy={custom.busy} run={custom.run} />
+        </>
+      )}
+
       {/* Action buttons — hidden for a marketplace order, which MM does not
-          drive, and for a custom order, which is driven from its own page. */}
+          drive, and for a custom order, whose buttons are its own (above). */}
       {!isAggregator && !isCustom && (
       <div className="flex gap-2 mb-4">
         {order.status === 'created' && (
@@ -1107,8 +1151,19 @@ export default function OrderDetailPage() {
           onRedispatch={redispatch}
           onChangeFulfilment={openFulfilment}
           canChangeFulfilment={!isCustom && MOVABLE_STATUSES.includes(order.status)}
+          canRedispatch={!isCustom}
           isSettled={isSettled(order)}
           onRefresh={refreshCourier}
+        />
+      )}
+
+      {customOrder && (
+        <CustomDeliveryCard
+          order={customOrder}
+          busy={custom.busy}
+          run={custom.run}
+          // The fulfilment panel above already shows the booked courier.
+          showBooked={!delivery}
         />
       )}
 
@@ -1225,10 +1280,17 @@ export default function OrderDetailPage() {
           </p>
           <OrderPnlPanel
             orderNumber={order.order_number}
-            reloadKey={`${order.status}:${order.refunded_amount}`}
+            reloadKey={`${order.status}:${order.refunded_amount}:${reloadTick}`}
           />
         </div>
       </div>
+
+      {customOrder && (
+        <>
+          <CustomRecipeCard order={customOrder} busy={custom.busy} run={custom.run} />
+          <CustomInvoiceCard order={customOrder} busy={custom.busy} run={custom.run} />
+        </>
+      )}
 
       {/* Posted movements are accounting truth. The recursive plan below is
           deliberately separate: it explains raw-material attribution for a

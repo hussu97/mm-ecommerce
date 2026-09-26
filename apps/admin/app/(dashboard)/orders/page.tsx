@@ -235,13 +235,9 @@ export default function OrdersPage() {
           rows={orders}
           rowKey={o => o.id}
           stickyHeader
-          // A custom order is taken, packed and sent from its own screen, so its
-          // row opens there; the generic page links back to it for the rest.
-          getRowHref={o =>
-            o.source === 'custom'
-              ? `/custom-orders/${encodeURIComponent(o.order_number)}`
-              : `/orders/${o.order_number}`
-          }
+          // Every channel's row opens the one order page — a custom order's
+          // pack, courier, recipe and invoice controls live there too.
+          getRowHref={o => `/orders/${encodeURIComponent(o.order_number)}`}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">No orders found.</p>
           }

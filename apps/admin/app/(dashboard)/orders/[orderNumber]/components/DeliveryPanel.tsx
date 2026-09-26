@@ -22,6 +22,7 @@ export function DeliveryPanel({
   onRefresh,
   onChangeFulfilment,
   canChangeFulfilment,
+  canRedispatch = true,
   isSettled,
 }: {
   delivery: OrderDelivery;
@@ -31,6 +32,12 @@ export function DeliveryPanel({
   onChangeFulfilment: () => void;
   /** Packed and nothing else — see `_assert_assignable` on the API side. */
   canChangeFulfilment: boolean;
+  /**
+   * Whether the generic dispatch may book a courier. Off for a custom order:
+   * its courier is the one chosen on the order's custom delivery card, booked
+   * with no zone fallback, and the API refuses the generic dispatch for it.
+   */
+  canRedispatch?: boolean;
   /**
    * The order is not going anywhere: cancelled, undelivered, refunded or
    * disputed. Every control that would call a driver or ask a courier for an
@@ -311,7 +318,7 @@ export function DeliveryPanel({
               Change fulfilment
             </Button>
           )}
-          {isCourier && !isSettled && (
+          {isCourier && !isSettled && canRedispatch && (
             <Button size="sm" variant="ghost" onClick={onRedispatch} disabled={busy}>
               <span className="material-icons text-[14px]">refresh</span>
               {delivery.courier_order_id ? 'Re-dispatch' : 'Dispatch now'}
