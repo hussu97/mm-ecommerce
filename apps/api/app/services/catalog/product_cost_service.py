@@ -153,3 +153,37 @@ async def product_costs(
     order = {product_id: index for index, product_id in enumerate(product_ids)}
     out.sort(key=lambda entry: order.get(entry.product_id, len(order)))
     return out
+
+
+#: The console list's cost sorts (`product_service.get_all`).
+COST_SORTS = frozenset({"cost_asc", "cost_desc", "cost_pct_asc", "cost_pct_desc"})
+
+
+def headline(entry: ProductCost) -> tuple[Decimal | None, Decimal | None]:
+    """(cost, cost %) a product sorts by: its own, or — with options — those of
+    its cheapest priced option, the one its "From" price shows (a free option is
+    skipped, as `product_service._from_price` skips it)."""
+    if entry.options:
+        priced = [option for option in entry.options if option.price > 0]
+        cheapest = min(priced or entry.options, key=lambda option: option.price)
+        return cheapest.cost, cheapest.cost_pct
+    return entry.cost, entry.cost_pct
+
+
+def order_by_cost(
+    entries: list[ProductCost], names: dict[uuid.UUID, str], sort: str
+) -> list[uuid.UUID]:
+    """Product ids in *sort* order. Unknown costs (no recipe) go last either way;
+    the name breaks ties so a page boundary never shows a product twice."""
+    use_pct = sort.startswith("cost_pct")
+    descending = sort.endswith("_desc")
+    known, unknown = [], []
+    for entry in entries:
+        cost, pct = headline(entry)
+        value = pct if use_pct else cost
+        (unknown if value is None else known).append((value, entry.product_id))
+    by_name = lambda pair: names.get(pair[1], "")  # noqa: E731
+    known.sort(key=by_name)
+    known.sort(key=lambda pair: pair[0], reverse=descending)  # stable: name ties
+    unknown.sort(key=by_name)
+    return [product_id for _, product_id in known + unknown]

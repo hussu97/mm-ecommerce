@@ -26,7 +26,7 @@ from app.schemas.product import (
     ProductUpdate,
 )
 from app.services import indexnow_service
-from app.services.catalog import menu_group_service
+from app.services.catalog import menu_group_service, product_cost_service
 from app.services.catalog.storefront_visibility import (
     active_website_category_clause,
     website_product_visibility_clause,
@@ -237,13 +237,42 @@ async def get_all(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
 
+    offset = (page - 1) * per_page
+    if sort in product_cost_service.COST_SORTS:
+        # Cost is a recipe expansion, not a column, so it cannot be an ORDER BY.
+        # Cost the whole match once — the same fixed handful of queries as one
+        # page of the cost column, for a catalogue of a few hundred rows — order
+        # it here, then load just the page.
+        matched = (
+            await db.execute(stmt.with_only_columns(Product.id, Product.name))
+        ).all()
+        names = {row.id: row.name for row in matched}
+        entries = await product_cost_service.product_costs(db, list(names))
+        page_ids = product_cost_service.order_by_cost(entries, names, sort)[
+            offset : offset + per_page
+        ]
+        loaded = {
+            p.id: p
+            for p in (
+                await db.execute(
+                    select(Product)
+                    .where(Product.id.in_(page_ids))
+                    .options(*_product_load_options())
+                )
+            )
+            .scalars()
+            .unique()
+        }
+        return [
+            ProductResponse.model_validate(loaded[i]) for i in page_ids if i in loaded
+        ], total
+
     # Now the page itself, which is the only query that needs either.
     if sort == "category":
         stmt = stmt.order_by(Category.name.asc(), Product.name.asc())
     else:
         stmt = stmt.order_by(*_order_for(sort))
 
-    offset = (page - 1) * per_page
     stmt = stmt.options(*_product_load_options()).offset(offset).limit(per_page)
     result = await db.execute(stmt)
     products = result.scalars().unique().all()

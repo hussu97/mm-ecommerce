@@ -8,7 +8,7 @@ import type { Category, Product, SalesChannel } from '@/lib/types';
 import { PRODUCT_LABEL_LABELS } from '@/lib/types';
 import { ChannelBadges } from '@/components/products/SalesChannels';
 import { Badge, Button, Input, MultiSelect, Pagination, TabBar, LoadError, Spinner } from '@/components/ui';
-import { DataTable } from '@/components/ui/DataTable';
+import { DataTable, type SortState } from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -20,7 +20,7 @@ import {
   useBranchStock,
   useModifierStock,
 } from '@/components/products/BranchStock';
-import { PriceCostCell, useProductCosts } from '@/components/products/ProductCost';
+import { CostCell, CostPctCell, PriceCell, useProductCosts } from '@/components/products/ProductCost';
 
 export default function ProductsPage() {
   const toast = useToast();
@@ -36,6 +36,9 @@ export default function ProductsPage() {
   // This page used to fire a request per keystroke with nothing dropping the
   // stale responses; the debounce plus the hook's sequence guard fix both.
   const debouncedSearch = useDebouncedValue(search);
+  // Null is the default grouping by category. Price, cost and cost % sort on
+  // the server across every page — cost by the recipe, as the columns show it.
+  const [sort, setSort] = useState<SortState | null>(null);
 
   // Server-side pagination: `/products` pages, searches and filters in SQL.
   const fetchProducts = useCallback(
@@ -43,7 +46,7 @@ export default function ProductsPage() {
       const base = {
         search: debouncedSearch || undefined,
         category: categoryFilter.length > 0 ? categoryFilter : undefined,
-        sort: 'category',
+        sort: sort ? `${sort.key}_${sort.direction}` : 'category',
         page,
         per_page: perPage,
       };
@@ -53,7 +56,7 @@ export default function ProductsPage() {
           : { ...base, include_inactive: true, is_active: false },
       );
     },
-    [debouncedSearch, categoryFilter, activeTab],
+    [debouncedSearch, categoryFilter, activeTab, sort],
   );
 
   const {
@@ -268,6 +271,11 @@ export default function ProductsPage() {
           rows={products}
           rowKey={p => p.id}
           rowClassName={p => (selectedIds.has(p.id) ? 'bg-primary/5' : undefined)}
+          sort={sort}
+          onSortChange={next => {
+            setSort(next);
+            setPage(1);
+          }}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">No products found.</p>
           }
@@ -352,14 +360,32 @@ export default function ProductsPage() {
             { header: 'Slug', priority: 'secondary', render: p => p.slug },
             { header: 'Category', render: p => p.category?.name ?? '—' },
             {
-              header: 'Price · cost',
+              header: 'Price',
               className: 'text-right',
+              sortable: true,
+              sortKey: 'price',
               render: p => (
-                <PriceCostCell
+                <PriceCell
                   cost={costs.get(p.id)}
                   fallback={p.base_price > 0 ? formatCurrency(p.base_price) : 'From options'}
                 />
               ),
+            },
+            {
+              // With options, a row sorts by its cheapest priced option — the
+              // one its "From" price shows. Unknown cost (no recipe) sorts last.
+              header: 'Cost',
+              className: 'text-right',
+              sortable: true,
+              sortKey: 'cost',
+              render: p => <CostCell cost={costs.get(p.id)} />,
+            },
+            {
+              header: 'Cost %',
+              className: 'text-right',
+              sortable: true,
+              sortKey: 'cost_pct',
+              render: p => <CostPctCell cost={costs.get(p.id)} />,
             },
             { header: 'SKU', render: p => p.sku ?? '—' },
             {

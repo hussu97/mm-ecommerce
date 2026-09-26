@@ -69618,13 +69618,13 @@
             }
           },
           {
-            "description": "Sort order: newest|oldest|price_asc|price_desc|name|category",
+            "description": "Sort order: newest|oldest|price_asc|price_desc|name|category; staff with catalogue.recipes.read also cost_asc|cost_desc|cost_pct_asc|cost_pct_desc",
             "in": "query",
             "name": "sort",
             "required": false,
             "schema": {
               "default": "newest",
-              "description": "Sort order: newest|oldest|price_asc|price_desc|name|category",
+              "description": "Sort order: newest|oldest|price_asc|price_desc|name|category; staff with catalogue.recipes.read also cost_asc|cost_desc|cost_pct_asc|cost_pct_desc",
               "title": "Sort",
               "type": "string"
             }
