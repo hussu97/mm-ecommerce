@@ -305,7 +305,7 @@ export default function ReportTemplatesPage() {
               { header: 'Cadence', sortable: true, sortAccessor: (row) => row.cadence, render: (row) => row.cadence.replaceAll('_', ' ') },
               { header: 'Fill order', sortable: true, sortAccessor: (row) => row.display_order, render: (row) => row.display_order },
               { header: 'Items', sortable: true, sortAccessor: (row) => row.items.length, render: (row) => row.items.length },
-              { header: 'Last edited', sortable: true, sortAccessor: (row) => row.updated_at, render: (row) => formatDateTime(row.updated_at) },
+              { header: 'Last edited', sortable: true, sortAccessor: (row) => row.updated_at, render: (row) => (row.updated_at ? formatDateTime(row.updated_at) : '—') },
               ...(showHistory ? [{ header: 'Version', sortable: true, sortAccessor: (row: ReportTemplate) => row.version_number, render: (row: ReportTemplate) => `v${row.version_number}` }] : []),
               { header: 'POS status', sortable: true, sortAccessor: (row) => isCurrent(row) ? row.is_active ? 'Current' : 'Deactivated' : 'Replaced', render: (row) => isCurrent(row) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Replaced</Badge> },
               { header: 'Required', sortable: true, sortAccessor: (row) => row.is_required ? 'Required' : 'Optional', render: (row) => row.is_required ? <Badge variant="warning">Required</Badge> : 'Optional' },
