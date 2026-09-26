@@ -241,7 +241,7 @@ export default function ProductsPage() {
       <div className="flex gap-3 mb-4">
         <div className="flex-1 max-w-xs">
           <Input
-            placeholder="Search products..."
+            placeholder="Search by name or SKU..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />

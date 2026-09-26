@@ -89,6 +89,8 @@ export interface ResourcePageProps<T extends { id: string }> {
   /** Seed values for a brand-new record. */
   defaults?: Record<string, unknown>;
   searchKeys?: Array<keyof T & string>;
+  /** Placeholder for the search box — say which fields it matches. */
+  searchPlaceholder?: string;
   emptyMessage?: string;
   /** Extra controls rendered next to the "New" button. */
   toolbar?: React.ReactNode;
@@ -137,6 +139,7 @@ export function ResourcePage<T extends { id: string }>({
   remove,
   defaults = {},
   searchKeys = [],
+  searchPlaceholder,
   emptyMessage = 'Nothing here yet.',
   toolbar,
   rowActions,
@@ -293,7 +296,7 @@ export function ResourcePage<T extends { id: string }>({
       description={description}
       search={
         searchKeys.length > 0
-          ? { value: search, onChange: setSearch }
+          ? { value: search, onChange: setSearch, placeholder: searchPlaceholder }
           : undefined
       }
       toolbar={toolbar}

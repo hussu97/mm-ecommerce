@@ -224,7 +224,13 @@ async def get_all(
             stmt = stmt.where(Category.slug.in_(category_slugs))
 
     if search:
-        stmt = stmt.where(search_text.contains(Product.name, search))
+        # The admin console (channel "all", staff-only) looks products up by SKU
+        # too. The website always lists channel "web" and searches names only —
+        # even for a signed-in staff member browsing it.
+        match = search_text.contains(Product.name, search)
+        if staff and channel != "web":
+            match = match | search_text.contains(Product.sku, search)
+        stmt = stmt.where(match)
 
     if featured is not None:
         # "Featured" is now "carries the bestseller label" — the flag became a

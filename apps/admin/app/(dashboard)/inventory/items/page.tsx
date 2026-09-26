@@ -234,6 +234,7 @@ export default function ItemsPage() {
       update={(id, d) => inventoryApi.updateItem(id, d)}
       remove={(id) => inventoryApi.removeItem(id)}
       searchKeys={['name', 'sku']}
+      searchPlaceholder="Search by name or SKU…"
       toolbar={toolbar}
       filterRows={filterRows}
       summary={(visibleItems) => {
