@@ -29893,6 +29893,11 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "is_available": {
+            "default": true,
+            "title": "Is Available",
+            "type": "boolean"
+          },
           "is_cart_addon": {
             "default": false,
             "title": "Is Cart Addon",
@@ -71967,6 +71972,18 @@
                 }
               ],
               "title": "Is Active"
+            }
+          },
+          {
+            "description": "Also list website products that are sold out at every kitchen. For the sitemap and prerendering, which enumerate product pages; a shopper's catalogue leaves it off. Never widens the channel, active or category rules.",
+            "in": "query",
+            "name": "include_unavailable",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also list website products that are sold out at every kitchen. For the sitemap and prerendering, which enumerate product pages; a shopper's catalogue leaves it off. Never widens the channel, active or category rules.",
+              "title": "Include Unavailable",
+              "type": "boolean"
             }
           },
           {

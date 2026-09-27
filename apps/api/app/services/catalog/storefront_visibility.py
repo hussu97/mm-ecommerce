@@ -20,13 +20,52 @@ def active_website_category_clause():
     )
 
 
+def website_product_page_clause():
+    """
+    A product that has a page on the website, whether or not it can be bought
+    right now: live, sold on the web, in a live category.
+
+    This is what the product page resolves against. It used to use the full
+    `website_product_visibility_clause`, so a cake sold out at every kitchen
+    answered **404** — and cakes sell out most evenings, so every one of them
+    fell out of the search index and off every link anyone had shared, then
+    came back the next morning. A sold-out product is a page that says so
+    (`get_by_slug` reports `is_available`); only a product that is genuinely
+    gone — deactivated, taken off the web, its category retired — is a 404.
+    """
+    return (
+        Product.is_active.is_(True),
+        sells_on(WEB_CHANNEL),
+        active_website_category_clause(),
+    )
+
+
+def website_availability_clause(
+    branch_id: uuid.UUID | None = None,
+    *,
+    branch_ids: Sequence[uuid.UUID] | None = None,
+):
+    """Whether some kitchen that can serve this shopper can make the product.
+
+    The availability half of `website_product_visibility_clause`, on its own so
+    the product page can *report* it instead of filtering on it.
+    """
+    if branch_ids:
+        return ~availability_service.out_at_every_branch_in_set_subquery(branch_ids)
+    if branch_id is not None:
+        return ~availability_service.unsellable_at_branch_subquery(branch_id)
+    return ~availability_service.out_at_every_branch_subquery()
+
+
 def website_product_visibility_clause(
     branch_id: uuid.UUID | None = None,
     *,
     branch_ids: Sequence[uuid.UUID] | None = None,
 ):
     """
-    The complete database predicate for a product a shopper can buy.
+    The complete database predicate for a product a shopper can buy — what a
+    listing, a search, a basket and a checkout show. The product page is wider:
+    see `website_product_page_clause`.
 
     Three answers, widest to narrowest:
 
@@ -51,19 +90,9 @@ def website_product_visibility_clause(
     at the cart and again at placement, where the basket resolves the same
     branches from the same pin and refuses what none of them can make.
     """
-    if branch_ids:
-        availability = ~availability_service.out_at_every_branch_in_set_subquery(
-            branch_ids
-        )
-    elif branch_id is not None:
-        availability = ~availability_service.unsellable_at_branch_subquery(branch_id)
-    else:
-        availability = ~availability_service.out_at_every_branch_subquery()
     return (
-        Product.is_active.is_(True),
-        sells_on(WEB_CHANNEL),
-        active_website_category_clause(),
-        availability,
+        *website_product_page_clause(),
+        website_availability_clause(branch_id, branch_ids=branch_ids),
     )
 
 

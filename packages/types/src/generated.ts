@@ -19955,6 +19955,11 @@ export interface components {
             /** Is Active */
             is_active: boolean;
             /**
+             * Is Available
+             * @default true
+             */
+            is_available: boolean;
+            /**
              * Is Cart Addon
              * @default false
              */
@@ -40262,6 +40267,8 @@ export interface operations {
                 per_page?: number;
                 include_inactive?: boolean;
                 is_active?: boolean | null;
+                /** @description Also list website products that are sold out at every kitchen. For the sitemap and prerendering, which enumerate product pages; a shopper's catalogue leaves it off. Never widens the channel, active or category rules. */
+                include_unavailable?: boolean;
                 /** @description Which catalogue to list. 'web' is the storefront and is the default so POS-only items can never leak onto the website by a forgotten parameter; the terminal asks for 'pos'. */
                 channel?: "web" | "pos" | "all";
                 /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */

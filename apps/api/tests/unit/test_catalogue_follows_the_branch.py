@@ -72,18 +72,31 @@ async def test_a_shopper_who_has_told_us_nothing_sees_what_any_branch_can_make()
     assert "branch_products.branch_id = " not in sql
 
 
-async def test_the_product_page_and_the_listing_agree():
+async def test_the_product_page_and_the_listing_agree(monkeypatch):
     """
     The pair that already drifted once: the listing had its own copy of the web
     predicate and kept nine sold-out cakes on the page that 404'd when clicked.
-    Both now take the same branch and answer the same way.
+    Both take the same branch. The listing filters on that branch's answer; the
+    page reports it (`is_available`) instead of 404ing — so the question they
+    ask about the branch has to be the same one.
     """
     listing = await _sql_for(product_service.get_all, channel="web", branch_id=BRANCH)
-    page = await _sql_for(
-        product_service.get_by_slug, "basque-cheesecake", branch_id=BRANCH
-    )
 
-    for sql in (listing, page):
+    asked: list[str] = []
+    db = AsyncMock()
+    found = MagicMock()
+    found.scalar_one_or_none.return_value = MagicMock(id=uuid.uuid4())
+    db.execute = AsyncMock(return_value=found)
+
+    async def scalar(statement):
+        asked.append(str(statement))
+        return None
+
+    db.scalar = scalar
+    monkeypatch.setattr(product_service.ProductResponse, "model_validate", MagicMock())
+    await product_service.get_by_slug(db, "basque-cheesecake", branch_id=BRANCH)
+
+    for sql in (listing, *asked):
         assert "branch_products.branch_id" in sql
 
 

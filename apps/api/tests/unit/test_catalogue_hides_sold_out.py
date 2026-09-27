@@ -139,3 +139,96 @@ def test_pin_union_falls_back_to_the_estate_when_its_branches_are_all_closed():
         "the all-closed fallback must widen to the estate union, which is the "
         "only path that joins the active-map version"
     )
+
+
+# ── The product page is a page, sold out or not ─────────────────────────────
+#
+# The listing hides a product no kitchen can make; the product page used to
+# 404 it as well. Cakes sell out most evenings, so every sell-out dropped the
+# page from the search index and broke every link to it until the morning.
+# The page now resolves and says `is_available=False`; only a product that is
+# genuinely gone is a 404.
+
+
+class _Response:
+    """Stands in for `ProductResponse` — these tests are about the queries."""
+
+    @classmethod
+    def model_validate(cls, _product):
+        return cls()
+
+    def model_copy(self, *, update):
+        return update
+
+
+def _db_with_product(availability_answer):
+    """A session whose lookup finds a product, and whose availability check
+    answers `availability_answer`. Records every statement either one ran."""
+    lookups: list[str] = []
+    checks: list[str] = []
+
+    async def execute(statement):
+        lookups.append(str(statement))
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = MagicMock(id="p-1")
+        return result
+
+    async def scalar(statement):
+        checks.append(str(statement))
+        return availability_answer
+
+    db = AsyncMock()
+    db.execute = execute
+    db.scalar = scalar
+    return db, lookups, checks
+
+
+async def test_a_sold_out_product_page_is_found_and_says_so(monkeypatch):
+    monkeypatch.setattr(product_service, "ProductResponse", _Response)
+    db, lookups, checks = _db_with_product(None)
+
+    response = await product_service.get_by_slug(db, "tiramisu")
+
+    assert response == {"is_available": False}
+    assert "branch_products" not in lookups[0], (
+        "the page lookup filters on stock again — a sold-out cake is a 404, "
+        "and falls out of the search index every evening"
+    )
+    assert "branch_products" in checks[0], "availability is no longer checked"
+
+
+async def test_an_in_stock_product_page_says_it_can_be_bought(monkeypatch):
+    monkeypatch.setattr(product_service, "ProductResponse", _Response)
+    db, _, _ = _db_with_product("p-1")
+
+    assert await product_service.get_by_slug(db, "tiramisu") == {"is_available": True}
+
+
+async def test_a_retired_product_is_still_a_404(monkeypatch):
+    """Deactivated, off the web or in a retired category is gone, not sold out."""
+    import pytest
+
+    from app.core.exceptions import NotFoundError
+
+    async def execute(statement):
+        sql = str(statement)
+        assert "products.is_active" in sql and "sales_channels" in sql
+        assert "categories" in sql
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        return result
+
+    db = AsyncMock()
+    db.execute = execute
+    with pytest.raises(NotFoundError):
+        await product_service.get_by_slug(db, "discontinued")
+
+
+async def test_the_sitemap_can_list_every_page_but_the_shop_cannot():
+    """`include_unavailable` drops only the stock half, never the page rules."""
+    sitemap = await _sql_for(channel="web", include_unavailable=True)
+    shop = await _sql_for(channel="web")
+
+    assert "branch_products" not in sitemap
+    assert "sales_channels" in sitemap and "products.is_active" in sitemap
+    assert "branch_products" in shop

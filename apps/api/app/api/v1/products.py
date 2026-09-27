@@ -109,6 +109,15 @@ async def list_products(
     per_page: int = Query(20, ge=1, le=2000),
     include_inactive: bool = Query(False),
     is_active: bool | None = Query(None),
+    include_unavailable: bool = Query(
+        False,
+        description=(
+            "Also list website products that are sold out at every kitchen. "
+            "For the sitemap and prerendering, which enumerate product pages; "
+            "a shopper's catalogue leaves it off. Never widens the channel, "
+            "active or category rules."
+        ),
+    ),
     channel: Literal["web", "pos", "all"] = Query(
         "web",
         description=(
@@ -152,6 +161,7 @@ async def list_products(
         is_active=is_active,
         channel=channel,
         staff=is_catalogue_staff,
+        include_unavailable=include_unavailable,
         branch_id=branch,
         branch_ids=branch_ids,
     )
