@@ -10,8 +10,12 @@ still serving during that cutover mapped it. Nothing maps it now, so it goes:
   ``custom_order_max_days_ahead``;
 - ``products.is_customisable`` and ``lead_time_days`` (no product sets either).
 
-``downgrade`` puts the empty tables and the columns back with 081's shape and
-defaults; the rows were never there to restore.
+``downgrade`` puts the empty tables and the columns back as they stood just
+before this migration — 081's shape plus what later migrations added to
+``custom_orders``: 272's ``customer_phone_country`` and the ``status`` /
+``source`` CHECKs from 099 and 138. Those later migrations' own downgrades drop
+them again, so a table rebuilt with 081's shape alone broke ``downgrade base``
+at 272. The rows were never there to restore.
 
 Revision ID: 296_drop_custom_order_capacity
 Revises: 295_custom_orders_setup
@@ -87,6 +91,8 @@ def downgrade() -> None:
         ),
         sa.Column("customer_name", sa.String(150), nullable=False),
         sa.Column("customer_phone", sa.String(30), nullable=True),
+        # 272_customer_directory_cache.
+        sa.Column("customer_phone_country", sa.String(2), nullable=True),
         sa.Column("customer_email", sa.String(255), nullable=True),
         sa.Column("description", sa.Text(), nullable=False),
         sa.Column("cake_message", sa.String(200), nullable=True),
@@ -126,6 +132,16 @@ def downgrade() -> None:
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        # 099_status_vocabulary_checks and 138_remaining_status_vocabularies.
+        sa.CheckConstraint(
+            "status IN ('enquiry', 'confirmed', 'in_production', 'ready', "
+            "'completed', 'cancelled')",
+            name="ck_custom_orders_status_allowed",
+        ),
+        sa.CheckConstraint(
+            "source IN ('website', 'instagram', 'whatsapp', 'phone')",
+            name="ck_custom_orders_source_allowed",
+        ),
     )
     op.create_index("ix_custom_orders_due_date", "custom_orders", ["due_date"])
     op.create_index("ix_custom_orders_status", "custom_orders", ["status"])
