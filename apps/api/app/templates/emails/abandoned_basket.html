@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{#
+  A basket that never became an order. There is no order number, fee or total
+  yet — delivery and coupons are worked out at checkout — so this shows the
+  lines and their goods value only, rather than `parts.order_summary`, whose
+  total would be a promise the checkout might not keep.
+#}
+{% block title %}{{ t('abandoned_basket.subject') }}{% endblock %}
+{% block preheader %}{{ t('abandoned_basket.preheader') }}{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">{{ t('abandoned_basket.eyebrow') }}</p>
+    <h2 class="hero-title">{{ t('abandoned_basket.heading') }}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 18px;">
+    <p class="lead" style="text-align:center;">
+      {{ t('abandoned_basket.lead') }}
+    </p>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 30px;">
+    <h2 class="section">{{ t('abandoned_basket.section') }}</h2>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="items">
+      {% for item in items %}
+      <tr>
+        <td class="stack-full" style="width: 70%;">
+          <div class="item-name" dir="auto">{{ item.name }}</div>
+          {% if item.options %}<div class="item-options" dir="auto">{{ item.options }}</div>{% endif %}
+          {% if item.note %}<div class="item-note" dir="auto">{{ t('item.note_label') }} &ldquo;{{ item.note }}&rdquo;</div>{% endif %}
+          <div class="item-qty" dir="ltr">{{ item.quantity }} &times; AED {{ item.unit_price }}</div>
+        </td>
+        <td class="item-price stack-full" style="width: 30%;" dir="ltr">AED {{ item.total_price }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="totals" style="margin-top: 14px;">
+      <tr class="grand"><td>{{ t('totals.subtotal') }}</td><td class="amount" dir="ltr">AED {{ subtotal }}</td></tr>
+    </table>
+  </td></tr>
+</table>
+
+{{ parts.button(checkout_url, t('abandoned_basket.cta')) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 24px;">
+    <p class="muted">
+      {{ t('abandoned_basket.footnote') }}
+      <a href="{{ web_url }}/{{ locale }}/contact">{{ t('cta.contact_us') }}</a>
+    </p>
+  </td></tr>
+</table>
+{% endblock %}

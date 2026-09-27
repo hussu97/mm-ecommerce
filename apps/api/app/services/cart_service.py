@@ -13,6 +13,7 @@ from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.base import utcnow
 from app.models.cart import Cart, CartItem
 from app.models.product import Product
+from app.models.user import User
 from app.schemas.cart import (
     CartItemCreate,
     CartItemResponse,
@@ -205,6 +206,11 @@ async def _touched(db: AsyncSession, cart: Cart) -> None:
         await db.flush()
 
 
+async def _is_guest_account(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    """Whether this account is a generated guest login, not a signed-up one."""
+    return await db.scalar(select(User.is_guest).where(User.id == user_id)) is True
+
+
 async def remember_checkout_email(
     db: AsyncSession, cart: Cart | None, email: str | None
 ) -> None:
@@ -218,16 +224,22 @@ async def remember_checkout_email(
     discarded, so a shopper who filled the form in and closed the tab left
     behind a row nobody could write to.
 
-    **Guest baskets only.** A basket with a `user_id` already has an address on
-    `users.email`; copying it here would create a second answer free to go stale
-    the day somebody changes their account email.
+    **Guest baskets only.** A signed-up customer's basket already has an address
+    on `users.email`; copying it here would create a second answer free to go
+    stale the day somebody changes their account email. A *guest account* is a
+    guest basket for this purpose: unless the guest gave an address at sign-in,
+    its `users.email` is the generated `…@guest.local` placeholder and the typed
+    address is the only real one — and skipping it because the basket carries a
+    `user_id` left those guests unreachable.
 
     Not validated, and deliberately: this is not a login and it does not decide
     anything. It records what was typed. Whether it is deliverable is Resend's
     answer to give, at the point something is actually sent, and a stricter rule
     here would only mean a reachable customer we refused to record.
     """
-    if cart is None or cart.user_id is not None:
+    if cart is None:
+        return
+    if cart.user_id is not None and not await _is_guest_account(db, cart.user_id):
         return
     cleaned = (email or "").strip().lower()
     if not cleaned or cleaned == cart.guest_email:

@@ -176,8 +176,8 @@ async def test_sweep_mails_only_orders_in_the_window(monkeypatch):
         return Order(**base)
 
     async with Session() as s:
-        fresh = mk(30)  # too new (< 60m)
-        due = mk(120)  # in window
+        fresh = mk(30)  # too new (< 120m)
+        due = mk(150)  # in window
         old = mk(60 * 40)  # too old (> 23h)
         no_email = mk(120, email="")  # no address
         s.add_all([fresh, due, old, no_email])
@@ -199,6 +199,13 @@ async def test_sweep_mails_only_orders_in_the_window(monkeypatch):
         order_service, "to_response", AsyncMock(side_effect=lambda db, o: o)
     )
     monkeypatch.setattr(email_service, "already_sent", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        email_service, "sent_to_recently", AsyncMock(return_value=False)
+    )
+    # Baskets are swept too; whatever else this database holds is not this
+    # test's business, so the basket sender is stubbed out.
+    monkeypatch.setattr(email_service, "send_abandoned_basket", AsyncMock())
+    monkeypatch.setattr(email_service, "reference_sent", AsyncMock(return_value=True))
     sent = AsyncMock()
     monkeypatch.setattr(email_service, "send_abandoned_cart", sent)
     monkeypatch.setattr(

@@ -171,12 +171,18 @@ def _cart_email(cart: Cart) -> tuple[str | None, str | None]:
     """
     Where to write about this basket, and where that address came from.
 
-    The account first. `Cart.guest_email` is only ever written for a basket
-    without one, so in practice these never compete — the precedence is stated
-    here so that a row restored from a dump that predates that rule still
-    answers with the address that cannot be stale.
+    A signed-up account first. `Cart.guest_email` is only ever written for a
+    basket without one, so in practice these never compete — the precedence is
+    stated here so that a row restored from a dump that predates that rule still
+    answers with the address that cannot be stale. A guest account that gave no
+    address at sign-in carries the generated `…@guest.local` placeholder; that
+    is not an address, so the one typed at checkout answers instead.
     """
-    if cart.user is not None and cart.user.email:
+    if (
+        cart.user is not None
+        and cart.user.email
+        and not cart.user.email.lower().endswith("@guest.local")
+    ):
         return cart.user.email, "account"
     if cart.guest_email:
         return cart.guest_email, "checkout"
