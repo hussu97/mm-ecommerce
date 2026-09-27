@@ -134,6 +134,21 @@ STRINGS: dict[str, dict[str, str]] = {
             "This link takes you straight to the payment page for this order. If "
             "you've already paid or changed your mind, you can ignore this."
         ),
+        # ── abandoned basket (no order yet) ─────────────────────────────────────
+        "abandoned_basket.subject": "Your basket is waiting",
+        "abandoned_basket.eyebrow": "Saved for you",
+        "abandoned_basket.heading": "You left a few treats behind.",
+        "abandoned_basket.preheader": "Your basket is saved — finish checking out.",
+        "abandoned_basket.lead": (
+            "You added these to your basket but didn't check out. Everything is "
+            "still there — finish your order and we'll start baking."
+        ),
+        "abandoned_basket.section": "Your basket",
+        "abandoned_basket.cta": "Complete your order",
+        "abandoned_basket.footnote": (
+            "Delivery and any offers are worked out at checkout. If you've "
+            "already ordered or changed your mind, you can ignore this."
+        ),
         # ── packed ────────────────────────────────────────────────────────────
         "packed.subject_pickup": "Ready to collect",
         "packed.subject_delivery": "On its way",
@@ -467,6 +482,21 @@ STRINGS: dict[str, dict[str, str]] = {
         "abandoned.footnote": (
             "يأخذك هذا الرابط مباشرةً إلى صفحة الدفع لهذا الطلب. إن كنت قد دفعت "
             "بالفعل أو غيّرت رأيك، يمكنك تجاهل هذه الرسالة."
+        ),
+        # ── abandoned basket (no order yet) ─────────────────────────────────────
+        "abandoned_basket.subject": "سلتك بانتظارك",
+        "abandoned_basket.eyebrow": "محفوظة لك",
+        "abandoned_basket.heading": "تركت بعض الحلويات في سلتك.",
+        "abandoned_basket.preheader": "سلتك محفوظة — أكمل طلبك.",
+        "abandoned_basket.lead": (
+            "أضفت هذه المنتجات إلى سلتك لكنك لم تُكمل الطلب. كل شيء ما زال "
+            "محفوظاً — أكمل طلبك وسنبدأ التحضير."
+        ),
+        "abandoned_basket.section": "سلتك",
+        "abandoned_basket.cta": "أكمل طلبك",
+        "abandoned_basket.footnote": (
+            "تُحسب رسوم التوصيل وأي عروض عند إتمام الطلب. إن كنت قد طلبت بالفعل "
+            "أو غيّرت رأيك، يمكنك تجاهل هذه الرسالة."
         ),
         # ── packed ────────────────────────────────────────────────────────────
         "packed.subject_pickup": "جاهز للاستلام",

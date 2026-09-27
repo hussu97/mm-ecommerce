@@ -48,6 +48,7 @@ from app.models.email_log import EmailLog
 from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
 from app.schemas.order import OrderResponse
+from app.services import cart_service
 from app.services.delivery import address_format
 from app.services.email_copy import DIRECTION, translator
 from app.services.orders import channels
@@ -59,6 +60,10 @@ __all__ = [
     "send_order_cancelled",
     "send_order_confirmation",
     "send_abandoned_cart",
+    "send_abandoned_basket",
+    "basket_item_row",
+    "reference_sent",
+    "sent_to_recently",
     "send_order_delivered",
     "send_order_out_for_delivery",
     "send_order_packed",
@@ -891,6 +896,65 @@ async def send_abandoned_cart(order: OrderResponse, *, resume_url: str) -> None:
     )
 
 
+def basket_item_row(item: Any) -> dict[str, Any]:
+    """One basket line in the shape `order_summary` rows use.
+
+    Priced by `cart_service`'s own formula, so the email quotes the basket at
+    exactly what the storefront showed."""
+    options = ", ".join(
+        str(option.get("option_name"))
+        for option in (item.selected_options or [])
+        if isinstance(option, dict) and option.get("option_name")
+    )
+    return {
+        "name": item.product.name if item.product else "",
+        "options": options,
+        "quantity": item.quantity,
+        "unit_price": _money(cart_service.line_unit_price(item)),
+        "total_price": _money(cart_service.line_total(item)),
+        "note": item.personalisation_note,
+    }
+
+
+async def send_abandoned_basket(
+    *,
+    to: str,
+    items: list[dict[str, Any]],
+    subtotal: Decimal,
+    checkout_url: str,
+    reference: str,
+    locale: str = "en",
+) -> None:
+    """Remind a customer about a basket they filled but never checked out.
+
+    No order exists yet, so there is no order number, total or fee to show —
+    only the lines and their goods value — and the CTA is the storefront's own
+    checkout. Journalled under `abandoned_basket` with `reference` naming the
+    basket episode, which is the once-only guard the sweep reads via
+    `reference_sent`. Never raises."""
+    t = translator(locale)
+    subject = f"{t('abandoned_basket.subject')} | Melting Moments"
+    try:
+        html = _render(
+            "abandoned_basket.html",
+            recipient_email=to,
+            locale=locale,
+            items=items,
+            subtotal=_money(subtotal),
+            checkout_url=checkout_url,
+        )
+        result = await _send_async(to, subject, html)
+    except Exception as exc:
+        logger.error(
+            "abandoned_basket render/send failed for %s: %s",
+            reference,
+            exc,
+            exc_info=True,
+        )
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
+    await _log("abandoned_basket", to, subject, result, reference=reference)
+
+
 def maps_url(snapshot: dict | None) -> str | None:
     """
     A Google Maps link to the pin the customer actually dropped.
@@ -1451,6 +1515,62 @@ async def already_sent(order_number: str | None, template: str) -> bool:
         return found is not None
     except Exception as exc:  # pragma: no cover — defensive
         logger.error("EmailLog lookup failed for %s: %s", order_number, exc)
+        return False
+
+
+async def reference_sent(reference: str | None, template: str) -> bool:
+    """`already_sent` for an email that is about something other than an order —
+    matched on `reference` instead of `order_number`. Fails open the same way."""
+    if not reference:
+        return False
+    try:
+        async with AsyncSessionFactory() as db:
+            found = (
+                await db.execute(
+                    select(EmailLog.id)
+                    .where(
+                        EmailLog.reference == reference,
+                        EmailLog.template == template.removesuffix(".html"),
+                        EmailLog.status == "sent",
+                    )
+                    .limit(1)
+                )
+            ).first()
+        return found is not None
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error("EmailLog lookup failed for %s: %s", reference, exc)
+        return False
+
+
+async def sent_to_recently(
+    recipient: str | None, templates: tuple[str, ...], *, since: datetime
+) -> bool:
+    """Whether *recipient* was successfully sent any of *templates* since *since*.
+
+    Case-insensitive on the address, since the journal holds whatever casing the
+    sender used. Fails open, like `already_sent`: an unreachable journal means
+    the email goes."""
+    if not recipient:
+        return False
+    try:
+        async with AsyncSessionFactory() as db:
+            found = (
+                await db.execute(
+                    select(EmailLog.id)
+                    .where(
+                        func.lower(EmailLog.recipient) == recipient.strip().lower(),
+                        EmailLog.template.in_(
+                            [name.removesuffix(".html") for name in templates]
+                        ),
+                        EmailLog.status == "sent",
+                        EmailLog.sent_at >= since,
+                    )
+                    .limit(1)
+                )
+            ).first()
+        return found is not None
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error("EmailLog lookup failed for %s: %s", recipient, exc)
         return False
 
 

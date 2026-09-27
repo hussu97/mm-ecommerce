@@ -942,8 +942,8 @@ gives the intended value rather than an empty one:
 | `DAILY_SALES_EMAIL_ENABLED` | `false` | Auto-send of the once-a-day sales report email. Off in production; set to `true` to resume. Manual send is unaffected. Storefront only |
 | `VAT_LEDGER_REFRESH_ENABLED` | `true` | Rebuilds the derived VAT report cache (`vat_ledger_entries`) hourly, plus a one-time full backfill when empty. Storefront only; `false` freezes the report at its last values |
 | `VAT_LEDGER_WINDOW_DAYS` | `45` | Trailing days each VAT refresh tick recomputes, so a late-settling marketplace fee is absorbed once it lands |
-| `ABANDONED_CART_EMAIL_ENABLED` | `true` | Abandoned-cart recovery email: reminds a customer who started checkout but never paid, once, with the cart contents and a link to the gateway's still-live payment page. Storefront only; `false` disables the loop |
-| `ABANDONED_CART_AFTER_MINUTES` | `60` | How long after checkout was started to wait before the reminder |
+| `ABANDONED_CART_EMAIL_ENABLED` | `true` | Abandoned-cart recovery email: reminds, once, a customer with a real email (account or typed at checkout) who left an unpaid order or a basket they never checked out. Links to the gateway's still-live payment page when there is one, otherwise the storefront checkout. One reminder per address per 24h; nothing abandoned before 2026-09-27. Storefront only; `false` disables the loop |
+| `ABANDONED_CART_AFTER_MINUTES` | `120` | How long after the last basket add (or the unpaid order being written) to wait before the reminder |
 | `ABANDONED_CART_MAX_AGE_HOURS` | `23` | Don't remind orders older than this — the gateway session has usually expired (Stripe dies at ~24h), so the link would be dead |
 | `ABANDONED_CART_SWEEP_MINUTES` | `15` | How often the sweep runs. `0` disables it |
 

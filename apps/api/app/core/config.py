@@ -279,14 +279,13 @@ class Settings(BaseSettings):
     #: "send report" endpoint is unaffected.
     DAILY_SALES_EMAIL_ENABLED: bool = True
 
-    #: Abandoned-cart recovery email. A customer who started checkout (a card
-    #: session was created) but never paid leaves the order at `created` with no
-    #: money taken; this sweep mails them once, after
-    #: `ABANDONED_CART_AFTER_MINUTES`, with the cart contents and a link straight
-    #: to the gateway's still-live hosted payment page (Stripe/Ziina). Rides in the
-    #: storefront scheduler, own switch. Skips any order whose session has expired
-    #: or is older than `ABANDONED_CART_MAX_AGE_HOURS` (a Stripe session dies at
-    #: ~24h, so the link would be dead). Once-only, guarded by the email journal.
+    #: Abandoned-cart recovery email. Two kinds of abandonment, one reminder each:
+    #: an online order left at `created` (checkout started, never paid), and a
+    #: basket with a real email that never became an order. Sent once,
+    #: `ABANDONED_CART_AFTER_MINUTES` after the last add, linking to the gateway's
+    #: still-live hosted payment page when there is one and the storefront
+    #: checkout otherwise. At most one per address per day; see
+    #: `abandoned_checkout_service`. Rides in the storefront scheduler, own switch.
     #: The VAT ledger refresh loop (`vat_ledger`). Rebuilds the derived
     #: `vat_ledger_entries` cache — output VAT on sales and input VAT on fees,
     #: courier costs and raw goods, per legal entity — as a trailing window each
@@ -300,11 +299,14 @@ class Settings(BaseSettings):
     VAT_LEDGER_WINDOW_DAYS: int = 45
 
     ABANDONED_CART_EMAIL_ENABLED: bool = True
-    #: How long after checkout was started to wait before the reminder — long
-    #: enough that it reads as a nudge, not a race with the customer still paying.
-    ABANDONED_CART_AFTER_MINUTES: int = 60
-    #: Upper bound on an order's age to still remind: past this the gateway session
-    #: has usually expired, so the link would 404. Kept under Stripe's ~24h expiry.
+    #: How long after the customer last added to their basket to wait before the
+    #: reminder — for an unpaid order, after it was written, since its basket was
+    #: emptied then. Long enough that it reads as a nudge, not a race with the
+    #: customer still paying.
+    ABANDONED_CART_AFTER_MINUTES: int = 120
+    #: Upper bound on an abandonment's age to still remind: past this a gateway
+    #: session has usually expired, and a day-old basket is not a nudge any more.
+    #: Kept under Stripe's ~24h expiry.
     ABANDONED_CART_MAX_AGE_HOURS: int = 23
     #: How often the sweep looks for newly-abandoned carts. `0` disables the loop.
     ABANDONED_CART_SWEEP_MINUTES: int = 15

@@ -101,9 +101,14 @@ def _cart(
 class _Db:
     """A session that answers one `select` with the carts it was handed."""
 
-    def __init__(self, carts):
+    def __init__(self, carts, *, is_guest=False):
         self._carts = carts
+        self._is_guest = is_guest
         self.flushes = 0
+
+    async def scalar(self, _stmt):
+        # `remember_checkout_email` asks whether the basket's account is a guest.
+        return self._is_guest
 
     async def execute(self, _stmt):
         result = MagicMock()
@@ -257,6 +262,23 @@ async def test_an_account_basket_never_takes_a_copy_of_the_address():
     assert db.flushes == 0
 
 
+async def test_a_guest_account_basket_remembers_the_typed_address():
+    """
+    A guest checks out on a generated guest account, so its basket carries a
+    `user_id` — but that account's email is a `…@guest.local` placeholder. The
+    typed address is the only real one, and dropping it left every such guest
+    out of reach of the abandoned-basket reminder.
+    """
+    db = _Db([], is_guest=True)
+    user = User(id=uuid.uuid4(), email="guest-1a2b3c4d@guest.local", is_guest=True)
+    cart = _cart(user=user)
+
+    await cart_service.remember_checkout_email(db, cart, "Typed@Example.com")
+
+    assert cart.guest_email == "typed@example.com"
+    assert db.flushes == 1
+
+
 async def test_an_unchanged_address_is_still_activity_but_not_a_write():
     """
     Somebody is on the checkout right now, which is the most interesting thing a
@@ -305,6 +327,13 @@ def test_the_account_address_wins_over_a_stored_guest_one():
 
 def test_a_guest_basket_answers_with_what_was_typed_at_checkout():
     cart = _cart(guest_email="typed@example.com")
+
+    assert analytics._cart_email(cart) == ("typed@example.com", "checkout")
+
+
+def test_a_guest_placeholder_address_gives_way_to_the_typed_one():
+    user = User(id=uuid.uuid4(), email="guest-1a2b3c4d@guest.local", is_guest=True)
+    cart = _cart(user=user, guest_email="typed@example.com")
 
     assert analytics._cart_email(cart) == ("typed@example.com", "checkout")
 
