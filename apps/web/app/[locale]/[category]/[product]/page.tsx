@@ -14,6 +14,7 @@ import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api-server';
 import { CACHE_TAGS, CONTENT_TTL, FEED_TTL } from '@/lib/cache-policy';
 import { offerPrice } from '@/lib/pricing';
+import { isSoldOut } from '@/lib/product-availability';
 import {
   BRAND,
   PRODUCT_BRAND,
@@ -62,7 +63,9 @@ export const revalidate = 60;
 export async function generateStaticParams() {
   const locales = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
   try {
-    const res = await fetch(`${RSC_API_BASE}/products?per_page=500`, {
+    // `include_unavailable`: a product sold out tonight still has a page, and
+    // prerendering is about pages, not about what can be bought right now.
+    const res = await fetch(`${RSC_API_BASE}/products?per_page=500&include_unavailable=true`, {
       next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
       signal: AbortSignal.timeout(15000),
     });
@@ -195,9 +198,13 @@ export function buildProductOffer(
   const price = offerPrice(product);
   if (price === null) return undefined;
 
-  const availability = product.is_active
-    ? 'https://schema.org/InStock'
-    : 'https://schema.org/OutOfStock';
+  // A sold-out product is a live page now, not a 404 — and the markup has to
+  // say it is sold out, or a search result advertises "In stock" for a cake
+  // the button beneath it will not sell.
+  const availability =
+    product.is_active && !isSoldOut(product)
+      ? 'https://schema.org/InStock'
+      : 'https://schema.org/OutOfStock';
 
   return {
     '@type': 'Offer',

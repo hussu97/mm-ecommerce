@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useCart } from '@/lib/cart-context';
 import { useToast, QuantitySelector } from '@/components/ui';
 import { ApiError } from '@/lib/api';
@@ -11,12 +12,14 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice, isModifierPriced } from '@/lib/pricing';
 import { formatPrice } from '@/lib/utils';
+import { isSoldOut } from '@/lib/product-availability';
+import { withFallback } from '@/lib/i18n/fallback';
 import type { Product } from '@/lib/types';
 
 export function ProductDetailATC({ product }: { product: Product }) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
-  const isOutOfStock = product.is_stock_product && product.stock_quantity <= 0;
+  const isOutOfStock = isSoldOut(product);
   const minPrice = hasModifiers ? computeFromPrice(product) : Number(product.base_price);
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
@@ -94,22 +97,43 @@ export function ProductDetailATC({ product }: { product: Product }) {
       </span>
 
       {/* Directly under the price, where a customer deciding to buy is already
-          looking, rather than further down with the shipping boilerplate. */}
-      <DeliveryEstimate variant="detail" />
+          looking, rather than further down with the shipping boilerplate.
+          Not for a sold-out product: a delivery estimate and a set of options
+          for something that cannot be ordered are two more dead ends. */}
+      {!isOutOfStock && <DeliveryEstimate variant="detail" />}
 
       {/* Modifier selectors */}
-      {hasModifiers && (
+      {hasModifiers && !isOutOfStock && (
         <ModifierSelector product={product} onChange={handleOptionsChange} />
       )}
 
       {/* Quantity + ATC */}
       {isOutOfStock ? (
-        <button
-          disabled
-          className="w-full py-3 bg-gray-100 text-gray-400 text-xs font-body uppercase tracking-widest cursor-not-allowed"
-        >
-          {t('product.out_of_stock')}
-        </button>
+        // Most people who reach a sold-out page came from a search result or a
+        // shared link, not from the menu (the menu no longer lists it). So
+        // the page has to give them somewhere to go: the whole menu, as the
+        // main action, directly under the button that says no.
+        <div className="flex flex-col gap-3">
+          <button
+            disabled
+            className="w-full py-3 bg-gray-100 text-gray-400 text-xs font-body uppercase tracking-widest cursor-not-allowed"
+          >
+            {t('product.out_of_stock')}
+          </button>
+          <p className="font-body text-sm text-gray-500">
+            {withFallback(
+              t,
+              'product.sold_out_note',
+              'Sold out for now — the rest of the menu is still baking.',
+            )}
+          </p>
+          <Link
+            href={`/${locale}/all-products`}
+            className="w-full py-3 bg-primary text-white text-center text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
+          >
+            {withFallback(t, 'product.browse_all_products', 'Browse all products')}
+          </Link>
+        </div>
       ) : (
         <div className="flex items-center gap-3">
           <QuantitySelector
