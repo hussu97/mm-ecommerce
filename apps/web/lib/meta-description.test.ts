@@ -38,6 +38,33 @@ describe('composeMetaDescription', () => {
     expect(out.endsWith('word…')).toBe(true);
   });
 
+  it('trades a longer first option for a combination that fits more', () => {
+    // Greedy takes "Longer one." (17 with the lead) and has no room for
+    // "Tail."; the search finds "Short." plus the tail (18).
+    expect(
+      composeMetaDescription('Lead.', [['Longer one.', 'Short.'], 'Tail.'], 20),
+    ).toBe('Lead. Short. Tail.');
+  });
+
+  it('keeps the preferred option when it is as good as any', () => {
+    expect(composeMetaDescription('Lead.', [['Aaaa.', 'Bbbb.']], 40)).toBe('Lead. Aaaa.');
+  });
+
+  it('would rather fill every slot than win a few characters by dropping one', () => {
+    // "Lead. " + the 28-character line alone (34) beats lead + short line +
+    // tail (25) on length, but not by the 10 it costs to drop the tail.
+    expect(
+      composeMetaDescription('Lead.', [['x'.repeat(27) + '.', 'Short line.'], 'A tail.'], 36),
+    ).toBe('Lead. Short line. A tail.');
+  });
+
+  it('drops a later slot before an earlier one', () => {
+    // Either single line fits, not both; the earlier slot is the one kept.
+    expect(composeMetaDescription('Lead.', ['First slot.', 'Second slot.'], 20)).toBe(
+      'Lead. First slot.',
+    );
+  });
+
   it('ignores empty slots', () => {
     expect(composeMetaDescription('Lead.', [null, undefined, ''])).toBe('Lead.');
   });
@@ -74,6 +101,12 @@ describe('categoryMetaDescription', () => {
     const out = categoryMetaDescription({ name: 'كوكيز', description: '', locale: 'ar' });
     expect(out).not.toMatch(/[A-Za-z]/);
     expect(out.startsWith('اطلب كوكيز')).toBe(true);
+  });
+
+  it('fills the Arabic fallback past 150 characters', () => {
+    const out = categoryMetaDescription({ name: 'صناديق مختلطة', description: '', locale: 'ar' });
+    expect(out.length).toBeGreaterThanOrEqual(150);
+    expect(out.length).toBeLessThanOrEqual(META_DESCRIPTION_MAX);
   });
 
   it('fills the English fallback past 130 characters', () => {
