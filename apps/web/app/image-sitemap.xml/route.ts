@@ -12,13 +12,15 @@ const LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(','
 // Both locales are emitted: the Arabic pages carry the same product imagery and
 // were absent entirely before.
 //
-// Rendered per request from live data, and cached only by the CDN's hour below.
-// It used to render once and read its fetches from Next's data cache, which is
-// stale-while-revalidate and only moves when something asks. A rebuild could
-// therefore start from a product list that was already hours old. The CDN's
-// `s-maxage` is a hard expiry, so the worst case is now one hour. Same fix as
-// `app/sitemap.ts`, which explains it at length.
+// Built from live data and cached by the CDN with a hard hour (`s-maxage`, no
+// stale-while-revalidate). It used to read its fetches from Next's data cache,
+// which only refreshes when something asks, so a rebuild could start from a
+// product list that was already hours old. `app/sitemap.xml/route.ts` explains
+// this at length.
 export const dynamic = 'force-dynamic';
+
+// Every build calls the API live, and a crawler will wait. See the sitemap.
+const TIMEOUT_MS = 15_000;
 
 export async function GET() {
   let urls = '';
@@ -26,7 +28,7 @@ export async function GET() {
   // Fetch categories
   const catRes = await fetch(`${RSC_API_BASE}/categories`, {
     cache: 'no-store',
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!catRes.ok) throw new Error(`image-sitemap: /categories returned ${catRes.status}`);
 
@@ -49,7 +51,7 @@ export async function GET() {
   while (hasMore) {
     const res = await fetch(
       `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true&include_unavailable=true`,
-      { cache: 'no-store', signal: AbortSignal.timeout(5000) },
+      { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) },
     );
     if (!res.ok) {
       throw new Error(`image-sitemap: /products page ${page} returned ${res.status}`);
@@ -85,7 +87,7 @@ ${urls}</urlset>`;
   return new Response(xml, {
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=3600, s-maxage=3600',
+      'Cache-Control': 'public, max-age=0, s-maxage=3600',
     },
   });
 }
