@@ -27,8 +27,11 @@
 export const CONTENT_TTL = 60;
 
 /**
- * How long the machine-read surfaces may serve a stale copy: sitemaps, the
- * llms.txt feeds, and the delivery-rate figure baked into product JSON-LD.
+ * How long the machine-read surfaces may serve a stale copy: the llms.txt
+ * feeds, and the delivery-rate figure baked into product JSON-LD. (Not the
+ * sitemaps. They render per request from live data, because an hour of ISR
+ * stacked on an hour of data cache, moved only by sparse crawler visits, left
+ * them hours behind the catalogue. See `app/sitemap.ts`.)
  *
  * An hour, not `CONTENT_TTL`'s minute, because the reader is a crawler rather
  * than a customer: nobody is standing in front of a sitemap waiting for an

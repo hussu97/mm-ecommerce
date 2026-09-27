@@ -1,5 +1,4 @@
 import { RSC_API_BASE } from '@/lib/api-server';
-import { FEED_TTL } from '@/lib/cache-policy';
 import type { ProductListResponse, Category } from '@/lib/types';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -12,12 +11,21 @@ const LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(','
 // with the success headers, so the CDN keeps serving the last good XML.
 // Both locales are emitted: the Arabic pages carry the same product imagery and
 // were absent entirely before.
+//
+// Rendered per request from live data, and cached only by the CDN's hour below.
+// It used to render once and read its fetches from Next's data cache, which is
+// stale-while-revalidate and only moves when something asks. A rebuild could
+// therefore start from a product list that was already hours old. The CDN's
+// `s-maxage` is a hard expiry, so the worst case is now one hour. Same fix as
+// `app/sitemap.ts`, which explains it at length.
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   let urls = '';
 
   // Fetch categories
   const catRes = await fetch(`${RSC_API_BASE}/categories`, {
-    next: { revalidate: FEED_TTL },
+    cache: 'no-store',
     signal: AbortSignal.timeout(5000),
   });
   if (!catRes.ok) throw new Error(`image-sitemap: /categories returned ${catRes.status}`);
@@ -35,13 +43,13 @@ export async function GET() {
     }
   }
 
-  // Fetch all products (paginated)
+  // Every product with a page, sold out or not — see `app/sitemap.ts`.
   let page = 1;
   let hasMore = true;
   while (hasMore) {
     const res = await fetch(
-      `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true`,
-      { next: { revalidate: FEED_TTL }, signal: AbortSignal.timeout(5000) },
+      `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true&include_unavailable=true`,
+      { cache: 'no-store', signal: AbortSignal.timeout(5000) },
     );
     if (!res.ok) {
       throw new Error(`image-sitemap: /products page ${page} returned ${res.status}`);

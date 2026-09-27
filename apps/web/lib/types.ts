@@ -81,6 +81,13 @@ export interface Product {
   image_urls: string[];
   is_active: boolean;
   /**
+   * False when every kitchen that could serve the shopper is out of it. Only
+   * the product page ever sees `false` — listings leave such products out — so
+   * a tile can ignore it. Read it through `isSoldOut`, which also covers the
+   * counted-stock case.
+   */
+  is_available?: boolean;
+  /**
    * Merchandising badges the product flies — a subset of the known set
    * ("website_exclusive", "bestseller", "new", "limited"). Successor to the old
    * `is_featured` boolean: `bestseller` is what the homepage rail selects on.

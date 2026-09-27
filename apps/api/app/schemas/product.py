@@ -156,6 +156,11 @@ class ProductResponse(BaseModel):
     stock_quantity: int
     image_urls: list[str]
     is_active: bool
+    #: Whether a shopper can buy it right now — false when every kitchen that
+    #: could serve them is out of it. Only the product page can see `False`:
+    #: listings leave such products out altogether, so everything they return
+    #: is available, and the console is not asking.
+    is_available: bool = True
     #: Merchandising badges, already in priority order (see `_dedupe_labels`), so
     #: the storefront flies `labels[0]` when present. Carries `bestseller` where
     #: the old `is_featured` was true.

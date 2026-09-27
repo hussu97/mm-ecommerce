@@ -29,6 +29,8 @@ from app.services import indexnow_service
 from app.services.catalog import menu_group_service, product_cost_service
 from app.services.catalog.storefront_visibility import (
     active_website_category_clause,
+    website_availability_clause,
+    website_product_page_clause,
     website_product_visibility_clause,
 )
 
@@ -157,6 +159,7 @@ async def get_all(
     is_active: bool | None = None,
     channel: str = "web",
     staff: bool = False,
+    include_unavailable: bool = False,
     branch_id: uuid.UUID | None = None,
     branch_ids: Sequence[uuid.UUID] | None = None,
 ) -> tuple[list[ProductResponse], int]:
@@ -175,6 +178,10 @@ async def get_all(
 
     `branch_id` is the kitchen the shopper's pin resolves to, and narrows the
     list to what that kitchen can make. Ignored for staff, who are not shopping.
+
+    `include_unavailable` lists every product that has a page, sold out or not
+    (`website_product_page_clause`) — for the sitemap and for prerendering,
+    which enumerate pages rather than show a shopper what they can buy.
     """
     # Built in two halves on purpose. Everything that decides *which* rows match
     # goes on `stmt`; the ordering and the eager loads go on afterwards, and only
@@ -208,6 +215,8 @@ async def get_all(
             *(
                 (sells_on(WEB_CHANNEL), active_website_category_clause())
                 if staff
+                else website_product_page_clause()
+                if include_unavailable
                 else website_product_visibility_clause(branch_id, branch_ids=branch_ids)
             )
         )
@@ -293,19 +302,31 @@ async def get_by_slug(
     branch_id: uuid.UUID | None = None,
     branch_ids: Sequence[uuid.UUID] | None = None,
 ) -> ProductResponse:
+    """The product page: found whether or not it is in stock, and says which.
+
+    Resolves against `website_product_page_clause`, not the listing's
+    visibility rule, so a product sold out at every kitchen is a page marked
+    unavailable rather than a 404. Listings, search and the basket still hide
+    and refuse it; this only stops the page itself disappearing.
+    """
     stmt = (
         select(Product)
         .options(*_product_load_options())
-        .where(
-            Product.slug == slug,
-            *website_product_visibility_clause(branch_id, branch_ids=branch_ids),
-        )
+        .where(Product.slug == slug, *website_product_page_clause())
     )
     result = await db.execute(stmt)
     product = result.scalar_one_or_none()
     if not product:
         raise NotFoundError(f"Product '{slug}' not found")
-    return ProductResponse.model_validate(product)
+    available = await db.scalar(
+        select(Product.id).where(
+            Product.id == product.id,
+            website_availability_clause(branch_id, branch_ids=branch_ids),
+        )
+    )
+    return ProductResponse.model_validate(product).model_copy(
+        update={"is_available": available is not None}
+    )
 
 
 async def get_by_slug_admin(db: AsyncSession, slug: str) -> ProductResponse:

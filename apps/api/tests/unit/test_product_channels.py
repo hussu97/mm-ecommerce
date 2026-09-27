@@ -40,5 +40,16 @@ def test_single_product_and_featured_lookups_are_storefront_only():
     Filtering the list but not the detail page would still leave
     /products/spanish-latte serving a product the website does not sell.
     """
-    for fn in (product_service.get_by_slug, product_service.get_featured):
-        assert "website_product_visibility_clause" in inspect.getsource(fn), fn.__name__
+    assert "website_product_visibility_clause" in inspect.getsource(
+        product_service.get_featured
+    )
+    # The page resolves sold-out products too, but never another channel's:
+    # its clause is the visibility clause minus stock, channel rule included.
+    assert "website_product_page_clause" in inspect.getsource(
+        product_service.get_by_slug
+    )
+    from app.services.catalog import storefront_visibility
+
+    assert "sells_on(WEB_CHANNEL)" in inspect.getsource(
+        storefront_visibility.website_product_page_clause
+    )

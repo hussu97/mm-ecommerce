@@ -1,8 +1,30 @@
 import type { MetadataRoute } from 'next';
 
 import { RSC_API_BASE } from '@/lib/api-server';
-import { FEED_TTL } from '@/lib/cache-policy';
 import type { BlogPostListResponse, Category, ProductListResponse } from '@/lib/types';
+
+/**
+ * Built fresh on every request, from live data.
+ *
+ * This used to be ISR on `FEED_TTL`, with every fetch in the data cache on the
+ * same TTL. That is two layers of stale-while-revalidate, and both of them only
+ * move when a request arrives. A crawler's visit was served the previous copy
+ * and started a rebuild in the background, and that rebuild then read the
+ * product list the data cache had *also* kept from before. So a sitemap
+ * fetched a few times a day described the catalogue as it was one or two
+ * visits earlier. On 2026-09-27 it was still listing three sold-out cakes
+ * (which were 404s at the time) at 18:49, five hours after they sold out,
+ * from a copy it had just rebuilt.
+ *
+ * There is nothing to save by caching here. A crawler asks for this a handful
+ * of times a day, and a build is three small API calls.
+ *
+ * A failure is still a failure: each fetch throws, and the request answers
+ * 500. That is safe in a way the old swallowed failure was not. F-WEB-6 was
+ * about a partial sitemap being *cached* and served as the truth. A search
+ * engine treats a 500 as "try again later" and keeps the last sitemap it read.
+ */
+export const dynamic = 'force-dynamic';
 
 const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
@@ -41,14 +63,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }
 
   // No try/catch, and every fetch below throws on a non-2xx or a timeout. A
-  // sitemap is served through Next's ISR cache, so a failure that fell through to
-  // `return entries` (static-only) or was swallowed to a partial list did not
-  // just miss data once — it BAKED a catalogue-less sitemap for the whole
-  // `FEED_TTL`, telling crawlers every product URL had vanished. Throwing instead
-  // makes Next keep serving the last successfully-generated sitemap until the API
-  // is healthy again (F-WEB-6).
+  // failure that fell through to `return entries` (static-only), or was
+  // swallowed into a partial list, would tell crawlers that every product URL
+  // had gone. Throwing turns it into a 500, which they retry (F-WEB-6; see
+  // `dynamic` above).
   const res = await fetch(`${RSC_API_BASE}/categories`, {
-    next: { revalidate: FEED_TTL },
+    cache: 'no-store',
     signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) throw new Error(`sitemap: /categories returned ${res.status}`);
@@ -67,13 +87,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }
   }
 
-  // Product pages — paginate through all active products
+  // Product pages — every product with a page, sold out or not. A cake that
+  // sold out tonight is a live page marked out of stock, not a 404, so it
+  // stays in the sitemap. That also keeps the sitemap from changing every
+  // evening and morning as the kitchens sell out and restock.
   let page = 1;
   let hasMore = true;
   while (hasMore) {
     const prodRes = await fetch(
-      `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true`,
-      { next: { revalidate: FEED_TTL }, signal: AbortSignal.timeout(5000) },
+      `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true&include_unavailable=true`,
+      { cache: 'no-store', signal: AbortSignal.timeout(5000) },
     );
     if (!prodRes.ok) {
       throw new Error(`sitemap: /products page ${page} returned ${prodRes.status}`);
@@ -103,7 +126,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   while (blogHasMore) {
     const blogRes = await fetch(
       `${RSC_API_BASE}/blog/public?locale=en&per_page=50&page=${blogPage}`,
-      { next: { revalidate: FEED_TTL }, signal: AbortSignal.timeout(5000) },
+      { cache: 'no-store', signal: AbortSignal.timeout(5000) },
     );
     if (!blogRes.ok) {
       throw new Error(`sitemap: /blog page ${blogPage} returned ${blogRes.status}`);
