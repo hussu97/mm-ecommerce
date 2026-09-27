@@ -412,6 +412,7 @@ async def record_order_delivery(
     cart: Cart | None,
     provider: str | None = None,
     estimate: Estimate | None = None,
+    error: str | None = None,
 ) -> OrderDelivery:
     """
     Open the delivery record as the order is written.
@@ -434,6 +435,11 @@ async def record_order_delivery(
     provider, which keeps this the identity for the pilot account and for every
     non-Slider zone. `zone_name` and `polygon_id` still point at the **real**
     zone whatever the provider resolves to.
+
+    `error` is why a quote made for this order at creation came back empty. The
+    caller passes `cart=None` alongside it when the order went to a different
+    kitchen than the basket was priced from, so the row records the reason
+    rather than the basket's figure for the wrong branch.
     """
     delivery = OrderDelivery(
         order_id=order.id,
@@ -472,6 +478,8 @@ async def record_order_delivery(
         delivery.quoted_at = cart.delivery_quote_at
     elif cart is not None and cart.delivery_quote_error:
         delivery.last_error = cart.delivery_quote_error
+    elif error:
+        delivery.last_error = error
 
     db.add(delivery)
     await db.flush()
