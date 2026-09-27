@@ -15,9 +15,13 @@ export async function generateMetadata({
   params: Promise<{ locale: string }>;
 }): Promise<Metadata> {
   const { locale } = await params;
+  const ar = locale === 'ar';
+  const description = ar
+    ? 'مدونة ملتنج مومنتس من مطبخنا في الشارقة — أدلة الخبز والوصفات، وكيف يعمل توصيل الحلويات في الإمارات، وماذا تطلب لكل مناسبة من أعياد الميلاد إلى رمضان.'
+    : 'Notes from the Melting Moments kitchen in Sharjah — baking guides, recipes, how dessert delivery works across the UAE, and what to order for every occasion.';
   return {
-    title: 'Blog',
-    description: 'Stories, recipes, and inspiration from the Melting Moments kitchen.',
+    title: ar ? 'المدونة' : 'Blog',
+    description,
     alternates: {
       canonical: `${SITE_URL}/${locale}/blog`,
       languages: {
@@ -27,9 +31,8 @@ export async function generateMetadata({
       },
     },
     openGraph: {
-      title: 'Blog | Melting Moments Cakes',
-      description:
-        'Notes from the kitchen — how things are baked, how delivery works across the UAE, and what to order for an occasion.',
+      title: `${ar ? 'المدونة' : 'Blog'} | Melting Moments Cakes`,
+      description,
       images: [OG_IMAGE],
       locale: locale === 'ar' ? 'ar_AE' : 'en_AE',
     },

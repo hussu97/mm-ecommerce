@@ -49,10 +49,15 @@ export async function generateMetadata({
   const { locale } = await params;
   const translations = await getTranslations(locale);
   const t = createT(translations);
+  // One sentence per locale: this used to be English on /ar as well, and it
+  // was 124 characters — under what Bing counts as a full description.
+  const description =
+    locale === 'ar'
+      ? 'قائمة ملتنج مومنتس الكاملة — براوني طري وكوكيز وكوكي ملت وكيك وحلويات، تُخبز عند الطلب في مطبخنا بالشارقة وتُوصَّل إلى دبي والشارقة وعجمان وكل الإمارات.'
+      : 'The full Melting Moments menu — fudgy brownies, gooey cookies, cookie melts, cakes and desserts, baked to order in Sharjah and delivered across the UAE.';
   return {
     title: t('nav.all'),
-    description:
-      'The full menu — brownies, cookies, cookie melts, cakes and desserts, baked to order in Sharjah and delivered across the UAE.',
+    description,
     alternates: {
       canonical: `${SITE_URL}/${locale}/all-products`,
       languages: {
@@ -63,8 +68,7 @@ export async function generateMetadata({
     },
     openGraph: {
       title: `${locale === 'ar' ? 'جميع المنتجات' : 'All Products'} | Melting Moments Cakes`,
-      description:
-        'The full menu — brownies, cookies, cookie melts, cakes and desserts, baked to order and delivered across the UAE.',
+      description,
       images: [OG_IMAGE],
       locale: locale === 'ar' ? 'ar_AE' : 'en_AE',
     },
