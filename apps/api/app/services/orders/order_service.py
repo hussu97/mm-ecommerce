@@ -74,6 +74,7 @@ from app.services import cart_service, email_service, promo_code_service, push_s
 from app.services.catalog import availability_service
 from app.services.catalog.storefront_visibility import is_website_product_visible
 from app.services.couriers import courier_service, lalamove_service
+from app.services.couriers.lalamove_service import Estimate
 from app.services.delivery import delivery_promise, delivery_service, fulfilment_service
 from app.services.delivery.delivery_zone_service import Zone, ZoneBranch
 from app.services.orders import (
@@ -760,6 +761,73 @@ async def select_fulfilment(
         best_branch=best_branch,
         unavailable=best_unavailable or [],
     )
+
+
+def _basket_priced_for(zone: Zone, branch: Branch) -> bool:
+    """Whether the basket's parked courier quote was costed from this branch.
+
+    `delivery_service.price` quotes the zone's rank-1 kitchen (`zone.branch_id`,
+    the rank-1 mirror). A zone with no kitchen of its own was quoted from the
+    single configured branch, which is also where `resolve_branch` sends it, so
+    that reads as a match rather than forcing a second courier call."""
+    return zone.branch_id is None or zone.branch_id == branch.id
+
+
+async def _courier_for_selected_branch(
+    db: AsyncSession,
+    *,
+    zone: Zone | None,
+    choice: FulfilmentChoice,
+    snapshot: dict,
+) -> tuple[str, Estimate | None, str | None, bool]:
+    """The courier and quote to freeze onto a new order's delivery row.
+
+    Returns `(provider, estimate, error, basket_is_stale)`. `basket_is_stale`
+    says the order went to a kitchen the basket was not priced from, so the
+    caller must not fall back to the basket's quote — the rank-1 kitchen's — when
+    the estimate is None. A comparable rank-1 row still falls back to it, as it
+    always did: that figure is this kitchen's own.
+
+    Quotes only when it has to (see step 8 of `create_order`): a comparable
+    noon Send / Slider-bike row, or a branch the basket was not priced for.
+    Never raises; `resolve_and_estimate` already degrades to `(None, reason)`.
+    """
+    if zone is None:
+        return choice.provider, None, None, False
+
+    comparable = courier_service.comparison_candidates(
+        choice.provider, choice.alternate_providers
+    )
+    other_kitchen = not _basket_priced_for(zone, choice.branch)
+    if not comparable and not other_kitchen:
+        return choice.provider, None, None, False
+
+    try:
+        drop_lat = float(snapshot.get("latitude"))
+        drop_lng = float(snapshot.get("longitude"))
+    except (TypeError, ValueError):
+        # No pin to price from. A comparable rank-1 row keeps the basket's
+        # figure as it always did; another kitchen's figure is still wrong.
+        if other_kitchen:
+            return (
+                choice.provider,
+                None,
+                "No pin to quote the fulfilling branch's courier from",
+                True,
+            )
+        return choice.provider, None, None, False
+
+    estimate, error, winner = await courier_service.resolve_and_estimate(
+        db,
+        provider=choice.provider,
+        alternate_providers=choice.alternate_providers,
+        latitude=drop_lat,
+        longitude=drop_lng,
+        address=snapshot.get("address_line_1"),
+        branch_id=choice.branch.id,
+        zone_name=zone.name,
+    )
+    return winner or choice.provider, estimate, error, other_kitchen
 
 
 async def stamp_packed(db: AsyncSession, order: Order, *, note: str) -> bool:
@@ -1498,52 +1566,49 @@ async def create_order(
         # here and passed down so `lalamove_service` stays clear of a courier
         # import it would otherwise have to make locally.
         #
-        # Where the selected branch's zone is priced live between noon Send and a
-        # Slider bike, the cheaper of the two is chosen **now** and frozen onto the
-        # row: the decision is made once, at creation, so dispatch books exactly
-        # this courier rather than re-running a comparison whose answer drifts with
-        # Slider's live fare and noon Send's surge. Every other zone keeps the pure
-        # string resolution with no courier call, unchanged.
-        provider_source = choice.provider
-        frozen_estimate = None
-        snapshot = order.shipping_address_snapshot or {}
-        if totals.zone is not None and courier_service.comparison_candidates(
-            choice.provider, choice.alternate_providers
-        ):
-            try:
-                drop_lat = float(snapshot.get("latitude"))
-                drop_lng = float(snapshot.get("longitude"))
-            except (TypeError, ValueError):
-                drop_lat = drop_lng = None
-            if drop_lat is not None and drop_lng is not None:
-                (
-                    frozen_estimate,
-                    _err,
-                    winner,
-                ) = await courier_service.resolve_and_estimate(
-                    db,
-                    provider=choice.provider,
-                    alternate_providers=choice.alternate_providers,
-                    latitude=drop_lat,
-                    longitude=drop_lng,
-                    address=snapshot.get("address_line_1"),
-                    branch_id=choice.branch.id,
-                    zone_name=totals.zone.name,
-                )
-                if winner is not None:
-                    provider_source = winner
+        # The courier is quoted again **now**, for the branch that actually won,
+        # in two cases, and the answer is frozen onto the row:
+        #
+        # - The selected branch's zone is priced live between noon Send and a
+        #   Slider bike. The cheaper of the two is chosen once, here, so dispatch
+        #   books exactly this courier rather than re-running a comparison whose
+        #   answer drifts with Slider's live fare and noon Send's surge.
+        # - The order fell through to a branch the basket was *not* priced for.
+        #   The basket's quote is always the rank-1 kitchen's (`delivery_service.
+        #   price`), so a rank-2 order carrying it would record the preferred
+        #   kitchen's distance and cost against a different kitchen and courier —
+        #   MM-20260927-001 went to Barsha on a Slider car with Sharjah's 4 km
+        #   noon Send quote.
+        #
+        # Everything else — rank-1, one courier — keeps the basket's own figure,
+        # with no courier call.
+        (
+            provider_source,
+            frozen_estimate,
+            quote_error,
+            basket_is_stale,
+        ) = await _courier_for_selected_branch(
+            db,
+            zone=totals.zone,
+            choice=choice,
+            snapshot=order.shipping_address_snapshot or {},
+        )
         effective_provider, _ = courier_service.effective_provider(
             provider_source if totals.zone else None,
             totals.zone.name if totals.zone else None,
-            city=str(snapshot.get("city") or ""),
+            city=str((order.shipping_address_snapshot or {}).get("city") or ""),
         )
         await lalamove_service.record_order_delivery(
             db,
             order,
             zone=totals.zone,
-            cart=cart,
+            # An order that left the rank-1 kitchen must not fall back to the
+            # basket's figure: it belongs to a different kitchen, and a blank
+            # quote with the reason is more honest than a wrong one.
+            cart=None if basket_is_stale else cart,
             provider=effective_provider,
             estimate=frozen_estimate,
+            error=quote_error,
         )
 
     # 9. Cash orders confirm themselves. A card order is confirmed by its
