@@ -21,6 +21,7 @@ import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
 import { fetchJson, fetchJsonOrNull } from '@/lib/fetch-json';
 import { productPathOf } from '@/lib/category-links';
 import { getFeaturedPromo, isAdvertisable, offerHeadline, offerSentence } from '@/lib/offer';
+import { composeMetaDescription, splitSentences } from '@/lib/meta-description';
 import { offerPrice } from '@/lib/pricing';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -259,7 +260,13 @@ export async function generateMetadata({
   // not exist as far as either is concerned. Appended rather than replacing,
   // because what the bakery sells is still the thing being described — and it
   // reverts on its own the moment the campaign ends, with no copy to go and
-  // unwrite. Held to a length a SERP will actually show.
+  // unwrite.
+  //
+  // **Held to 160 characters.** It used to allow 320, which published 274 on
+  // /en — Bing and Google both cut near 160, so the offer, appended last, was
+  // exactly the part no snippet showed. It now goes straight after the CMS
+  // description's first sentence, and the sentences after that are kept only
+  // while there is room.
   //
   // **In the language of the page.** This shipped English-only and appended a
   // clause about "New customers" to an otherwise Arabic description, which is
@@ -269,11 +276,11 @@ export async function generateMetadata({
   const headline = offerHeadline(promo, lang);
   const offerLine = headline
     ? lang === 'ar'
-      ? ` للعملاء الجدد: ${headline} بكود ${promo!.code}.`
-      : ` New customers: ${headline} with code ${promo!.code}.`
-    : '';
-  const description =
-    offerLine && (base + offerLine).length <= 320 ? base + offerLine : base;
+      ? `للعملاء الجدد: ${headline} بكود ${promo!.code}.`
+      : `New customers: ${headline} with code ${promo!.code}.`
+    : null;
+  const [lead = base, ...rest] = splitSentences(base);
+  const description = composeMetaDescription(lead, [offerLine, ...rest]);
 
   return {
     title,

@@ -23,6 +23,7 @@ import {
   SHIPPING_BY_REGION,
 } from '@/lib/schema';
 import { fetchJsonOrNull } from '@/lib/fetch-json';
+import { productMetaDescription } from '@/lib/meta-description';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 /**
@@ -141,9 +142,11 @@ export async function generateMetadata({
 
   const localizedName = localizedField(product, 'name', product.name, locale);
   const localizedDesc = localizedField(product, 'description', product.description ?? '', locale);
-  const description =
-    localizedDesc ||
-    `Order ${localizedName} from Melting Moments Cakes. Baked to order in Sharjah, delivered across Dubai, Sharjah, Ajman and the rest of the UAE.`;
+  const description = productMetaDescription({
+    name: localizedName,
+    description: localizedDesc,
+    locale,
+  });
   const ogImages = product.image_urls?.length
     ? product.image_urls.slice(0, 1).map(url => ({ url, alt: localizedName }))
     : [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }];
