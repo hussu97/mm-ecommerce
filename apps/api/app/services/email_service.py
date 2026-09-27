@@ -27,12 +27,14 @@ Every email the shop sends, and the one policy for sending them.
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 import css_inline
@@ -158,6 +160,85 @@ def _inline(html: str) -> str:
         return html
 
 
+#: The emails a customer receives. Their links back to the storefront carry
+#: UTM parameters so a visit that starts in an inbox is attributed to the email
+#: that sent it (the storefront's analytics proxy forwards `utm_*` to Umami).
+#: Staff emails are deliberately absent — their readers are not traffic, and
+#: tagging them would count the shop's own clicks as a campaign. A new customer
+#: template must be added here or its links go out untagged.
+CUSTOMER_TEMPLATES = frozenset(
+    {
+        "abandoned_basket.html",
+        "abandoned_cart.html",
+        "custom_order_invoice.html",
+        "order_cancelled.html",
+        "order_confirmation.html",
+        "order_delivered.html",
+        "order_out_for_delivery.html",
+        "order_packed.html",
+        "order_refunded.html",
+        "order_undelivered.html",
+        "password_reset.html",
+        "payment_failed.html",
+        "welcome.html",
+    }
+)
+
+_HREF = re.compile(r"""href=(["'])(.*?)\1""", re.IGNORECASE | re.DOTALL)
+
+
+def _site_hosts() -> set[str]:
+    """The storefront's own host, with and without `www.`."""
+    host = (urlsplit(settings.WEB_URL).hostname or "").lower()
+    bare = host.removeprefix("www.")
+    return {bare, f"www.{bare}"} if bare else set()
+
+
+def _with_utm(url: str, campaign: str, hosts: set[str]) -> str:
+    """*url* with UTM parameters added, if it points at the storefront.
+
+    Anything else — a gateway's payment page, a map, a `mailto:` — is returned
+    untouched, as is a link that already names its own `utm_*` values: those
+    were chosen on purpose and win."""
+    parts = urlsplit(url)
+    if (
+        parts.scheme not in ("http", "https")
+        or (parts.hostname or "").lower() not in hosts
+    ):
+        return url
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    present = {key for key, _ in query}
+    for key, value in (
+        ("utm_source", "email"),
+        ("utm_medium", "email"),
+        ("utm_campaign", campaign),
+    ):
+        if key not in present:
+            query.append((key, value))
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def tag_links(html: str, campaign: str) -> str:
+    """Add UTM parameters to every storefront link in rendered email *html*.
+
+    Done on the finished HTML, once, rather than in each template, so no link —
+    the footer's, a macro's, a URL built in Python — can be missed. Attribute
+    values are unescaped before parsing and escaped again after, so a query
+    string Jinja rendered as `&amp;` survives intact."""
+    hosts = _site_hosts()
+    if not hosts:
+        return html
+
+    def replace(match: re.Match) -> str:
+        quote, raw = match.group(1), match.group(2)
+        tagged = _with_utm(html_lib.unescape(raw), campaign, hosts)
+        if tagged == html_lib.unescape(raw):
+            return match.group(0)
+        return f"href={quote}{html_lib.escape(tagged, quote=True)}{quote}"
+
+    return _HREF.sub(replace, html)
+
+
 def _render(
     template_name: str, recipient_email: str, *, locale: str = "en", **context
 ) -> str:
@@ -169,18 +250,19 @@ def _render(
     template that renders without them renders in the wrong language silently.
     """
     template = _jinja_env.get_template(template_name)
-    return _inline(
-        template.render(
-            web_url=settings.WEB_URL,
-            shop_url=f"{settings.WEB_URL.rstrip('/')}/{locale}",
-            now=datetime.now(timezone.utc),
-            recipient_email=recipient_email,
-            locale=locale,
-            direction=DIRECTION.get(locale, "ltr"),
-            t=translator(locale),
-            **context,
-        )
+    rendered = template.render(
+        web_url=settings.WEB_URL,
+        shop_url=f"{settings.WEB_URL.rstrip('/')}/{locale}",
+        now=datetime.now(timezone.utc),
+        recipient_email=recipient_email,
+        locale=locale,
+        direction=DIRECTION.get(locale, "ltr"),
+        t=translator(locale),
+        **context,
     )
+    if template_name in CUSTOMER_TEMPLATES:
+        rendered = tag_links(rendered, campaign=template_name.removesuffix(".html"))
+    return _inline(rendered)
 
 
 def render_email(
