@@ -40,7 +40,7 @@ const SANCTIONED = new Set([
  * the storefront to reach its own API.
  */
 const AWAITING_API_SERVER = new Set([
-  join('app', 'sitemap.ts'),
+  join('app', 'sitemap.xml', 'route.ts'),
   join('app', 'image-sitemap.xml', 'route.ts'),
   join('app', 'llms.txt', 'route.ts'),
   join('app', 'llms-full.txt', 'route.ts'),
