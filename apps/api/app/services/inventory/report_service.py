@@ -1213,6 +1213,10 @@ async def _proposed_production_consumption(
                     owner_id=line.item_id,
                     multiplier=delta,
                     catalog=catalog,
+                    # produce() makes a semi-finished line just in time from its
+                    # own ingredients (when its shelf is empty, as it normally
+                    # is), so those are what this production draws.
+                    through_intermediates=True,
                 )
             except NotFoundError:
                 expanded = None

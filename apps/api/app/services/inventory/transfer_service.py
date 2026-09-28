@@ -1094,6 +1094,64 @@ async def produce(
             for line in legacy_recipe
         ]
 
+    def stock_cost(ingredient: InventoryItem | None, level) -> Decimal:
+        """An ingredient's cost per ingredient unit off the shelf: the level's
+        average when it has one, else the item's own cost."""
+        if ingredient is None:
+            return Decimal("0")
+        if Decimal(str(level.average_cost or 0)) > 0:
+            return inventory_service.canonical_cost_for_unit(
+                ingredient, level.average_cost, "ingredient"
+            )
+        return inventory_service.inventory_item_cost_for_unit(ingredient, "ingredient")
+
+    # A made intermediate (a stocked semi-finished line with its own recipe —
+    # Lindor Topping, Kunafa Paste) is used from the shelf first, and only what
+    # the shelf is missing is produced just in time, as its own batch with its
+    # own correction group, before this batch consumes it: the ledger shows it
+    # made (+) and used (−), its ingredients are drawn by that batch, and the
+    # costing engine prices it from them. Same provenance as this batch, so the
+    # ledger and the production report link it back to what it was made for.
+    # Per ingredient: (quantity made, its batch cost, the shelf's cost before).
+    made_for_batch: dict[uuid.UUID, tuple[Decimal, Decimal, Decimal]] = {}
+    if expanded is not None:
+        catalog = await recipe_service.load_active_catalog(db)
+        for ingredient_id, used, _waste, _paths, _version in recipe_lines:
+            ingredient = catalog.items.get(ingredient_id)
+            if (
+                ingredient is None
+                or used <= 0
+                or not recipe_service.is_made_intermediate(catalog, ingredient)
+            ):
+                continue
+            level = await inventory_service.level_for(db, ingredient_id, warehouse)
+            # Levels hold storage units; `used` is in ingredient units.
+            on_hand = Decimal(str(level.quantity or 0)) * Decimal(
+                str(ingredient.storage_to_ingredient_factor or 1)
+            )
+            missing = _q(used - max(on_hand, Decimal("0")))
+            if missing <= 0:
+                continue
+            shelf_cost = stock_cost(ingredient, level)
+            made, _ = await produce(
+                db,
+                branch=branch,
+                user=user,
+                item_id=ingredient_id,
+                quantity=missing,
+                warehouse_id=warehouse,
+                notes=f"Made for {output_quantity} x {item.name}",
+                source_type=source_type,
+                source_id=sid,
+                business_date=business_date,
+            )
+            # Per ingredient unit, the unit the consumption line below is in.
+            made_for_batch[ingredient_id] = (
+                missing,
+                Decimal(str(made.items[0].unit_cost)),
+                shelf_cost,
+            )
+
     correction_group = uuid.uuid4()
     if recipe_lines:
         consumption = InventoryTransaction(
@@ -1128,19 +1186,14 @@ async def produce(
                 if ingredient
                 else Decimal("1")
             )
-            cost = _c(
-                inventory_service.canonical_cost_for_unit(
-                    ingredient, level.average_cost, "ingredient"
+            if ingredient_id in made_for_batch:
+                # What came off the shelf at its cost, the rest at the batch's.
+                made_qty, made_cost, shelf_cost = made_for_batch[ingredient_id]
+                cost = _c(
+                    (made_qty * made_cost + (used - made_qty) * shelf_cost) / used
                 )
-                if ingredient and Decimal(str(level.average_cost or 0)) > 0
-                else (
-                    inventory_service.inventory_item_cost_for_unit(
-                        ingredient, "ingredient"
-                    )
-                    if ingredient
-                    else 0
-                )
-            )
+            else:
+                cost = _c(stock_cost(ingredient, level))
             input_cost += used * cost
             consumed = _q(used - planned_waste)
             if consumed > 0:

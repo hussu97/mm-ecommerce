@@ -35,6 +35,7 @@ from app.models.inventory import (
     Warehouse,
 )
 from app.models.inventory_v2 import (
+    InventoryItemKindEnum,
     InventoryTrackingModeEnum,
     Recipe,
     RecipeBasisEnum,
@@ -108,6 +109,29 @@ def _owner_column(kind: str):
 #: the maker-checker on recipe creation — enforced on the write, since a stocked
 #: retail/raw/packaging item having a recipe is a data error by construction.
 _PURCHASED_ITEM_KINDS = frozenset({"raw_material", "packaging", "resale_good"})
+
+
+def is_made_intermediate(catalog: ActiveRecipeCatalog, item: InventoryItem) -> bool:
+    """Whether a recipe line's item is made **just in time** when its parent is
+    produced: a stocked semi-finished item with its own active recipe (Lindor
+    Topping, Kunafa Paste). ``produce`` uses what is on the shelf and makes only
+    what is missing — booking it as produced, drawing its own ingredients — and
+    the parent then consumes it, so it shows as made and used. Costing a
+    parent's recipe therefore prices such a line from its sub-recipe, never from
+    its (normally empty) shelf. Phantom items are expanded through instead and
+    never stocked; produced goods and purchased kinds are always drawn from stock.
+    """
+    return (
+        item.kind == InventoryItemKindEnum.SEMI_FINISHED.value
+        and item.tracking_mode != InventoryTrackingModeEnum.PHANTOM.value
+        and (RecipeOwnerKindEnum.INVENTORY_ITEM.value, item.id) in catalog.versions
+    )
+
+
+def prices_through_intermediates(owner_kind: str) -> bool:
+    """Only an inventory item's recipe is ever *produced* (a product or option is
+    sold, and draws stock), so only its cost prices made intermediates through."""
+    return owner_kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value
 
 
 async def current_catalog_generation(db: AsyncSession) -> int:
@@ -667,6 +691,7 @@ def _walk_version(
     path: list[dict[str, str]],
     ancestry: set[uuid.UUID],
     order_type: str | None,
+    through_intermediates: bool = False,
 ) -> None:
     """Fold one version's lines into *totals* — the one recipe expansion rule.
 
@@ -675,6 +700,11 @@ def _walk_version(
     phantom sub-recipes (each dividing by its own yield). A line's
     ``yield_percentage`` grosses its quantity up for planned waste. Output is in
     each leaf ingredient's ingredient unit.
+
+    ``through_intermediates`` also expands through made intermediates (see
+    :func:`is_made_intermediate`) — the ingredients producing the owner really
+    draws, for costing. Stock posting leaves it off: ``produce`` must see the
+    intermediate as a line so it can make and then consume it.
     """
     if version_id is not None:
         used_versions.add(version_id)
@@ -702,7 +732,9 @@ def _walk_version(
             "item_id": str(item.id),
         }
         next_path = [*path, step]
-        if item.tracking_mode == InventoryTrackingModeEnum.PHANTOM.value:
+        if item.tracking_mode == InventoryTrackingModeEnum.PHANTOM.value or (
+            through_intermediates and is_made_intermediate(catalog, item)
+        ):
             if item.id in ancestry:
                 raise ConflictError("Recipe cycle encountered during expansion")
             child = catalog.versions.get(
@@ -725,6 +757,7 @@ def _walk_version(
                 path=next_path,
                 ancestry={*ancestry, item.id},
                 order_type=order_type,
+                through_intermediates=through_intermediates,
             )
             continue
         aggregate = totals.setdefault(
@@ -752,6 +785,7 @@ async def expand_owner(
     multiplier: Decimal = Decimal("1"),
     order_type: str | None = None,
     catalog: ActiveRecipeCatalog | None = None,
+    through_intermediates: bool = False,
 ) -> tuple[dict[uuid.UUID, ExpandedLine], set[uuid.UUID]]:
     catalog = catalog or await load_active_catalog(db)
     version = catalog.versions.get((kind, owner_id))
@@ -775,6 +809,7 @@ async def expand_owner(
         path=[],
         ancestry=set(),
         order_type=order_type,
+        through_intermediates=through_intermediates,
     )
     return _quantized(totals), used_versions
 
@@ -787,6 +822,7 @@ def expand_lines(
     basis: str,
     batch_yield: Decimal | None,
     lines: Iterable,
+    through_intermediates: bool = False,
 ) -> dict[uuid.UUID, ExpandedLine]:
     """Expand lines that are not (or not yet) the active version — a draft, or
     the editor's unsaved lines — to one owner unit, by the same rule."""
@@ -806,6 +842,7 @@ def expand_lines(
         path=[],
         ancestry={owner_id} if owner_id else set(),
         order_type=None,
+        through_intermediates=through_intermediates,
     )
     return _quantized(totals)
 
@@ -859,7 +896,8 @@ async def owner_recipe_unit_cost(
     """The current cost of **one owner unit** from its active recipe.
 
     The recipe is expanded to its leaf ingredients — through nested phantom
-    sub-recipes, batch yield and per-line waste — and each leaf is priced at its
+    sub-recipes and made intermediates, batch yield and per-line waste — and
+    each leaf is priced at its
     FIFO average cost: at one warehouse (``warehouse_id``) or one branch
     (``warehouse_ids``) when given, the basis ``produce`` books there; blended
     across the estate otherwise (a catalogue-level figure).
@@ -869,7 +907,11 @@ async def owner_recipe_unit_cost(
     catalog = catalog or await load_active_catalog(db)
     try:
         expanded, _ = await expand_owner(
-            db, kind=kind, owner_id=owner_id, catalog=catalog
+            db,
+            kind=kind,
+            owner_id=owner_id,
+            catalog=catalog,
+            through_intermediates=prices_through_intermediates(kind),
         )
     except NotFoundError:
         return None
@@ -930,7 +972,11 @@ async def price_owners(
     for kind, owner_id in set(owners):
         try:
             expansions[(kind, owner_id)], _ = await expand_owner(
-                db, kind=kind, owner_id=owner_id, catalog=catalog
+                db,
+                kind=kind,
+                owner_id=owner_id,
+                catalog=catalog,
+                through_intermediates=prices_through_intermediates(kind),
             )
         except (NotFoundError, ConflictError):
             expansions[(kind, owner_id)] = None
@@ -990,6 +1036,7 @@ async def quote_lines(
             basis=RecipeBasisEnum.UNIT.value,
             batch_yield=None,
             lines=[line],
+            through_intermediates=prices_through_intermediates(owner_kind),
         )
         for line in lines
     ]

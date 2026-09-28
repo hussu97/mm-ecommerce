@@ -283,8 +283,8 @@ async def list_recipe_owners(
             )
             entry["lines"].append(line)
         # One recipe rule for every screen (recipe_service.expand_lines): nested
-        # phantom sub-recipes, per-line waste and batch yield, costed at one
-        # branch's FIFO ingredient costs or blended across all of them.
+        # phantom sub-recipes and made intermediates, per-line waste and batch
+        # yield, costed at one branch's FIFO ingredient costs or blended across all.
         catalog = await recipe_service.load_active_catalog(db)
         for _rid, _status, _b, _y, _k, _o, item, _line in line_rows:
             catalog.items.setdefault(item.id, item)
@@ -298,6 +298,9 @@ async def list_recipe_owners(
                     basis=entry["basis"],
                     batch_yield=entry["batch_yield"],
                     lines=entry["lines"],
+                    through_intermediates=recipe_service.prices_through_intermediates(
+                        entry["kind"]
+                    ),
                 )
             except AppError:
                 continue

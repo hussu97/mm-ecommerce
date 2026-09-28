@@ -30463,6 +30463,54 @@
         "title": "ProductUpdate",
         "type": "object"
       },
+      "ProductionIntermediateResponse": {
+        "description": "A semi-finished item made just in time for a line (Lindor Topping for a\nLindor Brownie): produced as its own batch, then used up by the line's.",
+        "properties": {
+          "display_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Unit"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "production_reference": {
+            "title": "Production Reference",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "quantity",
+          "production_reference"
+        ],
+        "title": "ProductionIntermediateResponse",
+        "type": "object"
+      },
       "ProductionItemInput": {
         "description": "One item to be *produced* at the source branch, in the combined transfer\nand production order. Only items that have a recipe may appear here.",
         "properties": {
@@ -30568,6 +30616,14 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "intermediates": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProductionIntermediateResponse"
+            },
+            "title": "Intermediates",
+            "type": "array"
           },
           "item_id": {
             "format": "uuid",
