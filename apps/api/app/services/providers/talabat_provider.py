@@ -1826,7 +1826,14 @@ class TalabatClient(BaseAggregatorClient):
                     delivery_fee=None,
                     vat_amount=_money(_first(row, "Tax Amount", "Tax Charge")),
                     cancellation_fee=fee("Avoidable cancellation fee"),
-                    net_payable=fee("Payout Amount", "Estimated earnings"),
+                    # "Estimated earnings" first: it is the signed net. "Payout
+                    # Amount" is floored at 0.00 whenever Talabat pays nothing out:
+                    # a cash order the rider collected (earnings 86.18, payout 0),
+                    # or a refund where the shop owes Talabat its commission
+                    # (earnings -33.08, payout 0). Read first, it filed a charged
+                    # cancellation as net 0, and the P&L (`net_payable < 0`) left
+                    # out the commission the shop really paid (AGG-20260913-034).
+                    net_payable=fee("Estimated earnings", "Payout Amount"),
                     refund_amount=refund_amount,
                     # "Is Subscription Order" (Y/N) is Talabat Pro. Audited
                     # 2026-09-25 against the fee it drives: on 597 of 599 billed,

@@ -2001,3 +2001,51 @@ def test_a_cancellation_before_delivery_books_no_refund_from_compensation():
     )[0]
     assert order.refund_amount is None
     assert order.delivered_at is None
+
+
+def test_net_payable_is_the_signed_estimated_earnings():
+    """A refund where the shop still owes the commission: payout 0.00, earnings
+    -33.08. The P&L counts a charged cancellation by `net_payable < 0`, so taking
+    the payout dropped the commission (AGG-20260913-034)."""
+    order = TalabatClient()._orders_from_csv(
+        _csv_from_rows(
+            [
+                _dispute_row(
+                    **{
+                        "Payment type": "Online",
+                        "Commission": "33.08",
+                        "Payout Amount": "0.00",
+                        "Estimated earnings": "-33.08",
+                    }
+                )
+            ]
+        )
+    )[0]
+    assert order.net_payable == Decimal("-33.08")
+
+
+def test_net_payable_on_a_cash_order_is_what_the_shop_earned():
+    # Cash collected by the rider: Talabat pays nothing out, the shop still earned it.
+    order = TalabatClient()._orders_from_csv(
+        _csv_from_rows(
+            [
+                _dispute_row(
+                    **{
+                        "Order status": "Delivered",
+                        "Cancelled at": "",
+                        "Payment type": "Cash",
+                        "Payout Amount": "0.00",
+                        "Estimated earnings": "86.18",
+                    }
+                )
+            ]
+        )
+    )[0]
+    assert order.net_payable == Decimal("86.18")
+
+
+def test_net_payable_is_unknown_until_billed():
+    order = TalabatClient()._orders_from_csv(
+        _csv_from_rows([_dispute_row(**{"Estimated earnings": "0.00"})])
+    )[0]
+    assert order.net_payable is None  # blank "Payment type" = not billed yet
