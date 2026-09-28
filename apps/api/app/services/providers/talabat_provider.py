@@ -1743,16 +1743,39 @@ class TalabatClient(BaseAggregatorClient):
             # `orders.refunded_amount`, which net revenue already subtracts, so the
             # gross the customer was charged stays on the header while the net
             # follows the ledger. Capped at the subtotal so net never goes below
-            # zero. A *cancelled* order's whole value is handled by the cancellation
-            # path, not a partial reversal, so it is left out here.
-            reversal = (
-                (_money(row.get("Operational Charges")) or Decimal("0"))
-                + (_money(row.get("Vendor Refunds")) or Decimal("0"))
-                + (_money(row.get("Amount owed back to Talabat")) or Decimal("0"))
-            )
+            # zero.
+            #
+            # A *cancelled* order is different, and which way depends on whether it
+            # was delivered first. Cancelled before delivery, its whole value goes
+            # through the cancellation path, and the columns above mean other
+            # things there. "Vendor Refunds" is compensation Talabat PAYS us (30% of
+            # gross, equal to the payout), and "Amount owed back to Talabat" is its
+            # commission clawback. Neither is money refunded to the customer, so
+            # neither is a reversal (prod, every cancelled row to 2026-09-28).
+            #
+            # Cancelled *after* delivery is a customer dispute Talabat refunded
+            # (AGG-20260925-081, AGG-20260927-016: delivered, then cancelled 1h40m
+            # later, payout 0). A partial refund shows as Operational Charges below
+            # the subtotal: that is the refund, and the order still stands. Anything
+            # else is a full refund. `refund_amount` stays None and promote cancels
+            # the order (`promote._refunded_after_delivery`).
+            cancelled = (status or "").strip().lower() == "cancelled"
+            operational = _money(row.get("Operational Charges")) or Decimal("0")
+            if not cancelled:
+                reversal = (
+                    operational
+                    + (_money(row.get("Vendor Refunds")) or Decimal("0"))
+                    + (_money(row.get("Amount owed back to Talabat")) or Decimal("0"))
+                )
+            elif _parse_dt(row.get("Delivered at")) is not None and (
+                subtotal is None or operational < subtotal
+            ):
+                reversal = operational
+            else:
+                reversal = Decimal("0")
             refund_amount = (
                 (min(reversal, subtotal) if subtotal is not None else reversal)
-                if reversal > 0 and (status or "").strip().lower() != "cancelled"
+                if reversal > 0
                 else None
             )
             # Talabat bills an order the day after the sale, and until then the
@@ -1776,6 +1799,13 @@ class TalabatClient(BaseAggregatorClient):
                     external_outlet_id=(row.get("Store ID") or "").strip() or None,
                     business_date=placed_at.date().isoformat() if placed_at else None,
                     placed_at=placed_at,
+                    # The three moments promote dates its rungs by. Talabat was
+                    # the only channel that never set them (0 of 361 orders), so
+                    # its delivered/cancelled rungs were stamped at the placed
+                    # time, and "cancelled after delivery" could not be seen.
+                    accepted_at=_parse_dt(row.get("Accepted at")),
+                    delivered_at=_parse_dt(row.get("Delivered at")),
+                    cancelled_at=_parse_dt(row.get("Cancelled at")),
                     status=status,
                     status_events=_status_events_from_row(row),
                     currency="AED",

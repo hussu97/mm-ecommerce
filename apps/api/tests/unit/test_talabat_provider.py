@@ -1933,3 +1933,71 @@ async def test_enrich_disabled_flag_is_noop(monkeypatch):
         until=datetime(2026, 9, 19),
     )
     assert out[0] is order
+
+
+# ── a refund after delivery (a customer dispute) ──────────────────────────────
+
+
+def _dispute_row(**over):
+    """The shape of prod's AGG-20260927-016: delivered at 15:10, cancelled at
+    16:47 once Talabat refunded the customer, payout 0."""
+    row = {
+        "Order ID": "3919199257",
+        "Store ID": "728173",
+        "Order status": "Cancelled",
+        "Subtotal": "70.00",
+        "Order Items": "1 Nutella Cookie Melt (500 grams)",
+        "Operational Charges": "0.00",
+        "Vendor Refunds": "0.00",
+        "Amount owed back to Talabat": "0.00",
+        "Order received at": "2026-09-27 14:38",
+        "Accepted at": "2026-09-27 14:39",
+        "Delivered at": "2026-09-27 15:10",
+        "Cancelled at": "2026-09-27 16:47",
+    }
+    row.update(over)
+    return row
+
+
+def test_orders_from_csv_sets_the_event_timestamps():
+    """Talabat never set these (0 of 361 orders), so its rungs were dated at the
+    placed time and a cancellation after delivery could not be told apart."""
+    order = TalabatClient()._orders_from_csv(_csv_from_rows([_dispute_row()]))[0]
+    assert order.accepted_at == datetime(2026, 9, 27, 14, 39)
+    assert order.delivered_at == datetime(2026, 9, 27, 15, 10)
+    assert order.cancelled_at == datetime(2026, 9, 27, 16, 47)
+
+
+def test_a_full_refund_after_delivery_carries_no_partial_refund():
+    # Commission clawed back ("Amount owed back") is not a refund to the customer.
+    order = TalabatClient()._orders_from_csv(
+        _csv_from_rows([_dispute_row(**{"Amount owed back to Talabat": "22.05"})])
+    )[0]
+    assert order.refund_amount is None  # full: promote cancels the order
+
+
+def test_a_partial_refund_after_delivery_is_the_operational_charge():
+    order = TalabatClient()._orders_from_csv(
+        _csv_from_rows([_dispute_row(**{"Operational Charges": "30.00"})])
+    )[0]
+    assert order.refund_amount == Decimal("30.00")
+
+
+def test_a_cancellation_before_delivery_books_no_refund_from_compensation():
+    """Cancelled in transit, Talabat paid us 30% as "Vendor Refunds" (payout 33
+    on 110). That is money in, not a refund out."""
+    order = TalabatClient()._orders_from_csv(
+        _csv_from_rows(
+            [
+                _dispute_row(
+                    **{
+                        "Subtotal": "110.00",
+                        "Vendor Refunds": "33.00",
+                        "Delivered at": "",
+                    }
+                )
+            ]
+        )
+    )[0]
+    assert order.refund_amount is None
+    assert order.delivered_at is None

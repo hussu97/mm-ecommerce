@@ -1482,6 +1482,7 @@ async def test_a_marketplace_cancel_outranks_our_bookkeeping(monkeypatch):
         status="Cancelled",
         external_order_id="3872488968",
         cancelled_at=None,
+        delivered_at=None,
         placed_at=datetime(2026, 9, 5, 18, 54, tzinfo=timezone.utc),
         net_payable=None,
         raw=None,
@@ -1498,8 +1499,123 @@ async def test_a_marketplace_cancel_outranks_our_bookkeeping(monkeypatch):
 
 def test_delivered_is_never_rewound_into_a_cancellation():
     """Once the channel has told us the customer received it, a later cancellation
-    is a refund or dispute question, not a status to quietly undo."""
+    is a refund or dispute question, not a status to quietly undo. That question
+    has its own answer (`_refunded_after_delivery`, below); the general set of
+    states a cancellation may leave never includes delivered."""
     assert OrderStatusEnum.DELIVERED not in promote._CANCEL_EXTRA_FROM
+    assert OrderStatusEnum.DELIVERED in promote._FULL_REFUND_EXTRA_FROM
+
+
+# ── a refund after delivery (a customer dispute) ──────────────────────────────
+#
+# "Talabat amount 3820 not in agreement with Talabat record (3750)": Talabat
+# delivered AGG-20260927-016 at 15:10, refunded the customer and cancelled it at
+# 16:47. MM refused the cancel as a rewind and kept counting the 70.
+
+_DELIVERED = datetime(2026, 9, 27, 11, 10, tzinfo=timezone.utc)
+_CANCELLED = datetime(2026, 9, 27, 12, 47, tzinfo=timezone.utc)
+
+
+def _dispute(**over):
+    base = dict(
+        channel="talabat",
+        status="Cancelled",
+        gross_sales=Decimal("70.00"),
+        refund_amount=None,
+        delivered_at=_DELIVERED,
+        cancelled_at=_CANCELLED,
+        net_payable=None,
+        raw=None,
+    )
+    base.update(over)
+    return _agg(**base)
+
+
+def test_refunded_after_delivery_reads_full_and_partial():
+    assert promote._refunded_after_delivery(_dispute()) == "full"
+    assert (
+        promote._refunded_after_delivery(_dispute(refund_amount=Decimal("70.00")))
+        == "full"
+    )
+    assert (
+        promote._refunded_after_delivery(_dispute(refund_amount=Decimal("30.00")))
+        == "partial"
+    )
+
+
+def test_refunded_after_delivery_needs_a_delivery_before_the_cancel():
+    # Never delivered: an ordinary cancellation.
+    assert promote._refunded_after_delivery(_dispute(delivered_at=None)) is None
+    # Cancelled first: not a post-delivery refund either.
+    assert (
+        promote._refunded_after_delivery(
+            _dispute(cancelled_at=_DELIVERED, delivered_at=_CANCELLED)
+        )
+        is None
+    )
+    # Not a cancellation at all.
+    assert promote._refunded_after_delivery(_dispute(status="Delivered")) is None
+
+
+async def test_a_full_refund_after_delivery_cancels_the_delivered_order(monkeypatch):
+    calls: list[tuple] = []
+
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
+        calls.append((new_status, tuple(extra_from)))
+        o.status = new_status
+        return True
+
+    monkeypatch.setattr(promote.order_lifecycle, "transition", fake_transition)
+    order = _mm_order(status=OrderStatusEnum.DELIVERED, aggregator_cancel_reason=None)
+
+    await promote._drive_status(_FakeDB(), order, _dispute())
+
+    assert calls == [(OrderStatusEnum.CANCELLED, promote._FULL_REFUND_EXTRA_FROM)]
+    assert order.status == OrderStatusEnum.CANCELLED
+    assert order.aggregator_cancel_reason == "Refunded after delivery"
+
+
+async def test_a_partial_refund_after_delivery_keeps_the_order_delivered(monkeypatch):
+    rungs = await _record_rungs(monkeypatch)
+    order = _mm_order(status=OrderStatusEnum.DELIVERED, aggregator_cancel_reason=None)
+
+    await promote._drive_status(
+        _FakeDB(), order, _dispute(refund_amount=Decimal("30.00"))
+    )
+
+    assert rungs == []  # already delivered, nothing to climb, never cancelled
+    assert order.status == OrderStatusEnum.DELIVERED
+    assert order.aggregator_cancel_reason == "Partly refunded after delivery"
+
+
+async def test_a_partial_refund_after_delivery_climbs_an_undelivered_order(
+    monkeypatch,
+):
+    rungs = await _record_rungs(monkeypatch)
+    order = _mm_order(status=OrderStatusEnum.PACKED, aggregator_cancel_reason=None)
+
+    await promote._drive_status(
+        _FakeDB(), order, _dispute(refund_amount=Decimal("30.00"))
+    )
+
+    assert OrderStatusEnum.CANCELLED not in rungs
+    assert order.status == OrderStatusEnum.DELIVERED
+
+
+async def test_an_ordinary_cancellation_still_cannot_undo_a_delivery(monkeypatch):
+    calls: list[tuple] = []
+
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
+        calls.append((new_status, tuple(extra_from)))
+        return False
+
+    monkeypatch.setattr(promote.order_lifecycle, "transition", fake_transition)
+    order = _mm_order(status=OrderStatusEnum.DELIVERED, aggregator_cancel_reason=None)
+
+    await promote._drive_status(_FakeDB(), order, _dispute(delivered_at=None))
+
+    assert calls == [(OrderStatusEnum.CANCELLED, promote._CANCEL_EXTRA_FROM)]
+    assert order.aggregator_cancel_reason is None
 
 
 # ── every channel really does tell us the order finished ──────────────────────

@@ -127,6 +127,19 @@ _CANCEL_EXTRA_FROM = (
     OrderStatusEnum.OUT_FOR_DELIVERY,
 )
 
+#: The one cancellation that may leave `delivered`: a marketplace cancelling an
+#: order it had already delivered because it refunded the customer in full (a
+#: post-delivery dispute, see `_refunded_after_delivery`). Kept out of
+#: `_CANCEL_EXTRA_FROM` so an ordinary late cancellation still cannot undo a
+#: delivery. `order_lifecycle` treats delivered → cancelled as a relabel only
+#: (no restock, no refund, no register void): the goods were made and handed
+#: over, and the money went back at the marketplace.
+_FULL_REFUND_EXTRA_FROM = (*_CANCEL_EXTRA_FROM, OrderStatusEnum.DELIVERED)
+
+#: Shown on the order when a marketplace refunds it after delivery. Talabat's
+#: export carries no cancellation reason of its own.
+_REFUNDED_AFTER_DELIVERY = "Refunded after delivery"
+
 # ── What each channel's own words mean ────────────────────────────────────────
 #
 # MM's status is no longer inferred from our own timers — an aggregator order
@@ -273,6 +286,36 @@ def _cancellation_paid_by_provider(agg: AggregatorOrder) -> bool:
         isinstance(scene, str)
         and scene.strip().lower() in _PROVIDER_FUNDED_CANCEL_SCENES
     )
+
+
+def _refunded_after_delivery(agg: AggregatorOrder) -> str | None:
+    """'full' or 'partial' for a marketplace refund made after delivery, else None.
+
+    A cancellation that arrives after the marketplace's own delivered timestamp
+    is not the order failing. It is a customer dispute the marketplace settled
+    by refunding them: Talabat delivers at 15:10 and cancels at 16:47 with a
+    payout of 0 (AGG-20260927-016). MM had it delivered, the cancel was refused
+    as a rewind, and the sale stayed in MM's figures while Talabat's excluded
+    it: "Talabat amount 3820 not in agreement with Talabat record (3750)".
+
+    Partial or full is read off the refund the provider normalised onto
+    `refund_amount` (Talabat: Operational Charges, see `talabat_provider`).
+    A refund below the gross is partial: the order still stands, delivered,
+    with the refund booked on `refunded_amount` the way a Keeta vendor-fault
+    deduction is. No refund figure, or one covering the whole gross, is full:
+    the sale is unwound and the order is cancelled.
+    """
+    if _target_status(agg.channel, agg.status) != OrderStatusEnum.CANCELLED:
+        return None
+    if agg.delivered_at is None:
+        return None
+    if agg.cancelled_at is not None and agg.cancelled_at < agg.delivered_at:
+        return None
+    gross = money(agg.gross_sales or Decimal("0"))
+    refunded = money(agg.refund_amount or Decimal("0"))
+    if 0 < refunded < gross:
+        return "partial"
+    return "full"
 
 
 def _cancel_reason(agg: AggregatorOrder) -> str | None:
@@ -901,13 +944,39 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
                 reason or "?",
             )
             target = OrderStatusEnum.DELIVERED
+        elif (refund := _refunded_after_delivery(agg)) == "partial":
+            # Refunded in part after delivery: the sale stands. Stays (or climbs
+            # to) delivered, and the refund is booked on `refunded_amount` by the
+            # money fields (`_money_fields` / `_overlay_refund`), which net
+            # revenue subtracts. Falls through to the ladder climb below.
+            order.aggregator_cancel_reason = order.aggregator_cancel_reason or (
+                "Partly refunded after delivery"
+            )
+            logger.info(
+                "promote %s %s: cancelled after delivery with a partial refund "
+                "(%s of %s) — kept delivered",
+                agg.channel,
+                agg.external_order_id,
+                agg.refund_amount,
+                agg.gross_sales,
+            )
+            target = OrderStatusEnum.DELIVERED
         else:
+            # A full refund after delivery may leave `delivered`, and only that.
+            if refund == "full":
+                order.aggregator_cancel_reason = (
+                    order.aggregator_cancel_reason or _REFUNDED_AFTER_DELIVERY
+                )
             with acting_as(StatusSourceEnum.AGGREGATOR, at=_rung_at(agg, target)):
                 await order_lifecycle.transition(
                     db,
                     order,
                     target,
-                    extra_from=_CANCEL_EXTRA_FROM,
+                    extra_from=(
+                        _FULL_REFUND_EXTRA_FROM
+                        if refund == "full"
+                        else _CANCEL_EXTRA_FROM
+                    ),
                     on_invalid="skip",
                 )
             return
