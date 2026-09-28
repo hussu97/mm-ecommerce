@@ -9,6 +9,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.models.inventory import TRADE_LICENSE_AUTHORITIES
+
 Translations = dict[str, dict[str, str]]
 
 TransactionTypeLiteral = Literal[
@@ -248,6 +250,13 @@ class InventoryLevelResponse(ORMModel):
 
 # ─── Suppliers ────────────────────────────────────────────────────────────────
 
+#: The issuing-authority codes, derived from the model's list so the OpenAPI
+#: enum (and the generated TS union) can never disagree with the DB CHECK.
+TradeLicenseAuthorityLiteral = Literal[tuple(TRADE_LICENSE_AUTHORITIES)]  # type: ignore[valid-type]
+
+#: The two documents a supplier can carry, as they appear in the URL.
+SupplierDocumentKindLiteral = Literal["trn_certificate", "trade_license"]
+
 
 class SupplierContactInput(BaseModel):
     """One contact. Must carry an email or a phone — a name alone is refused."""
@@ -286,6 +295,8 @@ class SupplierCreate(BaseModel):
     allows_misc_items: bool = False
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
+    trade_license_number: str | None = Field(None, max_length=50)
+    trade_license_authority: TradeLicenseAuthorityLiteral | None = None
     payment_terms_days: int = Field(0, ge=0, le=365)
     notes: str | None = None
     is_active: bool = True
@@ -301,6 +312,8 @@ class SupplierUpdate(BaseModel):
     allows_misc_items: bool | None = None
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
+    trade_license_number: str | None = Field(None, max_length=50)
+    trade_license_authority: TradeLicenseAuthorityLiteral | None = None
     payment_terms_days: int | None = Field(None, ge=0, le=365)
     notes: str | None = None
     is_active: bool | None = None
@@ -326,6 +339,12 @@ class SupplierResponse(ORMModel):
     allows_misc_items: bool = False
     address: str | None
     tax_number: str | None
+    trade_license_number: str | None = None
+    trade_license_authority: TradeLicenseAuthorityLiteral | None = None
+    #: Whether each document has been uploaded. The file itself is fetched
+    #: through ``GET /suppliers/{id}/documents/{kind}`` as a short-lived signed URL.
+    has_trn_certificate: bool = False
+    has_trade_license: bool = False
     payment_terms_days: int
     notes: str | None
     is_active: bool
@@ -335,6 +354,20 @@ class SupplierResponse(ORMModel):
     #: The items this supplier can supply, filled by the list endpoint so the
     #: supplier table can show them without a query per row.
     mapped_items: list[SupplierMappedItem] = []
+
+
+class TradeLicenseAuthorityOption(BaseModel):
+    """One entry of the issuing-authority picker."""
+
+    code: TradeLicenseAuthorityLiteral
+    label: str
+
+
+class SupplierDocumentUrl(BaseModel):
+    """A short-lived signed URL to one supplier document in the private bucket."""
+
+    url: str
+    content_type: str | None = None
 
 
 class SupplierItemUpsert(BaseModel):

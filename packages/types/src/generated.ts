@@ -5115,6 +5115,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/suppliers/trade-license-authorities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Trade License Authorities
+         * @description Every UAE trade-licence issuing authority, for the supplier form's picker.
+         *
+         *     Declared before ``/{supplier_id}`` so the literal path is not read as an id.
+         */
+        get: operations["list_trade_license_authorities_api_v1_inventory_suppliers_trade_license_authorities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/suppliers/{supplier_id}": {
         parameters: {
             query?: never;
@@ -5152,6 +5174,38 @@ export interface paths {
          */
         post: operations["deactivate_supplier_api_v1_inventory_suppliers__supplier_id__deactivate_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/suppliers/{supplier_id}/documents/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Supplier Document
+         * @description A short-lived signed URL to view or download one supplier document.
+         */
+        get: operations["get_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__get"];
+        put?: never;
+        /**
+         * Upload Supplier Document
+         * @description Attach the VAT (TRN) certificate or the trade licence to a supplier.
+         *
+         *     The body is the raw file bytes (JPEG, PNG, WebP or PDF, max 10 MB); the type
+         *     comes from the request header. Stored in the private finance bucket and
+         *     signed on read — never public. Replaces any earlier upload of that kind.
+         */
+        post: operations["upload_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__post"];
+        /**
+         * Delete Supplier Document
+         * @description Detach one supplier document and delete it from the bucket.
+         */
+        delete: operations["delete_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -22934,6 +22988,20 @@ export interface components {
             reference?: string | null;
             /** Tax Number */
             tax_number?: string | null;
+            /** Trade License Authority */
+            trade_license_authority?: ("dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other") | null;
+            /** Trade License Number */
+            trade_license_number?: string | null;
+        };
+        /**
+         * SupplierDocumentUrl
+         * @description A short-lived signed URL to one supplier document in the private bucket.
+         */
+        SupplierDocumentUrl: {
+            /** Content Type */
+            content_type?: string | null;
+            /** Url */
+            url: string;
         };
         /** SupplierItemResponse */
         SupplierItemResponse: {
@@ -23025,6 +23093,16 @@ export interface components {
              */
             created_at: string;
             /**
+             * Has Trade License
+             * @default false
+             */
+            has_trade_license: boolean;
+            /**
+             * Has Trn Certificate
+             * @default false
+             */
+            has_trn_certificate: boolean;
+            /**
              * Id
              * Format: uuid
              */
@@ -23050,6 +23128,10 @@ export interface components {
             reference: string | null;
             /** Tax Number */
             tax_number: string | null;
+            /** Trade License Authority */
+            trade_license_authority?: ("dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other") | null;
+            /** Trade License Number */
+            trade_license_number?: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -23082,6 +23164,10 @@ export interface components {
             reference?: string | null;
             /** Tax Number */
             tax_number?: string | null;
+            /** Trade License Authority */
+            trade_license_authority?: ("dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other") | null;
+            /** Trade License Number */
+            trade_license_number?: string | null;
         };
         /** TableCreate */
         TableCreate: {
@@ -23888,6 +23974,19 @@ export interface components {
             status: string;
             /** Total */
             total: number;
+        };
+        /**
+         * TradeLicenseAuthorityOption
+         * @description One entry of the issuing-authority picker.
+         */
+        TradeLicenseAuthorityOption: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other";
+            /** Label */
+            label: string;
         };
         /** TrafficData */
         TrafficData: {
@@ -34750,6 +34849,26 @@ export interface operations {
             };
         };
     };
+    list_trade_license_authorities_api_v1_inventory_suppliers_trade_license_authorities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeLicenseAuthorityOption"][];
+                };
+            };
+        };
+    };
     get_supplier_api_v1_inventory_suppliers__supplier_id__get: {
         parameters: {
             query?: never;
@@ -34851,6 +34970,102 @@ export interface operations {
             header?: never;
             path: {
                 supplier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                supplier_id: string;
+                kind: "trn_certificate" | "trade_license";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                supplier_id: string;
+                kind: "trn_certificate" | "trade_license";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                supplier_id: string;
+                kind: "trn_certificate" | "trade_license";
             };
             cookie?: never;
         };

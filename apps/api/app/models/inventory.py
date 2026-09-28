@@ -377,6 +377,59 @@ class InventoryLevel(Base, UUIDMixin, TimestampMixin):
         return f"<InventoryLevel item={self.item_id} qty={self.quantity}>"
 
 
+#: Every UAE authority that issues a trade (commercial) licence — the emirate
+#: economic departments and the free zones. Stored as the code; the label is
+#: what the admin picker shows. The DB CHECK ``ck_supplier_trade_license_authority``
+#: spells out the same codes, so adding one is a migration as well as a line here.
+TRADE_LICENSE_AUTHORITIES: dict[str, str] = {
+    # Dubai
+    "dubai_det": "Dubai — Department of Economy and Tourism (DET, formerly DED)",
+    "dmcc": "Dubai — DMCC (Dubai Multi Commodities Centre)",
+    "jafza": "Dubai — JAFZA (Jebel Ali Free Zone)",
+    "dafz": "Dubai — DAFZ (Dubai Airport Free Zone)",
+    "dso": "Dubai — Dubai Silicon Oasis (DIEZ)",
+    "difc": "Dubai — DIFC (Dubai International Financial Centre)",
+    "dda": "Dubai — Dubai Development Authority (Internet City, Media City, etc.)",
+    "dubai_south": "Dubai — Dubai South (Dubai World Central)",
+    "ifza": "Dubai — IFZA (International Free Zone Authority)",
+    "meydan": "Dubai — Meydan Free Zone",
+    "dhcc": "Dubai — Dubai Healthcare City (DHCA)",
+    "dwtc": "Dubai — Dubai World Trade Centre Authority",
+    "dubai_commercity": "Dubai — Dubai CommerCity",
+    "dubai_maritime": "Dubai — Dubai Maritime City Authority",
+    # Abu Dhabi
+    "abu_dhabi_ded": "Abu Dhabi — Department of Economic Development (ADDED)",
+    "adgm": "Abu Dhabi — ADGM (Abu Dhabi Global Market)",
+    "kezad": "Abu Dhabi — KEZAD (Khalifa Economic Zones)",
+    "twofour54": "Abu Dhabi — twofour54",
+    "masdar": "Abu Dhabi — Masdar City Free Zone",
+    "adafz": "Abu Dhabi — Abu Dhabi Airports Free Zone",
+    # Sharjah
+    "sharjah_sedd": "Sharjah — Economic Development Department (SEDD)",
+    "saif_zone": "Sharjah — SAIF Zone (Sharjah Airport International Free Zone)",
+    "hamriyah": "Sharjah — Hamriyah Free Zone",
+    "shams": "Sharjah — Shams (Sharjah Media City)",
+    "spc": "Sharjah — Sharjah Publishing City Free Zone",
+    "srtip": "Sharjah — SRTI Park (Research, Technology and Innovation Park)",
+    "sharjah_healthcare": "Sharjah — Sharjah Healthcare City",
+    # Ajman
+    "ajman_ded": "Ajman — Department of Economic Development",
+    "ajman_free_zone": "Ajman — Ajman Free Zone",
+    "ajman_media_city": "Ajman — Ajman Media City Free Zone",
+    # Umm Al Quwain
+    "uaq_ded": "Umm Al Quwain — Department of Economic Development",
+    "uaq_ftz": "Umm Al Quwain — UAQ Free Trade Zone",
+    # Ras Al Khaimah
+    "rak_ded": "Ras Al Khaimah — Department of Economic Development",
+    "rakez": "Ras Al Khaimah — RAKEZ (Economic Zone)",
+    # Fujairah
+    "fujairah_ded": "Fujairah — Department of Industry and Economy",
+    "fujairah_free_zone": "Fujairah — Fujairah Free Zone",
+    "creative_city": "Fujairah — Creative City Media Free Zone",
+    "other": "Other",
+}
+
+
 class Supplier(Base, UUIDMixin, TimestampMixin):
     """A vendor stock is purchased from.
 
@@ -388,6 +441,14 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "suppliers"
+    __table_args__ = (
+        CheckConstraint(
+            "trade_license_authority IS NULL OR trade_license_authority IN ("
+            + ", ".join(f"'{code}'" for code in TRADE_LICENSE_AUTHORITIES)
+            + ")",
+            name="ck_supplier_trade_license_authority",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     name_localized: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -414,6 +475,26 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
     )
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     tax_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    trade_license_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: A key of ``TRADE_LICENSE_AUTHORITIES`` — who issued the trade licence.
+    trade_license_authority: Mapped[str | None] = mapped_column(
+        String(40), nullable=True
+    )
+    #: The VAT (TRN) certificate and the trade licence, each a JPEG/PNG/WebP/PDF
+    #: in the private finance bucket (``GCS_INVOICE_BUCKET``), signed on read and
+    #: never public. The key is null until one is uploaded.
+    trn_certificate_object_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    trn_certificate_content_type: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    trade_license_object_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    trade_license_content_type: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
     payment_terms_days: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )
@@ -431,6 +512,14 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+
+    @property
+    def has_trn_certificate(self) -> bool:
+        return self.trn_certificate_object_key is not None
+
+    @property
+    def has_trade_license(self) -> bool:
+        return self.trade_license_object_key is not None
 
     def __repr__(self) -> str:
         return f"<Supplier {self.name}>"

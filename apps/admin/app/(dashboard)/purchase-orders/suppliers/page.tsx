@@ -2,9 +2,17 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { inventoryApi } from '@/lib/pos-api';
-import type { InventoryItem, Supplier, SupplierContact, SupplierItem } from '@/lib/pos-types';
+import type {
+  InventoryItem,
+  Supplier,
+  SupplierContactInput,
+  SupplierDocumentKind,
+  SupplierItem,
+  TradeLicenseAuthority,
+  TradeLicenseAuthorityOption,
+} from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Pagination, Spinner, TabBar, Textarea } from '@/components/ui';
+import { Badge, Button, Input, Pagination, Select, Spinner, TabBar, Textarea } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal, StatusBadge } from '@/components/pos/ResourcePage';
 import { useConfirm, useToast } from '@/components/ui/feedback';
@@ -21,6 +29,18 @@ interface ContactDraft {
   is_primary: boolean;
 }
 
+// What the form holds for one registration document: a file picked to upload on
+// save, or a request to remove the one already stored.
+interface DocumentDraft {
+  file: File | null;
+  remove: boolean;
+}
+
+const DOCUMENTS: { kind: SupplierDocumentKind; label: string; has: (s: Supplier) => boolean }[] = [
+  { kind: 'trn_certificate', label: 'VAT (TRN) certificate', has: (s) => s.has_trn_certificate ?? false },
+  { kind: 'trade_license', label: 'Trade licence', has: (s) => s.has_trade_license ?? false },
+];
+
 interface MappingDraft {
   item_id: string;
   supplier_sku: string;
@@ -29,6 +49,7 @@ interface MappingDraft {
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [authorities, setAuthorities] = useState<TradeLicenseAuthorityOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Supplier | null>(null);
@@ -47,12 +68,14 @@ export default function SuppliersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, i] = await Promise.all([
+      const [s, i, a] = await Promise.all([
         inventoryApi.suppliers({ include_inactive: true }),
         inventoryApi.items(),
+        inventoryApi.tradeLicenseAuthorities(),
       ]);
       setSuppliers(s);
       setItems(i);
+      setAuthorities(a);
       setError('');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load suppliers.');
@@ -65,12 +88,11 @@ export default function SuppliersPage() {
     void load();
   }, [load]);
 
-  // Deleted suppliers are hidden entirely; the two tabs split the rest by the
-  // is_active flag (deactivation only flips that, never deleted_at).
-  const visible = suppliers.filter((s) => !s.deleted_at);
-  const activeCount = visible.filter((s) => s.is_active).length;
-  const inactiveCount = visible.length - activeCount;
-  const tabRows = visible.filter((s) => (activeTab === 'active' ? s.is_active : !s.is_active));
+  // The API never returns a deleted supplier; the two tabs split the rest by
+  // the is_active flag (deactivation only flips that).
+  const activeCount = suppliers.filter((s) => s.is_active).length;
+  const inactiveCount = suppliers.length - activeCount;
+  const tabRows = suppliers.filter((s) => (activeTab === 'active' ? s.is_active : !s.is_active));
 
   const totalPages = Math.max(1, Math.ceil(tabRows.length / perPage));
   const currentPage = Math.min(page, totalPages);
@@ -170,7 +192,22 @@ export default function SuppliersPage() {
               { header: 'VAT', render: (s) => (s.is_vat_deductible ? <Badge variant="info">Deductible</Badge> : <span className="text-gray-400">—</span>) },
               { header: 'Flexible items', render: (s) => (s.allow_any_item ? <Badge variant="info">Any item</Badge> : <span className="text-gray-400">—</span>) },
               { header: 'Misc. items', render: (s) => (s.allows_misc_items ? <Badge variant="info">Allowed</Badge> : <span className="text-gray-400">—</span>) },
-              { header: 'Status', sortable: true, sortAccessor: (s) => (s.is_active && !s.deleted_at ? 'Active' : 'Inactive'), render: (s) => <StatusBadge active={s.is_active && !s.deleted_at} /> },
+              {
+                header: 'Documents',
+                render: (s) => {
+                  const held = DOCUMENTS.filter((d) => d.has(s));
+                  return held.length === 0 ? (
+                    <span className="text-gray-400">—</span>
+                  ) : (
+                    <span className="flex flex-wrap gap-1">
+                      {held.map((d) => (
+                        <Badge key={d.kind} variant="info">{d.kind === 'trn_certificate' ? 'TRN' : 'Licence'}</Badge>
+                      ))}
+                    </span>
+                  );
+                },
+              },
+              { header: 'Status', sortable: true, sortAccessor: (s) => (s.is_active ? 'Active' : 'Inactive'), render: (s) => <StatusBadge active={s.is_active} /> },
             ]}
           />
           <Pagination
@@ -189,6 +226,7 @@ export default function SuppliersPage() {
         <SupplierModal
           supplier={editing}
           items={items}
+          authorities={authorities}
           onClose={() => { setCreating(false); setEditing(null); }}
           onSaved={() => { setCreating(false); setEditing(null); void load(); }}
         />
@@ -200,17 +238,27 @@ export default function SuppliersPage() {
 function SupplierModal({
   supplier,
   items,
+  authorities,
   onClose,
   onSaved,
 }: {
   supplier: Supplier | null;
   items: InventoryItem[];
+  authorities: TradeLicenseAuthorityOption[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [name, setName] = useState(supplier?.name ?? '');
   const [reference, setReference] = useState(supplier?.reference ?? '');
   const [taxNumber, setTaxNumber] = useState(supplier?.tax_number ?? '');
+  const [licenseNumber, setLicenseNumber] = useState(supplier?.trade_license_number ?? '');
+  const [licenseAuthority, setLicenseAuthority] = useState<TradeLicenseAuthority | ''>(
+    supplier?.trade_license_authority ?? '',
+  );
+  const [documents, setDocuments] = useState<Record<SupplierDocumentKind, DocumentDraft>>({
+    trn_certificate: { file: null, remove: false },
+    trade_license: { file: null, remove: false },
+  });
   const [address, setAddress] = useState(supplier?.address ?? '');
   const [paymentTerms, setPaymentTerms] = useState(String(supplier?.payment_terms_days ?? 0));
   const [vatDeductible, setVatDeductible] = useState(supplier?.is_vat_deductible ?? true);
@@ -254,6 +302,25 @@ function SupplierModal({
   function updateContact(index: number, patch: Partial<ContactDraft>) {
     setContacts((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
   }
+  function updateDocument(kind: SupplierDocumentKind, patch: Partial<DocumentDraft>) {
+    setDocuments((prev) => ({ ...prev, [kind]: { ...prev[kind], ...patch } }));
+  }
+
+  async function viewDocument(kind: SupplierDocumentKind) {
+    if (!supplier) return;
+    // Open the tab synchronously so the popup blocker allows it, then point it
+    // at the signed URL once the API returns one.
+    const tab = window.open('', '_blank');
+    try {
+      const res = await inventoryApi.supplierDocumentUrl(supplier.id, kind);
+      if (tab) tab.location.href = res.url;
+      else window.location.href = res.url;
+    } catch (err) {
+      tab?.close();
+      setError(err instanceof ApiError ? err.message : 'Could not open the document.');
+    }
+  }
+
   function updateMapping(index: number, patch: Partial<MappingDraft>) {
     setMappings((prev) => prev.map((m, i) => (i === index ? { ...m, ...patch } : m)));
   }
@@ -264,7 +331,7 @@ function SupplierModal({
       return;
     }
     // A contact must be reachable — the server refuses a name-only contact.
-    const cleanContacts: SupplierContact[] = [];
+    const cleanContacts: SupplierContactInput[] = [];
     for (const c of contacts) {
       if (!c.name.trim()) continue;
       if (!c.email.trim() && !c.phone.trim()) {
@@ -287,6 +354,8 @@ function SupplierModal({
         name: name.trim(),
         reference: reference.trim() || null,
         tax_number: taxNumber.trim() || null,
+        trade_license_number: licenseNumber.trim() || null,
+        trade_license_authority: licenseAuthority || null,
         address: address.trim() || null,
         payment_terms_days: Number(paymentTerms) || 0,
         is_vat_deductible: vatDeductible,
@@ -305,6 +374,15 @@ function SupplierModal({
           supplier_sku: m.supplier_sku.trim() || null,
         })),
       );
+      // Documents go up once the supplier exists (a new one has no id before).
+      for (const { kind } of DOCUMENTS) {
+        const draft = documents[kind];
+        if (draft.file) {
+          await inventoryApi.uploadSupplierDocument(saved.id, kind, draft.file);
+        } else if (draft.remove) {
+          await inventoryApi.removeSupplierDocument(saved.id, kind);
+        }
+      }
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed.');
@@ -320,7 +398,61 @@ function SupplierModal({
         <Input label="Reference" value={reference} onChange={(e) => setReference(e.target.value)} />
         <Input label="Tax number (TRN)" value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} />
         <Input label="Payment terms (days)" type="number" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} />
+        <Input label="Trade licence number" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
+        <Select
+          label="Trade licence authority"
+          value={licenseAuthority}
+          onChange={(e) => setLicenseAuthority(e.target.value as TradeLicenseAuthority | '')}
+          placeholder="Choose authority…"
+          options={authorities.map((a) => ({ value: a.code, label: a.label }))}
+        />
       </div>
+
+      {/* Registration documents — private, signed on view */}
+      <section className="mt-4 grid gap-3 sm:grid-cols-2">
+        {DOCUMENTS.map(({ kind, label, has }) => {
+          const draft = documents[kind];
+          const stored = !!supplier && has(supplier) && !draft.remove;
+          return (
+            <div key={kind} className="text-xs font-body">
+              <span className="mb-1 block font-medium uppercase tracking-wider text-gray-600">{label}</span>
+              <div className="flex flex-wrap items-center gap-3">
+                {stored && !draft.file && (
+                  <>
+                    <button type="button" className="text-sm text-primary hover:underline" onClick={() => viewDocument(kind)}>
+                      View current
+                    </button>
+                    <button type="button" className="text-sm text-gray-500 hover:text-red-600" onClick={() => updateDocument(kind, { remove: true })}>
+                      Remove
+                    </button>
+                  </>
+                )}
+                <label className="cursor-pointer rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+                  {draft.file ? 'Change file' : stored ? 'Replace' : 'Choose file'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                    className="hidden"
+                    onChange={(e) => updateDocument(kind, { file: e.target.files?.[0] ?? null, remove: false })}
+                  />
+                </label>
+                {draft.file ? (
+                  <span className="text-sm text-gray-600">{draft.file.name}</span>
+                ) : draft.remove ? (
+                  <span className="text-gray-500">
+                    Will be removed on save ·{' '}
+                    <button type="button" className="text-primary hover:underline" onClick={() => updateDocument(kind, { remove: false })}>
+                      Undo
+                    </button>
+                  </span>
+                ) : (
+                  !stored && <span className="text-gray-400">JPEG, PNG, WebP or PDF · max 10 MB</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </section>
       <Textarea label="Address" className="mt-3" value={address} onChange={(e) => setAddress(e.target.value)} />
 
       <div className="mt-3 flex flex-wrap gap-5">
