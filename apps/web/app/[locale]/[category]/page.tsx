@@ -240,6 +240,7 @@ async function CategoryProducts({
   sort,
   zoneId,
   categoryName,
+  categoryDescription,
   basePath,
   t,
 }: {
@@ -249,6 +250,7 @@ async function CategoryProducts({
   sort: ProductSort;
   zoneId: string | null;
   categoryName: string;
+  categoryDescription: string;
   basePath: string;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
@@ -278,6 +280,7 @@ async function CategoryProducts({
       {
         '@type': 'CollectionPage',
         name: categoryName,
+        ...(categoryDescription ? { description: categoryDescription } : {}),
         url: `${SITE_URL}/${locale}/${slug}`,
         ...(products.length > 0
           ? {
@@ -351,6 +354,14 @@ export default async function CategoryPage({
 
   const t = createT(translations);
   const categoryName = localizedField(category, 'name', category.name, locale);
+  // In the page's language. This read `category.description` directly, so
+  // every /ar category page showed its intro in English under an Arabic title.
+  const categoryDescription = localizedField(
+    category,
+    'description',
+    category.description ?? '',
+    locale,
+  );
 
   // The sort rides on every listing URL so paging does not silently drop it.
   const basePath = `/${locale}/${slug}${sort === DEFAULT_PRODUCT_SORT ? '' : `?sort=${sort}`}`;
@@ -368,9 +379,9 @@ export default async function CategoryPage({
             <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest mb-1 sm:mb-3">
               {categoryName}
             </h1>
-            {category.description && (
+            {categoryDescription && (
               <p className="font-body text-xs sm:text-sm text-gray-500 max-w-xl line-clamp-1 sm:line-clamp-none">
-                {category.description}
+                {categoryDescription}
               </p>
             )}
           </div>
@@ -402,6 +413,7 @@ export default async function CategoryPage({
           sort={sort}
           zoneId={zoneId}
           categoryName={categoryName}
+          categoryDescription={categoryDescription}
           basePath={basePath}
           t={t}
         />
