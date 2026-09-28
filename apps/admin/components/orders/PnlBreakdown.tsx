@@ -111,6 +111,15 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
           hint="Delivery and small-basket fees the customer paid. No VAT is charged on them."
         />
       )}
+      {pnl.compensation !== 0 && (
+        <Line
+          label="Marketplace compensation"
+          value={pnl.compensation}
+          tone="credit"
+          pct={pct.compensation}
+          hint="What the marketplace paid on an order it cancelled, net of its cut: Talabat's compensation on an order cancelled in transit, a Keeta customer-service cancellation."
+        />
+      )}
       <Line label="Payment fees" value={pnl.payment_fees} tone="cost" pct={pct.payment_fees} />
       <Line label="Aggregator & delivery fees" value={pnl.aggregator_and_delivery_fees} tone="cost" pct={pct.aggregator_and_delivery_fees} />
       {pnl.commission !== 0 && <Line label="Commission" value={pnl.commission} tone="cost" pct={pct.commission} indent />}

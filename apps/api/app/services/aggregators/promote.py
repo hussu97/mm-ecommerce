@@ -318,6 +318,41 @@ def _refunded_after_delivery(agg: AggregatorOrder) -> str | None:
     return "full"
 
 
+def _cancellation_net(agg: AggregatorOrder, *, provider_paid: bool) -> Decimal | None:
+    """What the marketplace settled on this cancelled order, signed; None if unknown.
+
+    Only a figure the marketplace has committed to counts:
+
+    * **Talabat** — the billed "Estimated earnings" (`net_payable`, None until the
+      order is billed): +33 on an order cancelled in transit it compensated at 30%,
+      -22.05 on a refund after delivery that kept the commission.
+    * **Keeta** — the settled bill's net once the order is on one
+      (`statement_id`), else, for a customer-service cancellation Keeta funds, its
+      own provisional net (what it has said it will pay: 37.42 provisional and
+      settled alike on 5167841430845412). Every other Keeta cancellation carries a
+      provisional net that is NOT paid (a merchant cancellation shows +23.25 and
+      settles at nothing or less), so it stays unknown until billed.
+
+    Other channels: unknown, as before.
+    """
+    net = agg.net_payable
+    if net is None:
+        return None
+    if agg.channel == "talabat":
+        return money(net)
+    if agg.channel == "keeta":
+        if getattr(agg, "statement_id", None) or provider_paid:
+            return money(net)
+    return None
+
+
+def _set_cancellation_net(order: Order, net: Decimal | None) -> None:
+    """Write `marketplace_cancellation_net` only when it changes (idempotent
+    re-promotes must not dirty the row)."""
+    if getattr(order, "marketplace_cancellation_net", None) != net:
+        order.marketplace_cancellation_net = net
+
+
 def _cancel_reason(agg: AggregatorOrder) -> str | None:
     """A short, humanised reason the marketplace cancelled, for display only.
 
@@ -926,29 +961,12 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
         if reason:
             order.aggregator_cancel_reason = reason
 
-        if _provider_cancelled_but_paid(agg):
-            # Paid despite the cancellation: Keeta cancelled at its own customer-
-            # service desk and still owes us the net (net_payable > 0), funding the
-            # refund itself. That is a sale we KEEP, not a lost one — book it
-            # `delivered` so its revenue counts, with the cancellation recorded
-            # above, instead of dropping it as `cancelled`. Any cancellation the
-            # shop itself funds (Merchant/User/no-accept timeout) fails the
-            # customer-service allowlist in `_cancellation_paid_by_provider` and
-            # falls to the `else` below. Falls through to the ladder climb below.
-            logger.info(
-                "promote %s %s: marketplace-cancelled but net_payable=%s>0 (%s) "
-                "— booking delivered, revenue kept",
-                agg.channel,
-                agg.external_order_id,
-                agg.net_payable,
-                reason or "?",
-            )
-            target = OrderStatusEnum.DELIVERED
-        elif (refund := _refunded_after_delivery(agg)) == "partial":
+        if (refund := _refunded_after_delivery(agg)) == "partial":
             # Refunded in part after delivery: the sale stands. Stays (or climbs
             # to) delivered, and the refund is booked on `refunded_amount` by the
             # money fields (`_money_fields` / `_overlay_refund`), which net
             # revenue subtracts. Falls through to the ladder climb below.
+            _set_cancellation_net(order, None)
             order.aggregator_cancel_reason = order.aggregator_cancel_reason or (
                 "Partly refunded after delivery"
             )
@@ -962,7 +980,19 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
             )
             target = OrderStatusEnum.DELIVERED
         else:
-            # A full refund after delivery may leave `delivered`, and only that.
+            # Cancelled — and booked at what the marketplace actually settled,
+            # which is not always nothing. A Keeta customer-service cancellation
+            # (`_provider_cancelled_but_paid`) or a Talabat order cancelled in
+            # transit that it compensated pays the shop; a refund after delivery
+            # can still charge it the commission. `marketplace_cancellation_net`
+            # carries that signed figure to the P&L. This used to book Keeta's
+            # paid cancellations `delivered` at the FULL gross (55 when Keeta
+            # paid 37.42), and Talabat's as a cancellation worth nothing (it paid
+            # 162 on four orders): neither was what the marketplace paid.
+            provider_paid = _provider_cancelled_but_paid(agg)
+            _set_cancellation_net(
+                order, _cancellation_net(agg, provider_paid=provider_paid)
+            )
             if refund == "full":
                 order.aggregator_cancel_reason = (
                     order.aggregator_cancel_reason or _REFUNDED_AFTER_DELIVERY
@@ -972,14 +1002,19 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
                     db,
                     order,
                     target,
+                    # A full refund after delivery, or a cancellation the
+                    # marketplace paid for after handover, may leave `delivered`
+                    # (a relabel only — see `_FULL_REFUND_EXTRA_FROM`).
                     extra_from=(
                         _FULL_REFUND_EXTRA_FROM
-                        if refund == "full"
+                        if refund == "full" or provider_paid
                         else _CANCEL_EXTRA_FROM
                     ),
                     on_invalid="skip",
                 )
             return
+    else:
+        _set_cancellation_net(order, None)
 
     if target not in _LADDER:
         return

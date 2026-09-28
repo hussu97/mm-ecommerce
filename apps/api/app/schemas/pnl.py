@@ -29,6 +29,7 @@ class PnlShares(BaseModel):
     cogs_resale: float | None
     pc1: float | None
     delivery_fees: float | None
+    compensation: float | None
     payment_fees: float | None
     commission: float | None
     marketplace_fees: float | None
@@ -79,6 +80,10 @@ class PnlStatement(BaseModel):
     #: Delivery + small-basket fees the customer paid us (website). Outside the
     #: VAT base, so no VAT line; the card fee on them is in `payment_fees`.
     delivery_fees: float
+    #: What marketplaces paid on orders they cancelled (Talabat's compensation on
+    #: an order cancelled in transit, a Keeta customer-service cancellation), net
+    #: of their cut. Income; no VAT line.
+    compensation: float
     payment_fees: float
     #: Marketplace commission.
     commission: float
@@ -94,8 +99,8 @@ class PnlStatement(BaseModel):
     misc_fees: float
     #: Input VAT reclaimed on the fee lines — zero under a non-registered entity.
     fees_vat: float
-    #: PC1 + delivery fees − payment − aggregator & delivery − misc + VAT
-    #: reclaimed on fees.
+    #: PC1 + delivery fees + compensation − payment − aggregator & delivery −
+    #: misc + VAT reclaimed on fees.
     pc2: float
     #: As given, VAT included.
     discounts: float

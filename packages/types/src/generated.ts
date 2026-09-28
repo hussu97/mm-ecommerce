@@ -17972,6 +17972,8 @@ export interface components {
             cogs_resale: number;
             /** Commission */
             commission: number;
+            /** Compensation */
+            compensation: number;
             /** Delivery Cost */
             delivery_cost: number;
             /** Delivery Fees */
@@ -19011,6 +19013,8 @@ export interface components {
             cogs_resale: number;
             /** Commission */
             commission: number;
+            /** Compensation */
+            compensation: number;
             /** Delivery Cost */
             delivery_cost: number;
             /** Delivery Fees */
@@ -19158,6 +19162,8 @@ export interface components {
             cogs_resale: number | null;
             /** Commission */
             commission: number | null;
+            /** Compensation */
+            compensation: number | null;
             /** Delivery Cost */
             delivery_cost: number | null;
             /** Delivery Fees */

@@ -282,6 +282,18 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: order the marketplace did not charge one (null ≠ zero, as above).
     cancellation_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
 
+    #: What the marketplace settled on a CANCELLED aggregator order, signed:
+    #: positive when it paid the shop anyway (Talabat's 30% compensation on an
+    #: order cancelled in transit, a Keeta customer-service cancellation), negative
+    #: when it charged the shop (a refund after delivery that kept the
+    #: commission). Set by `aggregator promote` from the marketplace's billed or
+    #: settled net, null until that is known and on every order that stands. The
+    #: P&L reads it: positive is "marketplace compensation" income, negative is
+    #: the cancellation charge.
+    marketplace_cancellation_net: Mapped[Any | None] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
+
     #: A merchant-funded promotion the marketplace billed back to the shop —
     #: Keeta's "Promotion funded by merchant" (`feeDtl.merchantFee.activityFee`).
     #: A real cost that is neither commission nor payment processing, kept on its

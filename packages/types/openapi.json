@@ -24060,6 +24060,10 @@
             "title": "Commission",
             "type": "number"
           },
+          "compensation": {
+            "title": "Compensation",
+            "type": "number"
+          },
           "delivery_cost": {
             "title": "Delivery Cost",
             "type": "number"
@@ -24185,6 +24189,7 @@
           "cogs_resale",
           "pc1",
           "delivery_fees",
+          "compensation",
           "payment_fees",
           "commission",
           "marketplace_fees",
@@ -26969,6 +26974,10 @@
             "title": "Commission",
             "type": "number"
           },
+          "compensation": {
+            "title": "Compensation",
+            "type": "number"
+          },
           "delivery_cost": {
             "title": "Delivery Cost",
             "type": "number"
@@ -27094,6 +27103,7 @@
           "cogs_resale",
           "pc1",
           "delivery_fees",
+          "compensation",
           "payment_fees",
           "commission",
           "marketplace_fees",
@@ -27422,6 +27432,17 @@
             ],
             "title": "Commission"
           },
+          "compensation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compensation"
+          },
           "delivery_cost": {
             "anyOf": [
               {
@@ -27611,6 +27632,7 @@
           "cogs_resale",
           "pc1",
           "delivery_fees",
+          "compensation",
           "payment_fees",
           "commission",
           "marketplace_fees",

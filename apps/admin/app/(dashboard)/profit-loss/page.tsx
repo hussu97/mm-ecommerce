@@ -81,6 +81,7 @@ const ROWS: Row[] = [
   { label: 'Resale goods', value: c => c.cogs_resale, share: 'cogs_resale', kind: 'detail', always: true },
   { label: 'PC1', value: c => c.pc1, share: 'pc1', kind: 'sub' },
   { label: 'Delivery fees charged (no VAT)', value: c => c.delivery_fees, share: 'delivery_fees', kind: 'credit' },
+  { label: 'Marketplace compensation', value: c => c.compensation, share: 'compensation', kind: 'credit' },
   { label: 'Payment fees', value: c => c.payment_fees, share: 'payment_fees', kind: 'cost' },
   { label: 'Aggregator & delivery fees', value: c => c.aggregator_and_delivery_fees, share: 'aggregator_and_delivery_fees', kind: 'cost' },
   { label: 'Commission', value: c => c.commission, share: 'commission', kind: 'detail' },

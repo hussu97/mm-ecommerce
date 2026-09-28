@@ -568,3 +568,81 @@ async def test_an_entity_slice_keeps_period_charges_only_for_the_marketplace_ent
     assert counter_only.total.pc3 == D("43.50")
     # The entity the marketplace accounts are booked under keeps them.
     assert with_marketplace.period_charges_included
+
+
+async def test_a_cancellation_the_marketplace_settled_books_what_it_settled(engine):
+    """`orders.marketplace_cancellation_net` is the order's outcome once known.
+
+    Talabat paid 30% (33) on an order it cancelled in transit: that was a
+    cancellation worth nothing in the P&L. Keeta settled a refund after delivery
+    at -49.50 while the order carried a stale 16.50 commission: the charge is
+    the settled 49.50, not the stale fee. With no settled figure the old rule
+    stands (not in the P&L unless charged).
+    """
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    async with Session() as db:
+        branch = Branch(name=f"pnl-settled {tag}", reference=f"pnls-{tag}")
+        db.add(branch)
+        await db.flush()
+        db.add(Warehouse(branch_id=branch.id, name="Default", is_default=True))
+
+        def cancelled(suffix, channel, **over):
+            base = dict(
+                order_number=f"PNS-{tag}-{suffix}",
+                email="pnl@example.com",
+                branch_id=branch.id,
+                source="aggregator",
+                aggregator_channel=channel,
+                status=OrderStatusEnum.CANCELLED,
+                delivery_method=DeliveryMethodEnum.DELIVERY,
+                subtotal=D("0"),
+                total=D("0"),
+                vat_rate=D("0.05"),
+                vat_amount=D("0"),
+                total_excl_vat=D("0"),
+                created_at=AT,
+            )
+            base.update(over)
+            return Order(**base)
+
+        paid = cancelled(
+            "I",
+            "Talabat",
+            subtotal=D("110.00"),
+            total=D("110.00"),
+            aggregator_fee=D("0"),
+            marketplace_cancellation_net=D("33.00"),
+        )
+        charged = cancelled(
+            "J",
+            "Keeta 2.0",
+            subtotal=D("70.00"),
+            total=D("70.00"),
+            aggregator_fee=D("16.50"),
+            marketplace_cancellation_net=D("-49.50"),
+        )
+        unknown = cancelled(
+            "K",
+            "Keeta 2.0",
+            subtotal=D("95.00"),
+            total=D("95.00"),
+            aggregator_fee=D("22.75"),
+        )
+        db.add_all([paid, charged, unknown])
+        await db.commit()
+
+    p = await _pnl(engine, paid.id)
+    assert p is not None and not p.is_sale
+    assert p.gmv == D("0.00")
+    assert p.compensation == D("33.00")
+    assert p.cancellation_charges == D("0.00") and p.fees_vat == D("0.00")
+    assert p.pc3 == D("33.00")
+
+    c = await _pnl(engine, charged.id)
+    assert c.compensation == D("0.00")
+    assert c.cancellation_charges == D("49.50")  # settled, not the stale 16.50
+    assert c.fees_vat == D("2.36")  # 49.50 × 5/105
+    assert c.pc3 == D("-47.14")
+
+    assert await _pnl(engine, unknown.id) is None

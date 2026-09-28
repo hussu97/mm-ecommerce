@@ -573,3 +573,53 @@ async def test_settlement_backfill_never_overwrites_sales_feed_commission(db):
     await ingest.backfill_order_economics_from_statement(db, "talabat", stmt)
     await db.refresh(agg)
     assert agg.commission_amount == Decimal("12.60")  # untouched
+
+
+# ── a settled net survives the next push ──────────────────────────────────────
+
+
+async def test_a_repushed_order_keeps_its_settled_net_and_fees(db):
+    """Keeta re-pushes every recent order many times a day with its PROVISIONAL
+    net. Once a bill settled the order (statement_id set), that push must not
+    overwrite the settled net or fees: 5297842074897565 went from its settled
+    -49.50 back to +48.10, so the P&L never saw the loss. An unsettled order
+    still takes the feed's value."""
+    from app.services.aggregators.normalized import StandardOrder
+
+    branch_id = await _branch(db)
+    settled = await _agg_order(
+        db,
+        channel="keeta",
+        branch_id=branch_id,
+        status="50",
+        net_payable=Decimal("-49.50"),
+        payment_fee=Decimal("0"),
+        statement_id="KEETA_BILL_x",
+    )
+    open_ = await _agg_order(
+        db,
+        channel="keeta",
+        branch_id=branch_id,
+        status="40",
+        net_payable=Decimal("10.00"),
+    )
+
+    for agg in (settled, open_):
+        await ingest.upsert_order(
+            db,
+            "keeta",
+            StandardOrder(
+                external_order_id=agg.external_order_id,
+                status=agg.status,
+                gross_sales=Decimal("70.00"),
+                net_payable=Decimal("48.10"),
+                payment_fee=Decimal("1.40"),
+            ),
+        )
+    await db.flush()
+    for agg in (settled, open_):
+        await db.refresh(agg)
+
+    assert settled.net_payable == Decimal("-49.50")
+    assert settled.payment_fee == Decimal("0.00")
+    assert open_.net_payable == Decimal("48.10")

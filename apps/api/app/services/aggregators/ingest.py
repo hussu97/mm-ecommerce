@@ -289,6 +289,22 @@ _PRESERVE_IF_NULL = (
     "cancelled_at",
 )
 
+#: The Keeta bill categories whose signed sum is an order's net payable, for a
+#: bill with no `net_payable` line of its own (see
+#: `backfill_order_economics_from_statement`).
+_KEETA_NET_LEGS = ("gross_sales", "commission", "delivery_subsidy", "bank_fee")
+
+#: Columns the settled statement owns once an order is settled: the net the
+#: marketplace actually paid, and the payment/cancellation fees it itemises
+#: (`backfill_order_economics_from_statement` writes them, and the statement wins).
+#: The sales/push feed only ever has a PROVISIONAL value for them, so once the
+#: row carries a `statement_id`, a re-pushed order must not overwrite them.
+#: COALESCE(incoming, stored) did exactly that: Keeta re-pushes every recent
+#: order many times a day, and 5297842074897565 (settled net -49.50, a
+#: post-delivery refund) went back to its provisional +48.10 on the next push,
+#: so the P&L never saw the loss.
+_SETTLEMENT_OWNED = ("net_payable", "payment_fee", "cancellation_fee")
+
 #: Columns a marketplace REDACTS over time — Keeta shows the real customer
 #: name/phone/address on a fresh order and masks them to `***` a few hours later.
 #: A rolling re-scrape must UPDATE changed values (a late-settling commission) but
@@ -559,6 +575,13 @@ async def upsert_order(
         column = getattr(AggregatorOrder, k)
         if k in _PREFER_UNMASKED:
             update[k] = _prefer_unmasked_update(column, proposed)
+        elif k in _SETTLEMENT_OWNED:
+            # `AggregatorOrder.statement_id` here is the STORED row's: settled
+            # stays settled, unsettled takes the feed's value as before.
+            update[k] = case(
+                (AggregatorOrder.statement_id.is_not(None), column),
+                else_=func.coalesce(proposed, column),
+            )
         elif k in _PRESERVE_IF_NULL:
             update[k] = func.coalesce(proposed, column)
         else:
@@ -1019,6 +1042,12 @@ async def backfill_order_economics_from_statement(
                 func.sum(ln.amount)
                 .filter(is_cancellation_fee_line(ln))
                 .label("cancellation"),
+                func.sum(ln.amount)
+                .filter(ln.fee_category == "merchant_compensation")
+                .label("compensation"),
+                func.sum(ln.amount)
+                .filter(ln.fee_category.in_(_KEETA_NET_LEGS))
+                .label("legs"),
             )
             .where(
                 ln.channel == channel,
@@ -1031,9 +1060,27 @@ async def backfill_order_economics_from_statement(
     ).all()
 
     updated = 0
-    for external_order_id, gross, net, commission, payment, cancellation in rows:
+    for (
+        external_order_id,
+        gross,
+        net,
+        commission,
+        payment,
+        cancellation,
+        compensation,
+        legs,
+    ) in rows:
         values: dict[str, Any] = {}
         changed = []
+        # Older Keeta bills (the 40-column layout, before ~Sep 8) have no
+        # `net_payable` line. A customer-service cancellation's payment is then
+        # its `merchant_compensation` line, and that IS what Keeta paid. Anything
+        # else is the sum of the bill's own legs, which is what reconciles to the
+        # payout (gross + commission + subsidies + bank fee): a sale reversed
+        # after delivery reads -40 + 9 + 4 = -27, a charge, not the +26.20 the
+        # order feed had provisionally.
+        if net is None and channel == CHANNEL_KEETA:
+            net = compensation if compensation is not None else legs
         # Settlement wins over the provisional order-feed net.
         if net is not None:
             v = Decimal(str(net))

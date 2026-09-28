@@ -11,6 +11,7 @@ the book (a date range, a channel, a branch):
   − COGS (net of VAT)               the FIFO ingredient + packaging cost consumed
   = PC1
   + Delivery fees                   delivery + small-basket fees charged (no VAT)
+  + Marketplace compensation        what a marketplace paid on an order it cancelled
   − Payment fees                    card processor / marketplace payment handling
   − Aggregator & delivery fees      commission, loyalty/Pro/Plus/subsidy, own courier
   − Misc fees                       cancellation charges (+ period charges, report only)
@@ -154,6 +155,7 @@ LINE_KEYS: tuple[str, ...] = (
     "cogs",
     *COGS_KINDS,
     "delivery_fees",
+    "compensation",
     "payment_fees",
     "commission",
     "marketplace_fees",
@@ -226,9 +228,19 @@ def _billed_after_cancel():
     )
 
 
+def _settled_cancellation():
+    """A terminal order the marketplace settled money on, either way: it paid the
+    shop (compensation) or charged it (`orders.marketplace_cancellation_net`)."""
+    return and_(
+        Order.status.in_(TERMINAL_STATUSES),
+        func.coalesce(Order.marketplace_cancellation_net, 0) != 0,
+    )
+
+
 def in_pnl_clause():
-    """The orders the P&L counts: a sale that stands, or a charged cancellation."""
-    return or_(_COMPLETED_SALE, _billed_after_cancel())
+    """The orders the P&L counts: a sale that stands, a charged cancellation, or
+    a cancellation the marketplace paid for."""
+    return or_(_COMPLETED_SALE, _billed_after_cancel(), _settled_cancellation())
 
 
 def _cogs_lateral():
@@ -366,6 +378,12 @@ def line_columns() -> dict[str, object]:
     in_div = case((_reclaims_input_vat(), 1 + VAT_RATE), else_=1)
 
     refunded = func.coalesce(Order.refunded_amount, 0)
+    # What the marketplace settled on a cancelled order, signed, when it is known.
+    # Where it is, it IS the order's outcome: paid (compensation) or charged (the
+    # cancellation charge). It supersedes the fee columns, which on a cancelled
+    # order are the sale's provisional breakdown rather than what was settled.
+    settled = Order.marketplace_cancellation_net
+    has_settled = settled.is_not(None)
     payment = func.coalesce(Order.payment_fee, 0)
     commission = func.coalesce(Order.aggregator_fee, 0)
     marketing = func.coalesce(Order.marketing_fee, 0)
@@ -385,9 +403,14 @@ def line_columns() -> dict[str, object]:
 
     # Every cost as billed (VAT-inclusive), so the VAT reclaimed is exactly the
     # gross less what it would be net.
+    cancelled_charge = case(
+        (has_settled, func.greatest(-settled, 0)),
+        # A charged cancellation: everything billed is the charge.
+        else_=payment + commission + marketing + cancellation,
+    )
     gross_fees = case(
         (sale, payment + commission + marketing + courier + cancellation),
-        else_=payment + commission + marketing + cancellation,
+        else_=cancelled_charge,
     )
     # FIFO unit costs are the purchase price VAT-inclusive (a PO line's
     # `unit_cost` is its gross), but that VAT was reclaimed in the VAT return of
@@ -427,16 +450,18 @@ def line_columns() -> dict[str, object]:
         ),
         **{key: part.label(key) for key, part in kind_parts.items()},
         "delivery_fees": r(on_sale(delivery_fees)).label("delivery_fees"),
+        # Paid by a marketplace on an order it cancelled: Talabat's 30% on an
+        # order cancelled in transit, a Keeta customer-service cancellation. Net
+        # of whatever the marketplace kept, so no fee line stands beside it.
+        "compensation": r(
+            case((sale, 0), (has_settled, func.greatest(settled, 0)), else_=0)
+        ).label("compensation"),
         "payment_fees": r(on_sale(payment)).label("payment_fees"),
         "commission": r(on_sale(commission)).label("commission"),
         "marketplace_fees": r(on_sale(marketing)).label("marketplace_fees"),
         "delivery_cost": r(on_sale(courier)).label("delivery_cost"),
         "cancellation_charges": r(
-            case(
-                (sale, cancellation),
-                # A charged cancellation: everything billed is the charge.
-                else_=payment + commission + marketing + cancellation,
-            )
+            case((sale, cancellation), else_=cancelled_charge)
         ).label("cancellation_charges"),
         "fees_vat": r(gross_fees - gross_fees / in_div).label("fees_vat"),
         "discounts": r(on_sale(Order.discount_amount)).label("discounts"),
@@ -500,6 +525,8 @@ class _Lines:
     cogs_resale: Decimal = _ZERO
     #: Delivery + small-basket fees the customer paid us. No VAT on them.
     delivery_fees: Decimal = _ZERO
+    #: What marketplaces paid on orders they cancelled (net of their cut).
+    compensation: Decimal = _ZERO
     payment_fees: Decimal = _ZERO
     commission: Decimal = _ZERO
     marketplace_fees: Decimal = _ZERO
@@ -533,6 +560,7 @@ class _Lines:
         return money(
             self.pc1
             + self.delivery_fees
+            + self.compensation
             - self.payment_fees
             - self.aggregator_and_delivery_fees
             - self.misc_fees
@@ -612,6 +640,7 @@ def order_pnl_from_mapping(m: Mapping) -> OrderPnl | None:
         cogs=_money_or_none(m["cogs"]),
         **{key: money(m[key]) for key in COGS_KINDS},
         delivery_fees=money(m["delivery_fees"]),
+        compensation=money(m["compensation"]),
         payment_fees=money(m["payment_fees"]),
         commission=money(m["commission"]),
         marketplace_fees=money(m["marketplace_fees"]),
@@ -720,6 +749,7 @@ async def totals_by_channel(db: AsyncSession, *where) -> dict[str, PnlTotals]:
             cogs=_money_or_none(m["cogs"]),
             **{key: money(m[key]) for key in COGS_KINDS},
             delivery_fees=money(m["delivery_fees"]),
+            compensation=money(m["compensation"]),
             payment_fees=money(m["payment_fees"]),
             commission=money(m["commission"]),
             marketplace_fees=money(m["marketplace_fees"]),
@@ -753,6 +783,7 @@ def statement_fields(lines: _Lines) -> dict:
         **{key: getattr(lines, key) for key in COGS_KINDS},
         "pc1": lines.pc1,
         "delivery_fees": lines.delivery_fees,
+        "compensation": lines.compensation,
         "payment_fees": lines.payment_fees,
         "commission": lines.commission,
         "marketplace_fees": lines.marketplace_fees,
@@ -784,6 +815,7 @@ SHARE_KEYS: tuple[str, ...] = (
     *COGS_KINDS,
     "pc1",
     "delivery_fees",
+    "compensation",
     "payment_fees",
     "commission",
     "marketplace_fees",

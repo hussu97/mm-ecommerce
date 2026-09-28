@@ -51,6 +51,7 @@ def _agg(**over):
         placed_at=None,
         accepted_at=None,
         delivered_at=None,
+        cancelled_at=None,
         business_date="2026-08-27",
         mm_order_id=None,
         promoted_at=None,
@@ -64,6 +65,7 @@ def _agg(**over):
         marketing_fee=None,
         net_payable=None,
         refund_amount=None,
+        statement_id=None,
         customer_is_member=None,
         raw=None,
     )
@@ -307,24 +309,108 @@ async def _record_rungs(monkeypatch):
     return rungs
 
 
-async def test_drive_status_keeps_a_paid_marketplace_cancellation_delivered(
+async def test_a_paid_marketplace_cancellation_is_booked_at_what_was_paid(
     monkeypatch,
 ):
-    rungs = await _record_rungs(monkeypatch)
-    order = _mm_order(status=OrderStatusEnum.CREATED, aggregator_cancel_reason=None)
+    """Keeta cancelled at its customer-service desk and paid 37.42 on a 55 order.
+    That was booked `delivered` at the full 55; it is a cancellation worth 37.42."""
+    calls: list[tuple] = []
+
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
+        calls.append((new_status, tuple(extra_from)))
+        o.status = new_status
+        return True
+
+    monkeypatch.setattr(promote.order_lifecycle, "transition", fake_transition)
+    order = _mm_order(status=OrderStatusEnum.DELIVERED, aggregator_cancel_reason=None)
     agg = _agg(
         status="cancelled",
+        gross_sales=Decimal("55.00"),
         net_payable=Decimal("37.42"),
         raw={"orderCancelSceneDesc": "Customer service"},
     )
 
     await promote._drive_status(_FakeDB(), order, agg)
 
-    # Booked all the way to delivered (its revenue counts), not cancelled.
-    assert order.status == OrderStatusEnum.DELIVERED
-    assert OrderStatusEnum.CANCELLED not in rungs
-    # And the marketplace cancellation is recorded for display.
+    # Cancelled even from delivered (a relabel), with what Keeta paid on it.
+    assert calls == [(OrderStatusEnum.CANCELLED, promote._FULL_REFUND_EXTRA_FROM)]
+    assert order.marketplace_cancellation_net == Decimal("37.42")
     assert order.aggregator_cancel_reason == "Customer service"
+
+
+def test_cancellation_net_trusts_only_what_the_marketplace_committed_to():
+    paid_cs = dict(raw={"orderCancelSceneDesc": "Customer service"})
+    # Keeta, customer service: its provisional net is what it pays.
+    assert promote._cancellation_net(
+        _agg(status="cancelled", net_payable=Decimal("37.42"), **paid_cs),
+        provider_paid=True,
+    ) == Decimal("37.42")
+    # Keeta, merchant-cancelled and not yet billed: provisional is NOT paid.
+    assert (
+        promote._cancellation_net(
+            _agg(status="cancelled", net_payable=Decimal("23.25")),
+            provider_paid=False,
+        )
+        is None
+    )
+    # Keeta, settled on a bill: the bill's net, charge included.
+    assert promote._cancellation_net(
+        _agg(status="cancelled", net_payable=Decimal("-49.50"), statement_id="B1"),
+        provider_paid=False,
+    ) == Decimal("-49.50")
+    # Talabat: the billed earnings, either sign; unknown until billed.
+    talabat = dict(channel="talabat", status="Cancelled")
+    assert promote._cancellation_net(
+        _agg(net_payable=Decimal("33.00"), **talabat), provider_paid=False
+    ) == Decimal("33.00")
+    assert promote._cancellation_net(
+        _agg(net_payable=Decimal("-22.05"), **talabat), provider_paid=False
+    ) == Decimal("-22.05")
+    assert (
+        promote._cancellation_net(
+            _agg(net_payable=None, **talabat), provider_paid=False
+        )
+        is None
+    )
+    # Any other channel: unknown, as before.
+    assert (
+        promote._cancellation_net(
+            _agg(channel="noon", net_payable=Decimal("10")), provider_paid=False
+        )
+        is None
+    )
+
+
+async def test_a_compensated_talabat_cancellation_carries_its_payout(monkeypatch):
+    """Cancelled in transit, Talabat paid 30% (33 on 110): cancelled, worth 33."""
+    await _record_rungs(monkeypatch)
+    order = _mm_order(
+        status=OrderStatusEnum.OUT_FOR_DELIVERY, aggregator_cancel_reason=None
+    )
+    agg = _agg(
+        channel="talabat",
+        status="Cancelled",
+        gross_sales=Decimal("110.00"),
+        net_payable=Decimal("33.00"),
+    )
+
+    await promote._drive_status(_FakeDB(), order, agg)
+
+    assert order.status == OrderStatusEnum.CANCELLED
+    assert order.marketplace_cancellation_net == Decimal("33.00")
+
+
+async def test_a_sale_that_stands_carries_no_cancellation_net(monkeypatch):
+    await _record_rungs(monkeypatch)
+    order = _mm_order(
+        status=OrderStatusEnum.PACKED,
+        aggregator_cancel_reason=None,
+        marketplace_cancellation_net=Decimal("5"),
+    )
+    await promote._drive_status(
+        _FakeDB(), order, _agg(channel="talabat", status="Delivered")
+    )
+    assert order.marketplace_cancellation_net is None
 
 
 async def test_drive_status_still_cancels_an_unpaid_marketplace_cancellation(
