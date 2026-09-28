@@ -13592,6 +13592,8 @@ export interface components {
         CourierResponse: {
             /** Code */
             code: string;
+            /** Delay Window Minutes */
+            delay_window_minutes?: number | null;
             /** Is Active */
             is_active: boolean;
             /**
@@ -13618,6 +13620,8 @@ export interface components {
          *     the address of the row, not one of its editable fields.
          */
         CourierUpdate: {
+            /** Delay Window Minutes */
+            delay_window_minutes?: number | null;
             /** Is Active */
             is_active?: boolean | null;
             /** Unbatched Promise Days */

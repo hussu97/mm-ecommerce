@@ -31,12 +31,16 @@ export function CourierRow({
     // number to edit, and only the one the chosen kind reads is submitted.
     unbatched_promise_minutes: number;
     unbatched_promise_days: number;
+    // A string so blank (no window) can be typed; parsed on save.
+    delay_window_minutes: string;
   }>({
     unbatched_promise_kind: courier.unbatched_promise_kind,
     // Kept even while the other kind is selected, so switching back and forth
     // does not lose the number that was already there.
     unbatched_promise_minutes: courier.unbatched_promise_minutes ?? 60,
     unbatched_promise_days: courier.unbatched_promise_days,
+    delay_window_minutes:
+      courier.delay_window_minutes === null ? '' : String(courier.delay_window_minutes),
   });
 
   if (!editing) {
@@ -54,6 +58,11 @@ export function CourierRow({
         </td>
         <td className="px-3 py-2.5 text-xs font-body text-gray-800">
           {describe(courier)}
+        </td>
+        <td className="px-3 py-2.5 text-xs font-body text-gray-800">
+          {courier.delay_window_minutes === null
+            ? '— not set'
+            : `${courier.delay_window_minutes} minutes`}
         </td>
         <td className="px-3 py-2.5 text-right">
           <button
@@ -112,23 +121,43 @@ export function CourierRow({
           </span>
         </span>
       </td>
+      <td className="px-3 py-2.5">
+        <span className="inline-flex items-center gap-1.5">
+          <input
+            value={form.delay_window_minutes}
+            inputMode="numeric"
+            placeholder="—"
+            onChange={e => {
+              const digits = e.target.value.replace(/\D/g, '');
+              setForm({
+                ...form,
+                delay_window_minutes: digits === '' ? '' : String(Math.min(600, Number(digits))),
+              });
+            }}
+            className="w-16 px-2 py-1 text-xs font-body text-center bg-white border border-gray-300 rounded-sm outline-none focus:border-primary"
+          />
+          <span className="text-[11px] font-body text-gray-500">minutes</span>
+        </span>
+      </td>
       <td className="px-3 py-2.5 text-right whitespace-nowrap">
         <button
           onClick={() =>
-            onSave(
+            onSave({
               // Only the number the chosen kind actually reads is sent. Writing
               // both would put a plausible figure in the column nothing uses,
               // which is how a wrong number survives long enough to be quoted.
-              isMinutes
+              ...(isMinutes
                 ? {
-                    unbatched_promise_kind: 'minutes',
+                    unbatched_promise_kind: 'minutes' as const,
                     unbatched_promise_minutes: form.unbatched_promise_minutes,
                   }
                 : {
-                    unbatched_promise_kind: 'next_day',
+                    unbatched_promise_kind: 'next_day' as const,
                     unbatched_promise_days: form.unbatched_promise_days,
-                  },
-            )
+                  }),
+              delay_window_minutes:
+                form.delay_window_minutes === '' ? null : Number(form.delay_window_minutes),
+            })
           }
           disabled={busy}
           className="text-[11px] font-body text-primary hover:underline mr-3"

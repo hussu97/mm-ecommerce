@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -41,6 +41,12 @@ class Courier(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "couriers"
+    __table_args__ = (
+        CheckConstraint(
+            "delay_window_minutes IS NULL OR delay_window_minutes BETWEEN 0 AND 600",
+            name="ck_courier_delay_window_minutes",
+        ),
+    )
 
     #: Matches `FulfilmentProviderEnum`. The join key for everything else.
     code: Mapped[str] = mapped_column(
@@ -74,6 +80,12 @@ class Courier(Base, UUIDMixin, TimestampMixin):
     unbatched_promise_days: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
     )
+    #: How close to the promised time a rider may collect a website order before
+    #: it counts as running late. Collected earlier than that, the customer keeps
+    #: the estimate checkout gave them; collected within it (or after the
+    #: promised time), the estimate is rebuilt from the pickup. Null rebuilds on
+    #: every pickup, which is how every courier behaved before this existed.
+    delay_window_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"

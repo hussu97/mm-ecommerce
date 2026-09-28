@@ -10696,6 +10696,17 @@
             "title": "Code",
             "type": "string"
           },
+          "delay_window_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delay Window Minutes"
+          },
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
@@ -10748,6 +10759,19 @@
       "CourierUpdate": {
         "description": "What a courier promises.\n\n`code` is not here: it is the join key every polygon already holds, so it is\nthe address of the row, not one of its editable fields.",
         "properties": {
+          "delay_window_minutes": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delay Window Minutes"
+          },
           "is_active": {
             "anyOf": [
               {

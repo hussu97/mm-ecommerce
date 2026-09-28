@@ -783,3 +783,130 @@ async def test_the_timeline_stamps_come_from_the_history():
     assert result.packed_at == packed
     assert result.picked_up_at == collected
     assert result.delivered_at is None
+
+
+# ── the delay window: keep the promise unless the rider collects too late ─────
+
+
+def _courier(*, window: int | None, minutes: int = 60) -> SimpleNamespace:
+    return SimpleNamespace(
+        code="slider_bike",
+        unbatched_promise_minutes=minutes,
+        delay_window_minutes=window,
+    )
+
+
+async def _on_the_way(
+    *, promised_in, picked_up_ago, window, eta=None, precision="time"
+):
+    return await fulfilment_service.for_order(
+        _Db(
+            _delivery(provider="slider_bike", courier_eta_at=eta),
+            courier=_courier(window=window),
+        ),
+        _order(
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            promised_at=NOW + promised_in,
+            promised_precision=precision,
+        ),
+        now=NOW,
+        reached={"out_for_delivery": NOW - picked_up_ago},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rider_collecting_well_ahead_keeps_the_promised_time():
+    """Collected 40 minutes before the promise with a 15-minute window: the
+    customer keeps the time checkout gave them, not pickup + 50."""
+    result = await _on_the_way(
+        promised_in=timedelta(minutes=40),
+        picked_up_ago=timedelta(0),
+        window=15,
+    )
+    assert (result.estimated_at, result.precision) == (
+        (NOW + timedelta(minutes=40)).astimezone(TZ),
+        "time",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_live_courier_eta_does_not_move_a_promise_being_kept():
+    result = await _on_the_way(
+        promised_in=timedelta(minutes=60),
+        picked_up_ago=timedelta(0),
+        window=15,
+        eta=NOW + timedelta(minutes=22),
+    )
+    assert result.estimated_at == (NOW + timedelta(minutes=60)).astimezone(TZ)
+
+
+@pytest.mark.asyncio
+async def test_a_rider_collecting_inside_the_window_is_a_delayed_delivery():
+    """Collected 10 minutes before the promise with a 15-minute window: it
+    cannot make it, so the estimate is rebuilt from the pickup."""
+    result = await _on_the_way(
+        promised_in=timedelta(minutes=10),
+        picked_up_ago=timedelta(0),
+        window=15,
+    )
+    assert result.estimated_at == NOW.astimezone(TZ) + (
+        timedelta(minutes=60) - fulfilment_service.COLLECTION_ALLOWANCE
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rider_collecting_after_the_promise_is_delayed_too():
+    result = await _on_the_way(
+        promised_in=-timedelta(minutes=5),
+        picked_up_ago=timedelta(0),
+        window=30,
+        eta=NOW + timedelta(minutes=25),
+    )
+    assert result.estimated_at == (NOW + timedelta(minutes=25)).astimezone(TZ)
+
+
+@pytest.mark.asyncio
+async def test_a_delayed_estimate_is_never_earlier_than_the_promise():
+    """Inside the window but the courier reports it will make it: show the
+    promised time, not an earlier one."""
+    result = await _on_the_way(
+        promised_in=timedelta(minutes=10),
+        picked_up_ago=timedelta(0),
+        window=15,
+        eta=NOW + timedelta(minutes=6),
+    )
+    assert result.estimated_at == (NOW + timedelta(minutes=10)).astimezone(TZ)
+
+
+@pytest.mark.asyncio
+async def test_the_window_edge_is_already_late():
+    """Exactly `window` minutes before the promise counts as inside it."""
+    result = await _on_the_way(
+        promised_in=timedelta(minutes=15),
+        picked_up_ago=timedelta(0),
+        window=15,
+    )
+    assert result.estimated_at == NOW.astimezone(TZ) + timedelta(minutes=50)
+
+
+@pytest.mark.asyncio
+async def test_no_window_rebuilds_on_every_pickup_as_before():
+    result = await _on_the_way(
+        promised_in=timedelta(hours=3),
+        picked_up_ago=timedelta(0),
+        window=None,
+    )
+    assert result.estimated_at == NOW.astimezone(TZ) + timedelta(minutes=50)
+
+
+@pytest.mark.asyncio
+async def test_a_day_promise_is_not_held_as_a_time():
+    """The window governs a promised *time*; a day promise still sharpens on
+    pickup as it always has."""
+    result = await _on_the_way(
+        promised_in=timedelta(days=1),
+        picked_up_ago=timedelta(0),
+        window=15,
+        precision="day",
+    )
+    assert result.estimated_at == NOW.astimezone(TZ) + timedelta(minutes=50)

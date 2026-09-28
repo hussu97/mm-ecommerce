@@ -93,6 +93,37 @@ class TestCourierPromises:
         assert response.json()["unbatched_promise_minutes"] == 90
         assert courier.unbatched_promise_minutes == 90
 
+    async def test_the_delay_window_can_be_set_and_cleared(
+        self, admin_client, mock_db, quiet_audit
+    ):
+        courier = _courier("slider_bike", kind="minutes", minutes=60)
+        _rows(mock_db, [], one=courier)
+
+        response = await admin_client.put(
+            "/api/v1/delivery-zones/couriers/slider_bike",
+            json={"delay_window_minutes": 20},
+        )
+        assert response.status_code == 200
+        assert response.json()["delay_window_minutes"] == 20
+        assert courier.delay_window_minutes == 20
+
+        response = await admin_client.put(
+            "/api/v1/delivery-zones/couriers/slider_bike",
+            json={"delay_window_minutes": None},
+        )
+        assert response.status_code == 200
+        assert courier.delay_window_minutes is None
+
+    async def test_a_negative_delay_window_is_refused(
+        self, admin_client, mock_db, quiet_audit
+    ):
+        _rows(mock_db, [], one=_courier("slider_bike", kind="minutes", minutes=60))
+        response = await admin_client.put(
+            "/api/v1/delivery-zones/couriers/slider_bike",
+            json={"delay_window_minutes": -5},
+        )
+        assert response.status_code == 422
+
     async def test_a_third_party_can_be_given_more_than_one_day(
         self, admin_client, mock_db, quiet_audit
     ):

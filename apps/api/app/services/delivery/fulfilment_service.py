@@ -258,7 +258,7 @@ async def for_order(
     if delivery is not None and delivery.courier_status == "undelivered":
         stage = "undelivered"
 
-    promise_minutes = await _promise_minutes(db, delivery)
+    promise_minutes, delay_window = await _courier_timing(db, delivery)
     reached = reached if reached is not None else await reached_at(db, order)
 
     branch = None
@@ -276,6 +276,7 @@ async def for_order(
         stage=stage,
         now=now,
         promise_minutes=promise_minutes,
+        delay_window=delay_window,
         reached=reached,
     )
 
@@ -360,11 +361,13 @@ def _tracking_url(delivery: OrderDelivery | None, *, stage: str) -> str | None:
     return delivery.share_link or None
 
 
-async def _promise_minutes(
+async def _courier_timing(
     db: AsyncSession, delivery: OrderDelivery | None
-) -> timedelta | None:
+) -> tuple[timedelta | None, timedelta | None]:
     """
-    How long this order's courier promises from ready to door.
+    How long this order's courier promises from ready to door, and how close to
+    the promised time its rider may collect before the order counts as late
+    (`couriers.delay_window_minutes`).
 
     The batch group first — a run's minutes are a property of the route, and
     Dubai's 90 differs from the northern 120 on the same rate card. Then the
@@ -373,19 +376,27 @@ async def _promise_minutes(
     the "arriving" email cannot promise a different duration from the one the
     customer was originally shown.
 
-    `None` when neither is configured, which the caller reads as "fall back to
-    the flat rider estimate" rather than as zero.
+    A `None` duration means neither is configured, which the caller reads as
+    "fall back to the flat rider estimate" rather than as zero. A `None` window
+    means every pickup rebuilds the estimate.
     """
-    if delivery is None:
-        return None
+    if delivery is None or not delivery.provider:
+        return None, None
 
-    if delivery.provider:
-        courier = (
-            await db.execute(select(Courier).where(Courier.code == delivery.provider))
-        ).scalar_one_or_none()
-        if courier is not None and courier.unbatched_promise_minutes:
-            return timedelta(minutes=courier.unbatched_promise_minutes)
-    return None
+    courier = (
+        await db.execute(select(Courier).where(Courier.code == delivery.provider))
+    ).scalar_one_or_none()
+    if courier is None:
+        return None, None
+    promise = (
+        timedelta(minutes=courier.unbatched_promise_minutes)
+        if courier.unbatched_promise_minutes
+        else None
+    )
+    # `isinstance`, so a row that predates the column (or a stand-in without
+    # it) reads as unset rather than as whatever the attribute happens to be.
+    window = courier.delay_window_minutes
+    return promise, (timedelta(minutes=window) if isinstance(window, int) else None)
 
 
 def _estimate(
@@ -395,6 +406,7 @@ def _estimate(
     stage: str,
     now: datetime,
     promise_minutes: timedelta | None = None,
+    delay_window: timedelta | None = None,
     reached: dict[str, datetime] | None = None,
 ) -> tuple[datetime | None, str | None]:
     """
@@ -474,25 +486,51 @@ def _estimate(
         #      when they left.
         picked_up = (reached or {}).get(OrderStatusEnum.OUT_FOR_DELIVERY.value)
         if picked_up is not None and provider in _BOOKED_BY_US:
+            # Unless it is running late, the customer keeps the time checkout
+            # gave them. A rider collecting well ahead of it changes nothing
+            # they need to know — moving "arriving 19:30" to 18:55 and back as
+            # the courier's ETA wobbles is noise, and it read as the promise
+            # being broken when it was being kept. "Well ahead" is the courier's
+            # `delay_window_minutes`; a rider collecting inside it (or after the
+            # promised time) cannot make it, so the estimate is rebuilt below —
+            # never earlier than what was promised.
+            promised = _promise(order)
+            promised_at = (
+                promised[0]
+                if (
+                    delay_window is not None
+                    and booked_by_us
+                    and promised is not None
+                    and promised[1] == "time"
+                )
+                else None
+            )
+            if promised_at is not None and _local(picked_up) < (
+                promised_at - delay_window
+            ):
+                return promised_at, "time"
+
             courier_eta = delivery.courier_eta_at if delivery is not None else None
             if courier_eta is not None:
                 # Never behind the customer reading it (see below).
-                return (
-                    max(_local(courier_eta), _local(now) + timedelta(minutes=5)),
-                    "time",
-                )
-            # The promise minus what it had already spent by the time the rider
-            # was holding the box. A genuine order we booked falls back to the
-            # flat rider figure; a reassigned third-party order to the generous
-            # 120-min default, since it was quoted somebody else's van.
-            fallback = RIDER_TO_DOOR if booked_by_us else REASSIGNED_ETA_FALLBACK
-            remaining = (promise_minutes or fallback) - COLLECTION_ALLOWANCE
-            arriving = _local(picked_up) + max(remaining, timedelta(minutes=5))
-            # Never behind the customer reading it. A rider who is running late
-            # turns an estimate into a time that has already passed, and an
-            # email saying the parcel arrived twenty minutes ago is worse than
-            # one saying "any moment".
-            return max(arriving, _local(now) + timedelta(minutes=5)), "time"
+                arriving = max(_local(courier_eta), _local(now) + timedelta(minutes=5))
+            else:
+                # The promise minus what it had already spent by the time the
+                # rider was holding the box. A genuine order we booked falls back
+                # to the flat rider figure; a reassigned third-party order to the
+                # generous 120-min default, since it was quoted somebody else's
+                # van.
+                fallback = RIDER_TO_DOOR if booked_by_us else REASSIGNED_ETA_FALLBACK
+                remaining = (promise_minutes or fallback) - COLLECTION_ALLOWANCE
+                arriving = _local(picked_up) + max(remaining, timedelta(minutes=5))
+                # Never behind the customer reading it. A rider who is running
+                # late turns an estimate into a time that has already passed,
+                # and an email saying the parcel arrived twenty minutes ago is
+                # worse than one saying "any moment".
+                arriving = max(arriving, _local(now) + timedelta(minutes=5))
+            if promised_at is not None:
+                arriving = max(arriving, promised_at)
+            return arriving, "time"
         # It is on somebody else's van and the shop marked it out for delivery by
         # hand: there is no pickup event to measure from and no courier we can
         # see, so the day is all there is — bounded by the hour rather than left

@@ -162,6 +162,9 @@ class CourierResponse(BaseModel):
     unbatched_promise_kind: str
     unbatched_promise_minutes: int | None
     unbatched_promise_days: int
+    #: How close to the promised time a rider may collect before the order is
+    #: late and its estimate is rebuilt. Null: rebuilt on every pickup.
+    delay_window_minutes: int | None = None
     is_active: bool
     #: Zones currently carried by this courier on the live map. A courier with
     #: none is one whose promise nobody is being quoted.
@@ -181,6 +184,7 @@ class CourierResponse(BaseModel):
             unbatched_promise_kind=c.unbatched_promise_kind,
             unbatched_promise_minutes=c.unbatched_promise_minutes,
             unbatched_promise_days=c.unbatched_promise_days,
+            delay_window_minutes=c.delay_window_minutes,
             is_active=c.is_active,
             zone_count=zone_count,
             # `bool(...)` rather than the attribute: the column is NOT NULL
@@ -207,6 +211,8 @@ class CourierUpdate(BaseModel):
     unbatched_promise_minutes: int | None = Field(None, ge=1, le=1440)
     #: Handover-to-door, for a courier that collects on its own schedule.
     unbatched_promise_days: int | None = Field(None, ge=1, le=30)
+    #: Sent as null to clear it (every pickup then rebuilds the estimate).
+    delay_window_minutes: int | None = Field(None, ge=0, le=600)
     is_active: bool | None = None
 
 

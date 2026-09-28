@@ -90,6 +90,13 @@ export function DeliveryEstimates() {
             ready; one that collects on its own schedule promises days from
             handover, and never an hour — its van is not ours to name a time for.
           </p>
+          <p className="text-[11px] font-body text-gray-400 mt-1">
+            Late if collected within: once a rider has a website order, the
+            customer keeps the time they were promised unless the rider collected
+            it within this many minutes of that time (or after it). Then it is a
+            delayed delivery and the estimate is rebuilt from the pickup. Blank
+            rebuilds it on every pickup.
+          </p>
         </header>
         <table className="w-full text-sm">
           <thead>
@@ -98,13 +105,14 @@ export function DeliveryEstimates() {
               <Th>Zones</Th>
               <Th>Promises</Th>
               <Th>Estimate</Th>
+              <Th>Late if collected within</Th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {dispatched.map(courier => (
               <CourierRow
-                key={`${courier.code}:${courier.unbatched_promise_kind}:${courier.unbatched_promise_minutes}:${courier.unbatched_promise_days}:${courier.is_active}`}
+                key={`${courier.code}:${courier.unbatched_promise_kind}:${courier.unbatched_promise_minutes}:${courier.unbatched_promise_days}:${courier.delay_window_minutes}:${courier.is_active}`}
                 courier={courier}
                 busy={busy}
                 onSave={data => run(() => deliveryZonesApi.updateCourier(courier.code, data))}

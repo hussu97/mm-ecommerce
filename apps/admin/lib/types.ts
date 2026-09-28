@@ -1108,6 +1108,12 @@ export interface Courier {
   unbatched_promise_kind: 'minutes' | 'next_day';
   unbatched_promise_minutes: number | null;
   unbatched_promise_days: number;
+  /**
+   * How close to the promised time a rider may collect a website order before
+   * it is a delayed delivery and its estimate is rebuilt. Null: rebuilt on
+   * every pickup.
+   */
+  delay_window_minutes: number | null;
   is_active: boolean;
   /** Zones on the live map currently carried by this courier. */
   zone_count: number;
@@ -1126,6 +1132,7 @@ export type CourierWrite = Partial<
     | 'unbatched_promise_kind'
     | 'unbatched_promise_minutes'
     | 'unbatched_promise_days'
+    | 'delay_window_minutes'
     | 'is_active'
   >
 >;
