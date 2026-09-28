@@ -114,9 +114,9 @@ _PURCHASED_ITEM_KINDS = frozenset({"raw_material", "packaging", "resale_good"})
 def is_made_intermediate(catalog: ActiveRecipeCatalog, item: InventoryItem) -> bool:
     """Whether a recipe line's item is made **just in time** when its parent is
     produced: a stocked semi-finished item with its own active recipe (Lindor
-    Topping, Kunafa Paste). ``produce`` makes the batch of it the parent needs —
-    booking it as produced, drawing its own ingredients — and the parent then
-    consumes it, so it nets to zero while showing as made and used. Costing a
+    Topping, Kunafa Paste). ``produce`` uses what is on the shelf and makes only
+    what is missing — booking it as produced, drawing its own ingredients — and
+    the parent then consumes it, so it shows as made and used. Costing a
     parent's recipe therefore prices such a line from its sub-recipe, never from
     its (normally empty) shelf. Phantom items are expanded through instead and
     never stocked; produced goods and purchased kinds are always drawn from stock.

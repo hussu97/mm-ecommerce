@@ -614,3 +614,74 @@ async def test_semi_finished_line_is_made_then_used(env):
         assert made.item_id == topping.id
         assert made.quantity == Decimal("12.0000")
         assert made.display_unit == "g"
+
+
+async def test_semi_finished_on_the_shelf_is_used_before_making_more(env):
+    """Only what the shelf is missing is made: 5 g of topping on hand and 12 g
+    needed makes 7 g, and the line is costed from both at their own prices."""
+    ids, Session = env
+    async with Session() as db:
+        choc = await _item(db, "Chocolate", "raw_material", unit="g")
+        topping = await _item(db, "Topping", "semi_finished", unit="g")
+        topped = await _item(db, "Topped Brownie", "produced_good")
+        await recipe_service.draft_and_activate(
+            db,
+            kind="inventory_item",
+            owner_id=topping.id,
+            lines=[RecipeLineInput(item_id=choc.id, quantity=Decimal("1"))],
+            user_id=ids.user.id,
+        )
+        await recipe_service.draft_and_activate(
+            db,
+            kind="inventory_item",
+            owner_id=topped.id,
+            lines=[RecipeLineInput(item_id=topping.id, quantity=Decimal("3"))],
+            user_id=ids.user.id,
+        )
+        for item_id, qty, cost in ((choc.id, "100", "0.02"), (topping.id, "5", "0.04")):
+            await seed_stock(
+                db,
+                branch_id=ids.source.id,
+                warehouse_id=ids.source_wh,
+                item_id=item_id,
+                quantity=qty,
+                unit_cost=cost,
+            )
+        await db.commit()
+
+    async with Session() as db:
+        production, _ = await transfer_service.produce(
+            db,
+            branch=ids.source,
+            user=ids.user,
+            item_id=topped.id,
+            quantity=Decimal("4"),
+            warehouse_id=ids.source_wh,
+        )
+        await db.commit()
+        # 5 g off the shelf at 0.04 + 7 g made at 0.02 = 0.34 for the batch.
+        assert Decimal(str(production.total_cost)) == Decimal("0.34")
+
+    async with Session() as db:
+        assert await _on_hand(db, topping.id, ids.source_wh) == Decimal("0.0000")
+        assert await _on_hand(db, choc.id, ids.source_wh) == Decimal("93.0000")
+        made = (
+            (
+                await db.execute(
+                    select(InventoryTransactionItem.quantity)
+                    .join(
+                        InventoryTransaction,
+                        InventoryTransaction.id
+                        == InventoryTransactionItem.transaction_id,
+                    )
+                    .where(
+                        InventoryTransaction.type
+                        == InventoryTransactionTypeEnum.PRODUCTION.value,
+                        InventoryTransactionItem.item_id == topping.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [Decimal(str(q)) for q in made] == [Decimal("7.0000")]
