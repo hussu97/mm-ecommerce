@@ -15,6 +15,7 @@ Two views over the v3 costing projection (`costing_engine`):
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import func, select
@@ -182,13 +183,41 @@ async def cost_history(
     user: User,
     page: int = 1,
     per_page: int = 50,
+    types: Sequence[str] | None = None,
 ) -> ItemCostHistoryResponse:
+    """Every costed movement of an item at a branch, newest first.
+
+    `types` narrows the rows to those transaction types (a purchase, a count, a
+    sale…). The running quantity/value on each row still describe the whole
+    ledger at that moment: they are stored per line by the FIFO engine, not
+    summed here, so filtering drops rows without bending the balances.
+    `type_counts` is always the unfiltered count per type, for the filter.
+    """
     await crud_service.get_or_404(db, InventoryItem, item_id, include_deleted=True)
     await access_service.assert_branch_access(db, user, branch_id)
     lc, t, i = InventoryLineCost, InventoryTransaction, InventoryTransactionItem
-    scope = (lc.item_id == item_id, lc.branch_id == branch_id)
+    base_scope = (lc.item_id == item_id, lc.branch_id == branch_id)
+    type_counts = {
+        type_: int(n)
+        for type_, n in (
+            await db.execute(
+                select(t.type, func.count())
+                .select_from(lc)
+                .join(t, t.id == lc.transaction_id)
+                .where(*base_scope)
+                .group_by(t.type)
+            )
+        ).all()
+    }
+    scope = (*base_scope, t.type.in_(list(types))) if types else base_scope
     total = int(
-        await db.scalar(select(func.count()).select_from(lc).where(*scope)) or 0
+        await db.scalar(
+            select(func.count())
+            .select_from(lc)
+            .join(t, t.id == lc.transaction_id)
+            .where(*scope)
+        )
+        or 0
     )
     rows = (
         await db.execute(
@@ -269,4 +298,5 @@ async def cost_history(
         page=page,
         per_page=per_page,
         pages=max(1, (total + per_page - 1) // per_page),
+        type_counts=type_counts,
     )

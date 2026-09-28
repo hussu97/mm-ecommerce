@@ -267,9 +267,9 @@ export const inventoryApi = {
     api.put<SupplierItem[]>(`/inventory/suppliers/${id}/items`, items),
   itemCostLayers: (itemId: string, branchId?: string) =>
     api.get<ItemCostLayers>(`/inventory/items/${itemId}/cost-layers${buildQs({ branch_id: branchId })}`),
-  itemCostHistory: (itemId: string, branchId: string, page: number, perPage: number) =>
+  itemCostHistory: (itemId: string, branchId: string, page: number, perPage: number, types?: string[]) =>
     api.get<ItemCostHistory>(
-      `/inventory/items/${itemId}/cost-history${buildQs({ branch_id: branchId, page, per_page: perPage })}`,
+      `/inventory/items/${itemId}/cost-history${buildQs({ branch_id: branchId, page, per_page: perPage, type: types })}`,
     ),
   resetCostFromRecipe: (itemId: string) =>
     api.post<ResetCostFromRecipeResponse>(`/inventory/items/${itemId}/reset-cost-from-recipe`, {}),

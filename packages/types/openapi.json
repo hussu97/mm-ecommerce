@@ -18316,6 +18316,30 @@
         "title": "InventoryTransactionResponse",
         "type": "object"
       },
+      "InventoryTransactionTypeEnum": {
+        "description": "The ways stock moves, mirroring Foodics' transaction types.\n\nEvery quantity or value change in the ledger is one of these. Their direction\nis in ``TRANSACTION_SIGN`` below and their human labels live in the admin\nledger's movement-label map.",
+        "enum": [
+          "purchasing",
+          "transfer_send",
+          "transfer_receive",
+          "quantity_adjustment",
+          "return_to_supplier",
+          "production",
+          "consumption_from_production",
+          "consumption_from_orders",
+          "return_from_orders",
+          "waste_from_orders",
+          "waste_from_production",
+          "cost_adjustment",
+          "inventory_count",
+          "opening_balance",
+          "internal_use",
+          "extra_production_use",
+          "production_restatement"
+        ],
+        "title": "InventoryTransactionTypeEnum",
+        "type": "string"
+      },
       "ItemCostHistoryResponse": {
         "properties": {
           "branch_id": {
@@ -18350,6 +18374,13 @@
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "type_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Type Counts",
+            "type": "object"
           }
         },
         "required": [
@@ -57873,6 +57904,27 @@
               "minimum": 1,
               "title": "Per Page",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Only these movement types (repeat for several). Balances are unaffected: each row keeps the whole ledger's running total.",
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/InventoryTransactionTypeEnum"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only these movement types (repeat for several). Balances are unaffected: each row keeps the whole ledger's running total.",
+              "title": "Type"
             }
           }
         ],

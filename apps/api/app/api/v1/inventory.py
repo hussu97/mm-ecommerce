@@ -495,6 +495,12 @@ async def get_item_cost_history(
     branch_id: uuid.UUID = Query(...),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=2000),
+    types: list[InventoryTransactionTypeEnum] | None = Query(
+        None,
+        alias="type",
+        description="Only these movement types (repeat for several). Balances "
+        "are unaffected: each row keeps the whole ledger's running total.",
+    ),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.read")),
 ):
@@ -507,6 +513,7 @@ async def get_item_cost_history(
         user=user,
         page=page,
         per_page=per_page,
+        types=[t.value for t in types] if types else None,
     )
 
 

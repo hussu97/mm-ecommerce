@@ -16027,6 +16027,16 @@ export interface components {
             /** Warehouse Id */
             warehouse_id: string | null;
         };
+        /**
+         * InventoryTransactionTypeEnum
+         * @description The ways stock moves, mirroring Foodics' transaction types.
+         *
+         *     Every quantity or value change in the ledger is one of these. Their direction
+         *     is in ``TRANSACTION_SIGN`` below and their human labels live in the admin
+         *     ledger's movement-label map.
+         * @enum {string}
+         */
+        InventoryTransactionTypeEnum: "purchasing" | "transfer_send" | "transfer_receive" | "quantity_adjustment" | "return_to_supplier" | "production" | "consumption_from_production" | "consumption_from_orders" | "return_from_orders" | "waste_from_orders" | "waste_from_production" | "cost_adjustment" | "inventory_count" | "opening_balance" | "internal_use" | "extra_production_use" | "production_restatement";
         /** ItemCostHistoryResponse */
         ItemCostHistoryResponse: {
             /**
@@ -16049,6 +16059,10 @@ export interface components {
             per_page: number;
             /** Total */
             total: number;
+            /** Type Counts */
+            type_counts?: {
+                [key: string]: number;
+            };
         };
         /**
          * ItemCostHistoryRow
@@ -32661,6 +32675,8 @@ export interface operations {
                 branch_id: string;
                 page?: number;
                 per_page?: number;
+                /** @description Only these movement types (repeat for several). Balances are unaffected: each row keeps the whole ledger's running total. */
+                type?: components["schemas"]["InventoryTransactionTypeEnum"][] | null;
             };
             header?: never;
             path: {

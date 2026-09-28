@@ -321,14 +321,23 @@ function HistoryTab({
 }) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
-  const requestKey = `${item.id}:${branchId}:${page}:${perPage}`;
+  // Empty means every type. Several can be picked at once (a purchase and the
+  // counts that followed it, say).
+  const [types, setTypes] = useState<string[]>([]);
+  const requestKey = `${item.id}:${branchId}:${page}:${perPage}:${types.join(',')}`;
   const [result, setResult] = useState<{ key: string; data?: CostHistory; error?: string } | null>(null);
+  // The chips come from the last answer, so they stay put while a new filter loads.
+  const [typeCounts, setTypeCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let cancelled = false;
     inventoryApi
-      .itemCostHistory(item.id, branchId, page, perPage)
-      .then((data) => { if (!cancelled) setResult({ key: requestKey, data }); })
+      .itemCostHistory(item.id, branchId, page, perPage, types)
+      .then((data) => {
+        if (cancelled) return;
+        setResult({ key: requestKey, data });
+        setTypeCounts(data.type_counts ?? {});
+      })
       .catch((err) => {
         if (!cancelled) {
           setResult({
@@ -338,12 +347,20 @@ function HistoryTab({
         }
       });
     return () => { cancelled = true; };
-  }, [item.id, branchId, page, perPage, requestKey]);
+  }, [item.id, branchId, page, perPage, types, requestKey]);
 
   const current = result?.key === requestKey ? result : null;
-  if (current?.error) return <p className="text-xs text-red-600 font-body">{current.error}</p>;
   const data = current?.data;
-  if (!data) return <div className="flex justify-center py-10"><Spinner /></div>;
+
+  const toggleType = (type: string) => {
+    setTypes((picked) => (picked.includes(type) ? picked.filter((t) => t !== type) : [...picked, type]));
+    setPage(1);
+  };
+  // Label order, then anything the map does not know yet.
+  const presentTypes = [
+    ...Object.keys(MOVEMENT_LABELS).filter((type) => typeCounts[type]),
+    ...Object.keys(typeCounts).filter((type) => !(type in MOVEMENT_LABELS)),
+  ];
 
   return (
     <>
@@ -351,8 +368,33 @@ function HistoryTab({
         Every movement of {item.name} at {branchLabel}, newest first. The cost is what each is worth
         now; when a later price re-costed it, the figure it was booked at is shown beneath.
       </p>
-      {data.items.length === 0 ? (
-        <p className="py-8 text-center text-sm text-gray-400 font-body">No movements here yet.</p>
+      {presentTypes.length > 1 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by movement type">
+          <TypeChip label="All" active={types.length === 0} onClick={() => { setTypes([]); setPage(1); }} />
+          {presentTypes.map((type) => (
+            <TypeChip
+              key={type}
+              label={MOVEMENT_LABELS[type] ?? type.replaceAll('_', ' ')}
+              count={typeCounts[type]}
+              active={types.includes(type)}
+              onClick={() => toggleType(type)}
+            />
+          ))}
+          {types.length > 0 && (
+            <span className="ml-1 text-[11px] text-gray-400 font-body">
+              Balances still show the whole ledger at each row.
+            </span>
+          )}
+        </div>
+      )}
+      {current?.error ? (
+        <p className="text-xs text-red-600 font-body">{current.error}</p>
+      ) : !data ? (
+        <div className="flex justify-center py-10"><Spinner /></div>
+      ) : data.items.length === 0 ? (
+        <p className="py-8 text-center text-sm text-gray-400 font-body">
+          {types.length > 0 ? 'No movements of this type here.' : 'No movements here yet.'}
+        </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
@@ -429,17 +471,47 @@ function HistoryTab({
           </table>
         </div>
       )}
-      <div className="mt-3">
-        <Pagination
-          page={data.page}
-          pages={data.pages}
-          total={data.total}
-          perPage={perPage}
-          onPageChange={setPage}
-          onPerPageChange={(value) => { setPerPage(value); setPage(1); }}
-          label="movements"
-        />
-      </div>
+      {data && (
+        <div className="mt-3">
+          <Pagination
+            page={data.page}
+            pages={data.pages}
+            total={data.total}
+            perPage={perPage}
+            onPageChange={setPage}
+            onPerPageChange={(value) => { setPerPage(value); setPage(1); }}
+            label="movements"
+          />
+        </div>
+      )}
     </>
+  );
+}
+
+function TypeChip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count?: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`px-2.5 py-1 text-[11px] font-body uppercase tracking-wide border transition-colors ${
+        active
+          ? 'border-primary bg-primary text-white'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'
+      }`}
+    >
+      {label}
+      {count != null && <span className={`ml-1 tabular-nums ${active ? 'text-white/80' : 'text-gray-400'}`}>{count}</span>}
+    </button>
   );
 }

@@ -599,6 +599,21 @@ async def test_a_voided_po_prices_nothing_and_the_next_po_prices_everything(
         # Booked at zero when it posted, re-costed when the price landed.
         assert first_sale.booked_total_cost == D("0")
 
+        # The type filter: only the chosen movements, counts for every type,
+        # and the running balances untouched (each row still carries the
+        # whole ledger's total at that moment).
+        assert sum(history.type_counts.values()) == history.total
+        purchases = await cost_view_service.cost_history(
+            db, item_id=item_id, branch_id=branch_id, user=user, types=["purchasing"]
+        )
+        assert purchases.total == history.type_counts["purchasing"] > 0
+        assert {row.type for row in purchases.items} == {"purchasing"}
+        assert purchases.type_counts == history.type_counts
+        full = {row.line_id: row for row in history.items}
+        for row in purchases.items:
+            assert row.running_quantity == full[row.line_id].running_quantity
+            assert row.running_value == full[row.line_id].running_value
+
 
 async def test_an_estate_replay_after_live_postings_changes_nothing(engine, env):
     """The fast path, a warehouse replay and an estate replay are one engine: once

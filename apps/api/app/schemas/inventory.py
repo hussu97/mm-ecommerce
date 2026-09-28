@@ -818,6 +818,9 @@ class ItemCostHistoryResponse(BaseModel):
     page: int
     per_page: int
     pages: int
+    #: Movements per transaction type for this item at this branch, before any
+    #: `types` filter: what the history's type filter offers, with counts.
+    type_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class ReceiveLine(BaseModel):
