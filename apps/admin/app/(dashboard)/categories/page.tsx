@@ -130,7 +130,10 @@ export default function CategoriesPage() {
         name: form.name.trim(),
         slug: form.slug.trim(),
         description: form.description.trim() || null,
-        translations: Object.keys(cleanTranslations).length > 0 ? cleanTranslations : undefined,
+        // Always sent when editing, even empty. `undefined` means "leave as is"
+        // to the API, so clearing the last translated field used to save
+        // nothing and the old Arabic text came back.
+        translations: editSlug || Object.keys(cleanTranslations).length > 0 ? cleanTranslations : undefined,
         image_url: form.image_url.trim() || null,
         display_order: form.display_order,
       };
@@ -269,15 +272,39 @@ export default function CategoriesPage() {
             <Input label="Name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} error={errors.name} />
             <Input label="Slug" value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} error={errors.slug} />
           </div>
+          {/* One description per language, side by side. It is the intro under
+              the category title on the storefront and, the same text, the
+              page's search description. So it gets its own block with a
+              length guide rather than an "Optional" box among the
+              translations. */}
           <div className="mt-4">
-            <Textarea label="Description (optional)" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} />
+            <h3 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-1">Description</h3>
+            <p className="text-xs font-body text-gray-400 mb-3">
+              Shown under the category title and used as the page&rsquo;s search description. Name a few
+              favourites; aim for {DESCRIPTION_MIN}–{DESCRIPTION_MAX} characters.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <DescriptionField
+                label="English"
+                value={form.description}
+                onChange={value => setForm(f => ({ ...f, description: value }))}
+              />
+              {languages.map(lang => (
+                <DescriptionField
+                  key={lang.code}
+                  label={lang.native_name}
+                  dir={lang.direction === 'rtl' ? 'rtl' : undefined}
+                  value={translations[lang.code]?.description ?? ''}
+                  onChange={value =>
+                    setTranslations(t => ({ ...t, [lang.code]: { ...t[lang.code], description: value } }))
+                  }
+                />
+              ))}
+            </div>
           </div>
           <TranslationFields
             languages={languages}
-            fields={[
-              { key: 'name', label: 'Name' },
-              { key: 'description', label: 'Description', type: 'textarea' },
-            ]}
+            fields={[{ key: 'name', label: 'Name' }]}
             translations={translations}
             onChange={setTranslations}
           />
@@ -399,6 +426,34 @@ export default function CategoriesPage() {
             { header: 'Name', priority: 'primary', render: (cat) => <span className="font-medium">{cat.name}</span> },
             { header: 'Slug', priority: 'secondary', render: (cat) => cat.slug },
             {
+              // Which languages still need an intro, at a glance: an empty one is
+              // a category page with nothing under its title and a generated
+              // search description.
+              header: 'Description',
+              priority: 'desktop',
+              render: (cat) => (
+                <span className="flex gap-1.5">
+                  {[
+                    { code: 'EN', has: !!cat.description?.trim() },
+                    ...languages.map(l => ({
+                      code: l.code.toUpperCase(),
+                      has: !!cat.translations?.[l.code]?.description?.trim(),
+                    })),
+                  ].map(({ code, has }) => (
+                    <span
+                      key={code}
+                      title={has ? `${code} description set` : `No ${code} description`}
+                      className={`text-[10px] font-body px-1.5 py-0.5 border ${
+                        has ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-200 bg-amber-50 text-amber-700'
+                      }`}
+                    >
+                      {code} {has ? '✓' : '—'}
+                    </span>
+                  ))}
+                </span>
+              ),
+            },
+            {
               header: 'Products',
               priority: 'desktop',
               className: 'text-center',
@@ -431,6 +486,35 @@ export default function CategoriesPage() {
         onPerPageChange={p => { setPerPage(p); setPage(1); }}
         label="categories"
       />
+    </div>
+  );
+}
+
+const DESCRIPTION_MIN = 120;
+const DESCRIPTION_MAX = 160;
+
+/** A description box with a live length guide against the search-snippet range. */
+function DescriptionField({
+  label,
+  value,
+  onChange,
+  dir,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  dir?: 'rtl';
+}) {
+  const n = value.trim().length;
+  const inRange = n >= DESCRIPTION_MIN && n <= DESCRIPTION_MAX;
+  return (
+    <div>
+      <Textarea label={label} value={value} onChange={e => onChange(e.target.value)} rows={4} dir={dir} />
+      <p className={`mt-1 text-[11px] font-body ${n === 0 ? 'text-gray-400' : inRange ? 'text-green-700' : 'text-amber-700'}`}>
+        {n === 0
+          ? 'Empty. The page falls back to a generated line.'
+          : `${n} characters${inRange ? '' : n < DESCRIPTION_MIN ? ` · a little short` : ` · search results cut after ${DESCRIPTION_MAX}`}`}
+      </p>
     </div>
   );
 }
