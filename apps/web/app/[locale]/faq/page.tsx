@@ -6,6 +6,7 @@ import { FaqAccordion } from './FaqAccordion';
 import { Breadcrumb } from '@/components/ui';
 import { OG_IMAGE } from '@/lib/schema';
 import { Icon } from '@/components/ui/Icon';
+import { stripInlineLinks } from '@/lib/inline-links';
 
 interface FaqItem {
   question: string;
@@ -80,7 +81,7 @@ export default async function FaqPage({
         mainEntity: items.map(({ question, answer }) => ({
           '@type': 'Question',
           name: question,
-          acceptedAnswer: { '@type': 'Answer', text: answer },
+          acceptedAnswer: { '@type': 'Answer', text: stripInlineLinks(answer) },
         })),
       },
       {
@@ -118,7 +119,7 @@ export default async function FaqPage({
       {/* FAQ List */}
       <div className="max-w-3xl mx-auto px-4 py-14">
         <Breadcrumb items={[{ label: 'Home', href: `/${locale}` }, { label: 'FAQ' }]} />
-        {faqs.length > 0 && <FaqAccordion faqs={faqs} />}
+        {faqs.length > 0 && <FaqAccordion faqs={faqs} locale={locale} />}
 
         {/* CTA */}
         <div className="mt-12 text-center border border-secondary/40 py-10 px-6 bg-[#f9f5f0]">

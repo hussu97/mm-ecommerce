@@ -100,6 +100,9 @@ export function FaqEditor({ content, onChange }: Props) {
                 onChange={e => setItem(idx, 'answer', e.target.value)}
                 className="w-full text-sm font-body border border-gray-300 px-3 py-2 outline-none focus:border-primary resize-y"
               />
+              <p className="mt-1 text-[11px] font-body text-gray-400">
+                Link with [text](/contact) — a site path or an https:// address.
+              </p>
             </div>
           </div>
         ))}

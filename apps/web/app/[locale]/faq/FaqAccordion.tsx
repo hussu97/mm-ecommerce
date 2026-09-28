@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { analytics } from '@/lib/analytics';
+import { parseInlineLinks } from '@/lib/inline-links';
 import { cn } from '@/lib/utils';
 import { Icon } from '@/components/ui/Icon';
 
@@ -10,7 +12,48 @@ interface FaqItem {
   a: string;
 }
 
-function AccordionItem({ question, answer, index }: { question: string; answer: string; index: number }) {
+/** An answer's `[label](/path)` links, rendered; everything else as text. */
+function Answer({ text, locale }: { text: string; locale: string }) {
+  return (
+    <>
+      {parseInlineLinks(text).map((segment, i) =>
+        segment.kind === 'text' ? (
+          segment.text
+        ) : segment.internal ? (
+          <Link
+            key={i}
+            href={`/${locale}${segment.href}`}
+            className="text-primary underline underline-offset-2 hover:opacity-80"
+          >
+            {segment.text}
+          </Link>
+        ) : (
+          <a
+            key={i}
+            href={segment.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2 hover:opacity-80"
+          >
+            {segment.text}
+          </a>
+        ),
+      )}
+    </>
+  );
+}
+
+function AccordionItem({
+  question,
+  answer,
+  index,
+  locale,
+}: {
+  question: string;
+  answer: string;
+  index: number;
+  locale: string;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -43,17 +86,19 @@ function AccordionItem({ question, answer, index }: { question: string; answer: 
       </button>
 
       <div className={cn('overflow-hidden transition-all duration-300', open ? 'max-h-96 pb-5' : 'max-h-0')}>
-        <p className="font-body text-sm text-gray-500 leading-relaxed pl-10">{answer}</p>
+        <p className="font-body text-sm text-gray-500 leading-relaxed pl-10">
+          <Answer text={answer} locale={locale} />
+        </p>
       </div>
     </div>
   );
 }
 
-export function FaqAccordion({ faqs }: { faqs: FaqItem[] }) {
+export function FaqAccordion({ faqs, locale }: { faqs: FaqItem[]; locale: string }) {
   return (
     <div className="border border-gray-200 px-4 sm:px-8">
       {faqs.map((faq, i) => (
-        <AccordionItem key={i} question={faq.q} answer={faq.a} index={i} />
+        <AccordionItem key={i} question={faq.q} answer={faq.a} index={i} locale={locale} />
       ))}
     </div>
   );
