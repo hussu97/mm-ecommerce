@@ -1,7 +1,7 @@
 // Types for the POS domain. Kept separate from `types.ts` so the original
 // storefront/admin surface stays easy to read as the POS side grows.
 
-import type { Schemas } from '@mm/types';
+import type { Schemas, paths } from '@mm/types';
 
 export type Translations = Record<string, Record<string, string>>;
 
@@ -427,41 +427,18 @@ export interface InventoryLevel {
   warehouse_name: string | null;
 }
 
-export interface SupplierContact {
-  id?: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  is_primary: boolean;
-}
-
-export interface SupplierMappedItem {
-  item_id: string;
-  item_name: string | null;
-  item_sku: string | null;
-}
-
-export interface Supplier {
-  id: string;
-  name: string;
-  reference: string | null;
-  is_vat_deductible: boolean;
-  // Flexible item mapping: a PO for this supplier may add any active purchasable
-  // item, not just the mapped ones.
-  allow_any_item: boolean;
-  // When true, this supplier's POs may carry free-text miscellaneous
-  // (non-inventory) lines, and the supplier appears in the PO picker even with
-  // no mapped items.
-  allows_misc_items: boolean;
-  address: string | null;
-  tax_number: string | null;
-  payment_terms_days: number;
-  notes: string | null;
-  is_active: boolean;
-  deleted_at: string | null;
-  contacts: SupplierContact[];
-  mapped_items: SupplierMappedItem[];
-}
+// Suppliers come from the generated contract (CLAUDE.md §8) — the API never
+// returns a deleted supplier, so there is no `deleted_at` here.
+export type SupplierContact = Schemas['SupplierContactResponse'];
+export type SupplierContactInput = Schemas['SupplierContactInput'];
+export type SupplierMappedItem = Schemas['SupplierMappedItem'];
+export type Supplier = Schemas['SupplierResponse'];
+export type TradeLicenseAuthorityOption = Schemas['TradeLicenseAuthorityOption'];
+export type TradeLicenseAuthority = TradeLicenseAuthorityOption['code'];
+export type SupplierDocumentUrl = Schemas['SupplierDocumentUrl'];
+/** The two registration documents a supplier can carry. */
+export type SupplierDocumentKind =
+  paths['/api/v1/inventory/suppliers/{supplier_id}/documents/{kind}']['get']['parameters']['path']['kind'];
 
 export interface SupplierItem {
   id: string;

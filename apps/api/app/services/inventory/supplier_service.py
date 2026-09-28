@@ -9,6 +9,10 @@ Two rules live here rather than in the router:
    a raw material, packaging or resale good and it owns no recipe. A recipe means
    the item is produced, not bought, so it can never appear on a purchase order.
 
+It also keeps a supplier's two registration documents — the VAT (TRN)
+certificate and the trade licence — in the private finance bucket, under a
+deterministic key per supplier and kind, signed on read and never public.
+
 Also the one piece of purchase money maths: splitting a VAT-inclusive line total
 into the recoverable VAT slice and the net. The VAT stays inside the item's cost
 either way (see `Supplier.is_vat_deductible`); the split is recorded for the
@@ -17,6 +21,8 @@ reclaim report, not deducted from inventory value.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -24,7 +30,9 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core import object_storage
+from app.core.config import settings
+from app.core.exceptions import BadGatewayError, BadRequestError, NotFoundError
 from app.core.money import money as _money
 from app.core.money import unit_cost as _c
 from app.models.inventory import (
@@ -35,6 +43,8 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import Recipe
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "PURCHASE_VAT_RATE",
     "PURCHASABLE_KINDS",
@@ -43,6 +53,11 @@ __all__ = [
     "assert_item_purchasable",
     "create_supplier",
     "update_supplier",
+    "DOCUMENT_KINDS",
+    "DOCUMENT_MAX_BYTES",
+    "store_document",
+    "remove_document",
+    "document_url",
     "active_mapped_items",
     "deactivate_supplier",
     "reactivate_supplier",
@@ -251,3 +266,110 @@ async def set_supplier_items(
         .scalars()
         .all()
     )
+
+
+# ─── Registration documents (private GCS bucket) ──────────────────────────────
+
+#: The documents a supplier can carry. Each maps to the ``<kind>_object_key`` /
+#: ``<kind>_content_type`` column pair on ``Supplier``.
+DOCUMENT_KINDS = ("trn_certificate", "trade_license")
+
+_DOCUMENT_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+}
+
+#: Same ceiling as a purchase-order invoice: a scan or PDF, not an archive.
+DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
+
+_DOCUMENT_LABEL = {
+    "trn_certificate": "VAT (TRN) certificate",
+    "trade_license": "Trade licence",
+}
+
+
+def _document_key(supplier_id: uuid.UUID, kind: str, ext: str) -> str:
+    return f"suppliers/{supplier_id}/{kind}{ext}"
+
+
+async def store_document(
+    db: AsyncSession,
+    supplier: Supplier,
+    kind: str,
+    body: bytes,
+    content_type: str,
+) -> Supplier:
+    """Validate and store one registration document, replacing any previous one.
+
+    A re-upload with a different extension writes a new key, so the old object
+    is deleted rather than left orphaned in the bucket.
+    """
+    label = _DOCUMENT_LABEL[kind]
+    ext = _DOCUMENT_EXT.get(content_type)
+    if ext is None:
+        raise BadRequestError(f"{label} must be a JPEG, PNG, WebP or PDF")
+    if not body:
+        raise BadRequestError(f"No {label.lower()} file was uploaded")
+    if len(body) > DOCUMENT_MAX_BYTES:
+        raise BadRequestError(f"{label} file is too large (max 10 MB)")
+    key = _document_key(supplier.id, kind, ext)
+    previous_key = getattr(supplier, f"{kind}_object_key")
+    try:
+        # Blocking GCS network I/O — keep it off the event loop.
+        await asyncio.to_thread(
+            object_storage.upload_object,
+            bucket=settings.GCS_INVOICE_BUCKET,
+            key=key,
+            body=body,
+            content_type=content_type,
+            cache_control="private, no-store",
+        )
+    except Exception as exc:
+        raise BadGatewayError(f"Failed to store the {label.lower()}") from exc
+    if previous_key and previous_key != key:
+        await _delete_quietly(previous_key)
+    setattr(supplier, f"{kind}_object_key", key)
+    setattr(supplier, f"{kind}_content_type", content_type)
+    await db.flush()
+    await db.refresh(supplier)
+    return supplier
+
+
+async def remove_document(db: AsyncSession, supplier: Supplier, kind: str) -> Supplier:
+    """Detach a registration document and delete its object."""
+    key = getattr(supplier, f"{kind}_object_key")
+    setattr(supplier, f"{kind}_object_key", None)
+    setattr(supplier, f"{kind}_content_type", None)
+    await db.flush()
+    if key:
+        await _delete_quietly(key)
+    await db.refresh(supplier)
+    return supplier
+
+
+async def document_url(supplier: Supplier, kind: str) -> str:
+    """A short-lived signed GET URL for one document, or ``NotFoundError``."""
+    key = getattr(supplier, f"{kind}_object_key")
+    if not key:
+        raise NotFoundError(f"This supplier has no {_DOCUMENT_LABEL[kind].lower()}")
+    # Signing goes through the IAM signBlob API — network I/O, off the loop.
+    url = await asyncio.to_thread(
+        object_storage.signed_url, bucket=settings.GCS_INVOICE_BUCKET, key=key
+    )
+    if url is None:
+        raise BadGatewayError("Could not sign a download link for the document")
+    return url
+
+
+async def _delete_quietly(key: str) -> None:
+    """Delete an object we no longer point at. The row is already right; a failed
+    delete only leaves an unreferenced object in a private bucket, so log it
+    rather than fail the request."""
+    try:
+        await asyncio.to_thread(
+            object_storage.delete_object, bucket=settings.GCS_INVOICE_BUCKET, key=key
+        )
+    except Exception:
+        logger.warning("could not delete supplier document %s", key, exc_info=True)

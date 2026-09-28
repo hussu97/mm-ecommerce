@@ -38583,12 +38583,100 @@
               }
             ],
             "title": "Tax Number"
+          },
+          "trade_license_authority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dubai_det",
+                  "dmcc",
+                  "jafza",
+                  "dafz",
+                  "dso",
+                  "difc",
+                  "dda",
+                  "dubai_south",
+                  "ifza",
+                  "meydan",
+                  "dhcc",
+                  "dwtc",
+                  "dubai_commercity",
+                  "dubai_maritime",
+                  "abu_dhabi_ded",
+                  "adgm",
+                  "kezad",
+                  "twofour54",
+                  "masdar",
+                  "adafz",
+                  "sharjah_sedd",
+                  "saif_zone",
+                  "hamriyah",
+                  "shams",
+                  "spc",
+                  "srtip",
+                  "sharjah_healthcare",
+                  "ajman_ded",
+                  "ajman_free_zone",
+                  "ajman_media_city",
+                  "uaq_ded",
+                  "uaq_ftz",
+                  "rak_ded",
+                  "rakez",
+                  "fujairah_ded",
+                  "fujairah_free_zone",
+                  "creative_city",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Authority"
+          },
+          "trade_license_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Number"
           }
         },
         "required": [
           "name"
         ],
         "title": "SupplierCreate",
+        "type": "object"
+      },
+      "SupplierDocumentUrl": {
+        "description": "A short-lived signed URL to one supplier document in the private bucket.",
+        "properties": {
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "SupplierDocumentUrl",
         "type": "object"
       },
       "SupplierItemResponse": {
@@ -38783,6 +38871,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "has_trade_license": {
+            "default": false,
+            "title": "Has Trade License",
+            "type": "boolean"
+          },
+          "has_trn_certificate": {
+            "default": false,
+            "title": "Has Trn Certificate",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -38855,6 +38953,68 @@
               }
             ],
             "title": "Tax Number"
+          },
+          "trade_license_authority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dubai_det",
+                  "dmcc",
+                  "jafza",
+                  "dafz",
+                  "dso",
+                  "difc",
+                  "dda",
+                  "dubai_south",
+                  "ifza",
+                  "meydan",
+                  "dhcc",
+                  "dwtc",
+                  "dubai_commercity",
+                  "dubai_maritime",
+                  "abu_dhabi_ded",
+                  "adgm",
+                  "kezad",
+                  "twofour54",
+                  "masdar",
+                  "adafz",
+                  "sharjah_sedd",
+                  "saif_zone",
+                  "hamriyah",
+                  "shams",
+                  "spc",
+                  "srtip",
+                  "sharjah_healthcare",
+                  "ajman_ded",
+                  "ajman_free_zone",
+                  "ajman_media_city",
+                  "uaq_ded",
+                  "uaq_ftz",
+                  "rak_ded",
+                  "rakez",
+                  "fujairah_ded",
+                  "fujairah_free_zone",
+                  "creative_city",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Authority"
+          },
+          "trade_license_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Number"
           },
           "updated_at": {
             "format": "date-time",
@@ -39022,6 +39182,69 @@
               }
             ],
             "title": "Tax Number"
+          },
+          "trade_license_authority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dubai_det",
+                  "dmcc",
+                  "jafza",
+                  "dafz",
+                  "dso",
+                  "difc",
+                  "dda",
+                  "dubai_south",
+                  "ifza",
+                  "meydan",
+                  "dhcc",
+                  "dwtc",
+                  "dubai_commercity",
+                  "dubai_maritime",
+                  "abu_dhabi_ded",
+                  "adgm",
+                  "kezad",
+                  "twofour54",
+                  "masdar",
+                  "adafz",
+                  "sharjah_sedd",
+                  "saif_zone",
+                  "hamriyah",
+                  "shams",
+                  "spc",
+                  "srtip",
+                  "sharjah_healthcare",
+                  "ajman_ded",
+                  "ajman_free_zone",
+                  "ajman_media_city",
+                  "uaq_ded",
+                  "uaq_ftz",
+                  "rak_ded",
+                  "rakez",
+                  "fujairah_ded",
+                  "fujairah_free_zone",
+                  "creative_city",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Authority"
+          },
+          "trade_license_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Number"
           }
         },
         "title": "SupplierUpdate",
@@ -41305,6 +41528,65 @@
           "total"
         ],
         "title": "TrackOrderResponse",
+        "type": "object"
+      },
+      "TradeLicenseAuthorityOption": {
+        "description": "One entry of the issuing-authority picker.",
+        "properties": {
+          "code": {
+            "enum": [
+              "dubai_det",
+              "dmcc",
+              "jafza",
+              "dafz",
+              "dso",
+              "difc",
+              "dda",
+              "dubai_south",
+              "ifza",
+              "meydan",
+              "dhcc",
+              "dwtc",
+              "dubai_commercity",
+              "dubai_maritime",
+              "abu_dhabi_ded",
+              "adgm",
+              "kezad",
+              "twofour54",
+              "masdar",
+              "adafz",
+              "sharjah_sedd",
+              "saif_zone",
+              "hamriyah",
+              "shams",
+              "spc",
+              "srtip",
+              "sharjah_healthcare",
+              "ajman_ded",
+              "ajman_free_zone",
+              "ajman_media_city",
+              "uaq_ded",
+              "uaq_ftz",
+              "rak_ded",
+              "rakez",
+              "fujairah_ded",
+              "fujairah_free_zone",
+              "creative_city",
+              "other"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label"
+        ],
+        "title": "TradeLicenseAuthorityOption",
         "type": "object"
       },
       "TrafficData": {
@@ -61775,6 +62057,37 @@
         ]
       }
     },
+    "/api/v1/inventory/suppliers/trade-license-authorities": {
+      "get": {
+        "description": "Every UAE trade-licence issuing authority, for the supplier form's picker.\n\nDeclared before ``/{supplier_id}`` so the literal path is not read as an id.",
+        "operationId": "list_trade_license_authorities_api_v1_inventory_suppliers_trade_license_authorities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TradeLicenseAuthorityOption"
+                  },
+                  "title": "Response List Trade License Authorities Api V1 Inventory Suppliers Trade License Authorities Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Trade License Authorities",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
     "/api/v1/inventory/suppliers/{supplier_id}": {
       "delete": {
         "operationId": "delete_supplier_api_v1_inventory_suppliers__supplier_id__delete",
@@ -61962,6 +62275,188 @@
           }
         ],
         "summary": "Deactivate Supplier",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/suppliers/{supplier_id}/documents/{kind}": {
+      "delete": {
+        "description": "Detach one supplier document and delete it from the bucket.",
+        "operationId": "delete_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "trn_certificate",
+                "trade_license"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Supplier Document",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "get": {
+        "description": "A short-lived signed URL to view or download one supplier document.",
+        "operationId": "get_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "trn_certificate",
+                "trade_license"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierDocumentUrl"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Supplier Document",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "post": {
+        "description": "Attach the VAT (TRN) certificate or the trade licence to a supplier.\n\nThe body is the raw file bytes (JPEG, PNG, WebP or PDF, max 10 MB); the type\ncomes from the request header. Stored in the private finance bucket and\nsigned on read \u2014 never public. Replaces any earlier upload of that kind.",
+        "operationId": "upload_supplier_document_api_v1_inventory_suppliers__supplier_id__documents__kind__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "trn_certificate",
+                "trade_license"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upload Supplier Document",
         "tags": [
           "Inventory"
         ]

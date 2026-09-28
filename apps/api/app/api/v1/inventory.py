@@ -46,7 +46,10 @@ from app.models import (
     TransferOrder,
     Warehouse,
 )
-from app.models.inventory import InventoryTransactionTypeEnum
+from app.models.inventory import (
+    TRADE_LICENSE_AUTHORITIES,
+    InventoryTransactionTypeEnum,
+)
 from app.models.inventory_v2 import ShiftInventoryReport
 from app.models.user import User
 from app.schemas.inventory import (
@@ -82,11 +85,14 @@ from app.schemas.inventory import (
     ResetCostFromRecipeRequest,
     ResetCostFromRecipeResponse,
     SupplierCreate,
+    SupplierDocumentKindLiteral,
+    SupplierDocumentUrl,
     SupplierItemResponse,
     SupplierItemUpsert,
     SupplierMappedItem,
     SupplierResponse,
     SupplierUpdate,
+    TradeLicenseAuthorityOption,
     VoidPurchaseOrderRequest,
     WarehouseCreate,
     WarehouseResponse,
@@ -182,6 +188,22 @@ async def create_supplier(
     return await supplier_service.create_supplier(db, data)
 
 
+@suppliers_router.get(
+    "/trade-license-authorities", response_model=list[TradeLicenseAuthorityOption]
+)
+async def list_trade_license_authorities(
+    user: User = Depends(require("inventory.read")),
+):
+    """Every UAE trade-licence issuing authority, for the supplier form's picker.
+
+    Declared before ``/{supplier_id}`` so the literal path is not read as an id.
+    """
+    return [
+        TradeLicenseAuthorityOption(code=code, label=label)
+        for code, label in TRADE_LICENSE_AUTHORITIES.items()
+    ]
+
+
 @suppliers_router.get("/{supplier_id}", response_model=SupplierResponse)
 async def get_supplier(
     supplier_id: uuid.UUID,
@@ -249,6 +271,75 @@ async def reactivate_supplier(
     if supplier is None or supplier.deleted_at is not None:
         raise NotFoundError("Supplier not found")
     return await supplier_service.reactivate_supplier(db, supplier)
+
+
+async def _load_supplier(db: AsyncSession, supplier_id: uuid.UUID) -> Supplier:
+    supplier = await db.get(Supplier, supplier_id)
+    if supplier is None or supplier.deleted_at is not None:
+        raise NotFoundError("Supplier not found")
+    return supplier
+
+
+@suppliers_router.post(
+    "/{supplier_id}/documents/{kind}", response_model=SupplierResponse
+)
+async def upload_supplier_document(
+    supplier_id: uuid.UUID,
+    kind: SupplierDocumentKindLiteral,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    """Attach the VAT (TRN) certificate or the trade licence to a supplier.
+
+    The body is the raw file bytes (JPEG, PNG, WebP or PDF, max 10 MB); the type
+    comes from the request header. Stored in the private finance bucket and
+    signed on read — never public. Replaces any earlier upload of that kind.
+    """
+    supplier = await _load_supplier(db, supplier_id)
+    # Refuse an oversized upload before reading the body into memory.
+    declared = request.headers.get("content-length")
+    if (
+        declared
+        and declared.isdigit()
+        and int(declared) > supplier_service.DOCUMENT_MAX_BYTES
+    ):
+        raise BadRequestError("Document file is too large (max 10 MB)")
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
+    return await supplier_service.store_document(
+        db, supplier, kind, await request.body(), content_type
+    )
+
+
+@suppliers_router.get(
+    "/{supplier_id}/documents/{kind}", response_model=SupplierDocumentUrl
+)
+async def get_supplier_document(
+    supplier_id: uuid.UUID,
+    kind: SupplierDocumentKindLiteral,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.read")),
+):
+    """A short-lived signed URL to view or download one supplier document."""
+    supplier = await _load_supplier(db, supplier_id)
+    return SupplierDocumentUrl(
+        url=await supplier_service.document_url(supplier, kind),
+        content_type=getattr(supplier, f"{kind}_content_type"),
+    )
+
+
+@suppliers_router.delete(
+    "/{supplier_id}/documents/{kind}", response_model=SupplierResponse
+)
+async def delete_supplier_document(
+    supplier_id: uuid.UUID,
+    kind: SupplierDocumentKindLiteral,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    """Detach one supplier document and delete it from the bucket."""
+    supplier = await _load_supplier(db, supplier_id)
+    return await supplier_service.remove_document(db, supplier, kind)
 
 
 # ─── Warehouses ───────────────────────────────────────────────────────────────

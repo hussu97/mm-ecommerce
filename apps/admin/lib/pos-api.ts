@@ -16,7 +16,7 @@ import type {
   PermissionCatalogue, Printer, ProducibleItemBasis, ProductionOrder, ProductionOrderCreate, ProductionOrderSummary,
   PurchaseOrder, PurchaseOrderItemOption,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
-  Supplier, SupplierItem, Tax,
+  Supplier, SupplierDocumentKind, SupplierDocumentUrl, SupplierItem, Tax, TradeLicenseAuthorityOption,
   TaxGroup, Till, VatLedgerResponse, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
 
@@ -262,6 +262,20 @@ export const inventoryApi = {
   removeSupplier: (id: string) => api.delete<void>(`/inventory/suppliers/${id}`),
   deactivateSupplier: (id: string) => api.post<Supplier>(`/inventory/suppliers/${id}/deactivate`, {}),
   reactivateSupplier: (id: string) => api.post<Supplier>(`/inventory/suppliers/${id}/reactivate`, {}),
+  tradeLicenseAuthorities: () =>
+    api.get<TradeLicenseAuthorityOption[]>('/inventory/suppliers/trade-license-authorities'),
+  /** Upload the VAT (TRN) certificate or the trade licence — raw bytes, private bucket. */
+  uploadSupplierDocument: (id: string, kind: SupplierDocumentKind, file: File) =>
+    request<Supplier>(`/inventory/suppliers/${id}/documents/${kind}`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    }),
+  /** A short-lived signed URL to view one supplier document. */
+  supplierDocumentUrl: (id: string, kind: SupplierDocumentKind) =>
+    api.get<SupplierDocumentUrl>(`/inventory/suppliers/${id}/documents/${kind}`),
+  removeSupplierDocument: (id: string, kind: SupplierDocumentKind) =>
+    api.delete<Supplier>(`/inventory/suppliers/${id}/documents/${kind}`),
   supplierItems: (id: string) => api.get<SupplierItem[]>(`/inventory/suppliers/${id}/items`),
   setSupplierItems: (id: string, items: unknown[]) =>
     api.put<SupplierItem[]>(`/inventory/suppliers/${id}/items`, items),
