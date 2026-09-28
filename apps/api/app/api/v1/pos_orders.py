@@ -57,6 +57,7 @@ from app.schemas.pos_order import (
     VoidItemRequest,
     VoidOrderRequest,
 )
+from app.schemas.surcharge import SurchargeLine
 from app.services import (
     branch_holiday_service,
     branch_hours_service,
@@ -131,6 +132,7 @@ def _serialise(order: Order) -> PosOrderResponse:
     payload.amount_paid = order.amount_paid
     payload.balance_due = order.balance_due
     payload.delivery_address = address_format.one_line(order.shipping_address_snapshot)
+    payload.fee_lines = SurchargeLine.fees_of(order)
     # Flattened off the delivery row for the same reason as the address: the
     # register prints a receipt, not an object graph, and the counter needs the
     # courier and the zone on the paper. `provider` is the live answer rather

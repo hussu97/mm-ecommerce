@@ -174,6 +174,11 @@ export function ChangeFulfilmentDialog({
                 {quote!.fee_charged === null
                   ? '—'
                   : `${currency} ${quote!.fee_charged.toFixed(2)}`}
+                {(quote!.surcharges ?? []).map(s => (
+                  <span key={s.code} className="block text-xs text-gray-500">
+                    + {currency} {s.amount.toFixed(2)} {s.label.toLowerCase()}
+                  </span>
+                ))}
               </dd>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100">

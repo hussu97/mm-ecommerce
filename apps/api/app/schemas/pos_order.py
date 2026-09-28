@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.courier import CourierBadge
 from app.schemas.pos.charges import percentage_is_fraction
 from app.schemas.pos.legal_entity import OrderLegalEntity
+from app.schemas.surcharge import SurchargeLine
 
 OrderTypeLiteral = Literal["pickup", "delivery"]
 
@@ -364,6 +365,12 @@ class PosOrderResponse(ORMModel):
 
     subtotal: Decimal
     discount_amount: Decimal
+    #: The fees a website order carries above the goods — delivery (or pickup)
+    #: fee, then every surcharge such as the small-order fee — labelled, for the
+    #: receipt to print line by line (`order_surcharges.fee_lines`). They are in
+    #: `total` but not in `order_charges`, which are the counter's own charges.
+    #: Empty on a counter or aggregator sale.
+    fee_lines: list[SurchargeLine] = []
     charges_amount: Decimal
     #: A fraction (0.0500 == 5%). Zero on an order from a channel that is not
     #: VAT-registered — the receipt then prints no VAT line.

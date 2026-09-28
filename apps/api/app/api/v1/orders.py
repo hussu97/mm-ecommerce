@@ -61,6 +61,7 @@ from app.schemas.order import (
 )
 from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
 from app.schemas.pnl import OrderPnlResponse
+from app.schemas.surcharge import SurchargeLine
 from app.services import audit_service, email_service
 from app.services.couriers import (
     courier_service,
@@ -73,7 +74,13 @@ from app.services.delivery import (
     fulfilment_reassignment,
     fulfilment_service,
 )
-from app.services.orders import channels, order_economics, order_pnl, order_service
+from app.services.orders import (
+    channels,
+    order_economics,
+    order_pnl,
+    order_service,
+    order_surcharges,
+)
 from app.services.payments import payment_service
 
 router = APIRouter()
@@ -121,7 +128,11 @@ class OrderDeliveryResponse(BaseModel):
     quoted_currency: str | None
     quoted_distance_m: int | None
     cost_total: float | None
-    #: Fee minus cost. Negative means this delivery lost money.
+    #: The other fees the customer paid alongside delivery — today the
+    #: small-basket fee — from `order_surcharges`. Empty on most orders.
+    surcharges: list["SurchargeLine"] = []
+    #: Delivery fee plus `surcharges`, minus cost. Negative means this delivery
+    #: lost money.
     margin: float | None
     #: The seven digits a driver quotes. Null on a third-party zone, and on
     #: bookings made before the reference existed.
@@ -186,6 +197,7 @@ class OrderDeliveryResponse(BaseModel):
         *,
         branch: Branch | None = None,
         drivers: list[OrderDriver] | None = None,
+        order: Order | None = None,
     ) -> "OrderDeliveryResponse":
         """*reached* is `fulfilment_service.reached_at` — when the order hit each
         status. Optional so a caller that only wants the courier and the cost
@@ -194,12 +206,17 @@ class OrderDeliveryResponse(BaseModel):
         *branch* and *drivers* are optional for the same reason, and their
         absence degrades to a null distance and an empty history rather than to
         an exception — a list endpoint that does not load them is showing less,
-        not failing."""
+        not failing. So is *order*, whose surcharges count towards the margin."""
         reached = reached or {}
         proximity = driver_proximity.to_pickup(d, branch)
         cost = d.cost_total if d.cost_total is not None else d.quoted_cost
+        surcharges = SurchargeLine.surcharges_of(order)
         margin = (
-            float(d.fee_charged) - float(cost)
+            float(
+                to_decimal(d.fee_charged)
+                + order_surcharges.surcharges_total(order)
+                - to_decimal(cost)
+            )
             if d.fee_charged is not None and cost is not None
             else None
         )
@@ -214,6 +231,7 @@ class OrderDeliveryResponse(BaseModel):
             quoted_currency=d.quoted_currency,
             quoted_distance_m=d.quoted_distance_m,
             cost_total=float(d.cost_total) if d.cost_total is not None else None,
+            surcharges=surcharges,
             margin=margin,
             courier_reference=d.courier_reference,
             courier_order_id=d.courier_order_id,
@@ -1083,6 +1101,7 @@ async def _delivery_payload(
         await fulfilment_service.reached_at(db, order),
         branch=branch,
         drivers=drivers,
+        order=order,
     )
 
 
@@ -1098,7 +1117,7 @@ async def _load_order(db: AsyncSession, order_number: str) -> Order:
 
 
 def _quote_response(
-    quote: lalamove_service.ReassignQuote, delivery: OrderDelivery
+    quote: lalamove_service.ReassignQuote, delivery: OrderDelivery, order: Order
 ) -> LalamoveQuoteResponse:
     fee = float(delivery.fee_charged) if delivery.fee_charged is not None else None
     cost = float(quote.estimate.cost)
@@ -1109,7 +1128,15 @@ def _quote_response(
         distance_m=quote.estimate.distance_m,
         expires_at=quote.expires_at,
         fee_charged=fee,
-        margin=None if fee is None else fee - cost,
+        margin=(
+            None
+            if fee is None
+            else float(
+                to_decimal(delivery.fee_charged)
+                + order_surcharges.surcharges_total(order)
+                - quote.estimate.cost
+            )
+        ),
     )
 
 
@@ -1177,6 +1204,9 @@ class FulfilmentQuoteResponse(BaseModel):
     quotation_id: str | None
     expires_at: datetime | None
     fee_charged: float | None
+    #: The other fees the customer paid (the small-order fee), counted in
+    #: `margin` beside `fee_charged`.
+    surcharges: list[SurchargeLine] = []
     margin: float | None
     #: The booking this move would call off, if there is one.
     cancels_booking: str | None = None
@@ -1208,7 +1238,7 @@ def _options_response(
 
 
 def _fulfilment_quote_response(
-    quote: fulfilment_reassignment.Quote,
+    quote: fulfilment_reassignment.Quote, order: Order
 ) -> FulfilmentQuoteResponse:
     return FulfilmentQuoteResponse(
         provider=quote.provider,
@@ -1218,6 +1248,7 @@ def _fulfilment_quote_response(
         quotation_id=quote.quotation_id,
         expires_at=quote.expires_at,
         fee_charged=(None if quote.fee_charged is None else float(quote.fee_charged)),
+        surcharges=SurchargeLine.surcharges_of(order),
         margin=None if quote.margin is None else float(quote.margin),
         cancels_booking=quote.cancels_booking,
     )
@@ -1277,7 +1308,7 @@ async def quote_order_fulfilment(
         # 502 rather than 500: this is a courier declining or unreachable, and
         # the message is written for the admin reading it.
         raise BadGatewayError(error or "No price available")
-    return _fulfilment_quote_response(quote)
+    return _fulfilment_quote_response(quote, order)
 
 
 class FulfilmentReassignRequest(BaseModel):
@@ -1439,7 +1470,7 @@ async def quote_lalamove_for_order(
     quote, error = await lalamove_service.quote_for_order(db, order)
     if quote is None:
         raise BadGatewayError(error or "No price available")
-    return _quote_response(quote, delivery)
+    return _quote_response(quote, delivery, order)
 
 
 @router.post(

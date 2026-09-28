@@ -63,6 +63,8 @@ type Row = {
   kind: 'line' | 'cost' | 'credit' | 'sub' | 'detail' | 'result';
   /** Show a detail row even when it is zero everywhere — a zero is the point. */
   always?: boolean;
+  /** A detail row under a credit line: shown as a plus, not a cost. */
+  credit?: boolean;
 };
 
 // The statement, top to bottom. Costs are shown as negatives; the sub-lines
@@ -80,7 +82,9 @@ const ROWS: Row[] = [
   { label: 'Packaging', value: c => c.cogs_packaging, share: 'cogs_packaging', kind: 'detail', always: true },
   { label: 'Resale goods', value: c => c.cogs_resale, share: 'cogs_resale', kind: 'detail', always: true },
   { label: 'PC1', value: c => c.pc1, share: 'pc1', kind: 'sub' },
-  { label: 'Delivery fees charged (no VAT)', value: c => c.delivery_fees, share: 'delivery_fees', kind: 'credit' },
+  { label: 'Customer fees charged (no VAT)', value: c => c.delivery_fees, share: 'delivery_fees', kind: 'credit' },
+  { label: 'Delivery fees', value: c => c.delivery_charge, share: 'delivery_charge', kind: 'detail', credit: true },
+  { label: 'Small order & other fees', value: c => c.surcharges, share: 'surcharges', kind: 'detail', credit: true },
   { label: 'Marketplace compensation', value: c => c.compensation, share: 'compensation', kind: 'credit' },
   { label: 'Payment fees', value: c => c.payment_fees, share: 'payment_fees', kind: 'cost' },
   { label: 'Aggregator & delivery fees', value: c => c.aggregator_and_delivery_fees, share: 'aggregator_and_delivery_fees', kind: 'cost' },
@@ -399,7 +403,7 @@ export default function ProfitLossPage() {
                               r.kind === 'result' && v !== null && v < 0 && 'text-red-600',
                             )}
                           >
-                            {money(v, r.kind)}
+                            {money(v, r.credit ? 'credit' : r.kind)}
                             <span className="block text-[10px] text-gray-400">
                               {pct === null ? '' : `${pct.toFixed(1)}%`}
                             </span>

@@ -75,7 +75,7 @@ from app.services.delivery import (
     delivery_zone_service,
     driver_assignment,
 )
-from app.services.orders import channels, order_lifecycle
+from app.services.orders import channels, order_lifecycle, order_surcharges
 from app.services.providers.lalamove_provider import LalamoveError
 
 logger = logging.getLogger(__name__)
@@ -493,8 +493,13 @@ async def quote(
             quotation_id=price.quotation_id,
             expires_at=price.expires_at,
             fee_charged=fee,
-            # The customer's fee is fixed; this is what we would keep of it.
-            margin=(None if cost is None or fee is None else Decimal(str(fee)) - cost),
+            # The customer's fees are fixed; this is what we would keep of them —
+            # the small-basket fee included, as on the fulfilment card.
+            margin=(
+                None
+                if cost is None or fee is None
+                else Decimal(str(fee)) + order_surcharges.surcharges_total(order) - cost
+            ),
             cancels_booking=delivery.courier_order_id or None,
         ),
         None,

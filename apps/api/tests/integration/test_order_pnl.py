@@ -137,7 +137,8 @@ async def world(engine):
             return Order(**base)
 
         orders = {
-            # A — website delivery. Menu 105, 10.50 coupon, 21 delivery → 115.50
+            # A — website delivery. Menu 105, 10.50 coupon, 21 of fees (15
+            # delivery + 6 small-order) → 115.50
             # charged, VAT 5.50 (a round fixture figure — the P&L reads the
             # order's frozen VAT as given). 21.00 refunded, card fee 4.20,
             # courier 10.50, 3 g of butter at 2.00 = 6.00 COGS.
@@ -146,7 +147,8 @@ async def world(engine):
                 source="online",
                 subtotal=D("105.00"),
                 discount_amount=D("10.50"),
-                delivery_fee=D("21.00"),
+                delivery_fee=D("15.00"),
+                low_order_fee=D("6.00"),
                 total=D("115.50"),
                 vat_amount=D("5.50"),
                 total_excl_vat=D("110.00"),
@@ -431,6 +433,9 @@ async def test_a_website_order_shows_its_vat_as_lines(engine, world):
     assert p.cogs == D("6.71")  # exactly the sum of its kinds
     assert p.pc1 == D("72.79")
     assert p.delivery_fees == D("21.00")  # no VAT on it
+    # …split into the delivery fee and the surcharges riding with it.
+    assert p.delivery_charge == D("15.00")
+    assert p.surcharges == D("6.00")
     assert p.payment_fees == D("4.20")
     assert p.delivery_cost == D("10.50")
     assert p.fees_vat == D("0.70")  # (4.20 + 10.50) × 5/105
@@ -520,6 +525,8 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
     assert total.orders_with_cogs == 1
     assert total.gmv == D("397.00")  # 105 + 42 + 50 + 200
     assert total.delivery_fees == D("21.00")
+    assert total.delivery_charge == D("15.00")
+    assert total.surcharges == D("6.00")
     assert total.cogs == D("6.71")
     assert total.cogs_packaging == D("1.00")
     # PC3 = 69.29 + 23.20 + 43.50 + 170.48 − 11.60 − 21.00

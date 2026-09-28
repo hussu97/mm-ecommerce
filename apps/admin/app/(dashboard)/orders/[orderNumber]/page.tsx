@@ -1242,11 +1242,11 @@ export default function OrderDetailPage() {
             <span>Delivery</span>
             <span>{order.delivery_fee > 0 ? formatCurrency(order.delivery_fee) : 'Free'}</span>
           </div>
-          {order.low_order_fee > 0 && (
-            <div className="flex justify-between text-xs font-body text-gray-500">
-              <span>Small order fee</span><span>{formatCurrency(order.low_order_fee)}</span>
+          {(order.surcharges ?? []).map(s => (
+            <div key={s.code} className="flex justify-between text-xs font-body text-gray-500">
+              <span>{s.label}</span><span>{formatCurrency(s.amount)}</span>
             </div>
-          )}
+          ))}
           <div className="flex justify-between text-sm font-body font-medium text-gray-800 pt-1 border-t border-gray-100">
             <span>Total</span><span>{formatCurrency(order.total)}</span>
           </div>

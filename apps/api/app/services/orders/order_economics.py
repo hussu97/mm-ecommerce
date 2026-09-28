@@ -34,6 +34,7 @@ from app.core.money import money, to_decimal
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
 from app.models.payment_gateway import PaymentGateway
+from app.services.orders import order_surcharges
 from app.services.orders.order_pricing import VAT_RATE
 
 logger = logging.getLogger(__name__)
@@ -241,7 +242,7 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
     order it describes, and a 500 there is worse than an estimate.
     """
     charged = to_decimal(order.total)
-    fees = to_decimal(order.delivery_fee) + to_decimal(order.low_order_fee)
+    fees = to_decimal(order.delivery_fee) + order_surcharges.surcharges_total(order)
     items_value = max(charged - fees, _ZERO)
     # The goods at menu price. `subtotal` is written before any discount comes
     # off (see `order_pricing.compute`), which is exactly what the direct-cost

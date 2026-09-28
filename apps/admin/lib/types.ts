@@ -321,6 +321,9 @@ export interface Order {
    * it shows a subtotal and a total that do not reconcile.
    */
   low_order_fee: number;
+  /** Every non-zero fee on top of goods and delivery, labelled — the generic
+   * form of `low_order_fee`. Render these rather than naming each fee. */
+  surcharges: Surcharge[];
   subtotal: number;
   discount_amount: number;
   total: number;
@@ -1005,6 +1008,8 @@ export interface FulfilmentQuote {
   quotation_id: string | null;
   expires_at: string | null;
   fee_charged: number | null;
+  /** Counted in `margin` beside `fee_charged`. */
+  surcharges: Surcharge[];
   margin: number | null;
   cancels_booking: string | null;
 }
@@ -1161,7 +1166,9 @@ export interface OrderDelivery {
   quoted_currency: string | null;
   quoted_distance_m: number | null;
   cost_total: number | null;
-  /** Fee charged minus what the courier cost. Negative loses money. */
+  /** The other fees the customer paid alongside delivery (small order fee). */
+  surcharges: Surcharge[];
+  /** Fee charged plus `surcharges`, minus what the courier cost. Negative loses money. */
   margin: number | null;
   /** The seven digits the driver quotes. Null on a third-party zone. */
   courier_reference: string | null;
@@ -1223,6 +1230,14 @@ export interface PreviousDriver {
   replaced_at: string | null;
 }
 
+/** One fee the customer paid on top of goods and delivery (`order_surcharges`). */
+export interface Surcharge {
+  /** The orders column it came from, e.g. `low_order_fee`. */
+  code: string;
+  label: string;
+  amount: number;
+}
+
 /** What Lalamove would charge to carry a third-party order, and the margin. */
 export interface LalamoveQuote {
   quotation_id: string;
@@ -1233,7 +1248,7 @@ export interface LalamoveQuote {
   expires_at: string | null;
   /** What the customer paid. Assigning does not change it. */
   fee_charged: number | null;
-  /** `fee_charged - cost`. Negative means this delivery loses money. */
+  /** `fee_charged` plus the order's surcharges, less `cost`. Negative loses money. */
   margin: number | null;
 }
 

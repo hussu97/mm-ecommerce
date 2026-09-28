@@ -70,6 +70,7 @@ from app.schemas.order_preview import (
     UnavailableItem,
 )
 from app.schemas.pnl import OrderPnlBrief
+from app.schemas.surcharge import SurchargeLine
 from app.services import cart_service, email_service, promo_code_service, push_service
 from app.services.catalog import availability_service
 from app.services.catalog.storefront_visibility import is_website_product_visible
@@ -164,6 +165,7 @@ async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
     await _ensure_items_loaded(db, order)
     reached = await fulfilment_service.reached_at(db, order)
     response = OrderResponse.model_validate(order)
+    response.surcharges = SurchargeLine.surcharges_of(order)
     # The internal note is surfaced to the customer ONLY as the cancellation
     # reason on a settled (cancelled-family) order — never on a live one, where it
     # is an internal note they must not read (F-ORD-10). Mirrors the storefront's

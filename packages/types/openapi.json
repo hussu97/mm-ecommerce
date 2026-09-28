@@ -16134,6 +16134,14 @@
               }
             ],
             "title": "Quotation Id"
+          },
+          "surcharges": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SurchargeLine"
+            },
+            "title": "Surcharges",
+            "type": "array"
           }
         },
         "required": [
@@ -23064,6 +23072,14 @@
             ],
             "title": "Share Link"
           },
+          "surcharges": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SurchargeLine"
+            },
+            "title": "Surcharges",
+            "type": "array"
+          },
           "zone_name": {
             "anyOf": [
               {
@@ -24064,6 +24080,10 @@
             "title": "Compensation",
             "type": "number"
           },
+          "delivery_charge": {
+            "title": "Delivery Charge",
+            "type": "number"
+          },
           "delivery_cost": {
             "title": "Delivery Cost",
             "type": "number"
@@ -24175,6 +24195,10 @@
           },
           "shares": {
             "$ref": "#/components/schemas/PnlShares"
+          },
+          "surcharges": {
+            "title": "Surcharges",
+            "type": "number"
           }
         },
         "required": [
@@ -24189,6 +24213,8 @@
           "cogs_resale",
           "pc1",
           "delivery_fees",
+          "delivery_charge",
+          "surcharges",
           "compensation",
           "payment_fees",
           "commission",
@@ -24896,6 +24922,14 @@
           "subtotal": {
             "title": "Subtotal",
             "type": "number"
+          },
+          "surcharges": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SurchargeLine"
+            },
+            "title": "Surcharges",
+            "type": "array"
           },
           "total": {
             "title": "Total",
@@ -26978,6 +27012,10 @@
             "title": "Compensation",
             "type": "number"
           },
+          "delivery_charge": {
+            "title": "Delivery Charge",
+            "type": "number"
+          },
           "delivery_cost": {
             "title": "Delivery Cost",
             "type": "number"
@@ -27089,6 +27127,10 @@
           },
           "shares": {
             "$ref": "#/components/schemas/PnlShares"
+          },
+          "surcharges": {
+            "title": "Surcharges",
+            "type": "number"
           }
         },
         "required": [
@@ -27103,6 +27145,8 @@
           "cogs_resale",
           "pc1",
           "delivery_fees",
+          "delivery_charge",
+          "surcharges",
           "compensation",
           "payment_fees",
           "commission",
@@ -27443,6 +27487,17 @@
             ],
             "title": "Compensation"
           },
+          "delivery_charge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Charge"
+          },
           "delivery_cost": {
             "anyOf": [
               {
@@ -27618,6 +27673,17 @@
               }
             ],
             "title": "Refunds"
+          },
+          "surcharges": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Surcharges"
           }
         },
         "required": [
@@ -27632,6 +27698,8 @@
           "cogs_resale",
           "pc1",
           "delivery_fees",
+          "delivery_charge",
+          "surcharges",
           "compensation",
           "payment_fees",
           "commission",
@@ -28270,6 +28338,14 @@
               }
             ],
             "title": "External Reference"
+          },
+          "fee_lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SurchargeLine"
+            },
+            "title": "Fee Lines",
+            "type": "array"
           },
           "guests": {
             "title": "Guests",
@@ -39248,6 +39324,29 @@
           }
         },
         "title": "SupplierUpdate",
+        "type": "object"
+      },
+      "SurchargeLine": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "number"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "amount"
+        ],
+        "title": "SurchargeLine",
         "type": "object"
       },
       "TableCreate": {

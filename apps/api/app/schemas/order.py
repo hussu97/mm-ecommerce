@@ -26,6 +26,7 @@ from app.models.payment_gateway import PaymentMethodEnum  # noqa: F401
 from app.schemas.courier import CourierBadge
 from app.schemas.pnl import OrderPnlBrief
 from app.schemas.pos.legal_entity import OrderLegalEntity
+from app.schemas.surcharge import SurchargeLine
 
 from .address import AddressCreate
 from .fulfilment import FulfilmentResponse
@@ -272,6 +273,10 @@ class OrderResponse(BaseModel):
     #: than folded into `delivery_fee` so the storefront can label it honestly
     #: and explain why it is there.
     low_order_fee: float = 0.0
+    #: Every non-zero fee on top of the goods and delivery, labelled
+    #: (`order_surcharges`) — the generic form of `low_order_fee`, so a screen
+    #: lists a fee added later without a release.
+    surcharges: list[SurchargeLine] = []
     subtotal: float
     discount_amount: float
     total: float
@@ -543,7 +548,7 @@ class OrderEconomicsResponse(BaseModel):
 
     #: What the customer paid, fees included.
     charged: float
-    #: What they paid for goods — `charged` less delivery and low-order fees.
+    #: What they paid for goods — `charged` less delivery and every `order_surcharges` fee.
     items_value: float
     #: What the courier cost, where one was booked and has told us. Null on a
     #: third-party zone: nobody invoices us per order there, which is a real

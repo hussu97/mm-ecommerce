@@ -15388,6 +15388,11 @@ export interface components {
             provider: string;
             /** Quotation Id */
             quotation_id: string | null;
+            /**
+             * Surcharges
+             * @default []
+             */
+            surcharges: components["schemas"]["SurchargeLine"][];
         };
         /** FulfilmentReassignRequest */
         FulfilmentReassignRequest: {
@@ -17694,6 +17699,11 @@ export interface components {
             quoted_distance_m: number | null;
             /** Share Link */
             share_link: string | null;
+            /**
+             * Surcharges
+             * @default []
+             */
+            surcharges: components["schemas"]["SurchargeLine"][];
             /** Zone Name */
             zone_name: string | null;
         };
@@ -18028,6 +18038,8 @@ export interface components {
             commission: number;
             /** Compensation */
             compensation: number;
+            /** Delivery Charge */
+            delivery_charge: number;
             /** Delivery Cost */
             delivery_cost: number;
             /** Delivery Fees */
@@ -18073,6 +18085,8 @@ export interface components {
             /** Refunds */
             refunds: number;
             shares: components["schemas"]["PnlShares"];
+            /** Surcharges */
+            surcharges: number;
         };
         /**
          * OrderPreviewPromo
@@ -18305,6 +18319,11 @@ export interface components {
             status_history: components["schemas"]["OrderStatusStamp"][];
             /** Subtotal */
             subtotal: number;
+            /**
+             * Surcharges
+             * @default []
+             */
+            surcharges: components["schemas"]["SurchargeLine"][];
             /** Total */
             total: number;
             /** Total Excl Vat */
@@ -19069,6 +19088,8 @@ export interface components {
             commission: number;
             /** Compensation */
             compensation: number;
+            /** Delivery Charge */
+            delivery_charge: number;
             /** Delivery Cost */
             delivery_cost: number;
             /** Delivery Fees */
@@ -19114,6 +19135,8 @@ export interface components {
             /** Refunds */
             refunds: number;
             shares: components["schemas"]["PnlShares"];
+            /** Surcharges */
+            surcharges: number;
         };
         /**
          * PnlMiscExpenseRow
@@ -19218,6 +19241,8 @@ export interface components {
             commission: number | null;
             /** Compensation */
             compensation: number | null;
+            /** Delivery Charge */
+            delivery_charge: number | null;
             /** Delivery Cost */
             delivery_cost: number | null;
             /** Delivery Fees */
@@ -19250,6 +19275,8 @@ export interface components {
             period_charges: number | null;
             /** Refunds */
             refunds: number | null;
+            /** Surcharges */
+            surcharges: number | null;
         };
         /**
          * PnlVatSummary
@@ -19422,6 +19449,11 @@ export interface components {
             driver_phone?: string | null;
             /** External Reference */
             external_reference?: string | null;
+            /**
+             * Fee Lines
+             * @default []
+             */
+            fee_lines: components["schemas"]["SurchargeLine"][];
             /** Guests */
             guests: number;
             /**
@@ -23168,6 +23200,15 @@ export interface components {
             trade_license_authority?: ("dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other") | null;
             /** Trade License Number */
             trade_license_number?: string | null;
+        };
+        /** SurchargeLine */
+        SurchargeLine: {
+            /** Amount */
+            amount: number;
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
         };
         /** TableCreate */
         TableCreate: {

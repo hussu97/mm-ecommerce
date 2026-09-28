@@ -23,6 +23,7 @@ from app.models.pos_order import (
 )
 from app.models.pos_table import PosTable, Section
 from app.models.product import Product
+from app.services.orders import order_surcharges
 from app.services.pos import business_day_service
 
 from ._base import (
@@ -689,7 +690,13 @@ async def _sales_by_delivery_zone(
                 zone.label("key"),
                 func.count(Order.id),
                 func.coalesce(func.sum(Order.total), 0),
-                func.coalesce(func.sum(Order.delivery_fee), 0),
+                # The delivery fee and every surcharge riding with it (the
+                # small-order fee) — all of what the zone's orders paid on top
+                # of the goods.
+                func.coalesce(
+                    func.sum(Order.delivery_fee + order_surcharges.sql_total(Order)),
+                    0,
+                ),
             ),
             branch_id=branch_id,
             date_from=date_from,

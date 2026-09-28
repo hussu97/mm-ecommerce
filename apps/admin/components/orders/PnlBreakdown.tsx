@@ -108,8 +108,14 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
           value={pnl.delivery_fees}
           tone="credit"
           pct={pct.delivery_fees}
-          hint="Delivery and small-basket fees the customer paid. No VAT is charged on them."
+          hint="Delivery, small-order and any other fees the customer paid. No VAT is charged on them."
         />
+      )}
+      {pnl.delivery_fees !== 0 && pnl.surcharges !== 0 && (
+        <>
+          <Line label="Delivery fee" value={pnl.delivery_charge} tone="credit" pct={pct.delivery_charge} indent />
+          <Line label="Small order & other fees" value={pnl.surcharges} tone="credit" pct={pct.surcharges} indent />
+        </>
       )}
       {pnl.compensation !== 0 && (
         <Line

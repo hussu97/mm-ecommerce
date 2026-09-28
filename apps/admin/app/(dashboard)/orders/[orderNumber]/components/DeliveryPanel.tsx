@@ -149,6 +149,13 @@ export function DeliveryPanel({
                 ? formatCurrency(delivery.fee_charged)
                 : 'Free'
               : '—'}
+            {/* Counted in the margin: a small-order fee exists to pay for a run
+                the basket is too small to carry. */}
+            {(delivery.surcharges ?? []).map(s => (
+              <span key={s.code} className="block text-gray-400">
+                + {formatCurrency(s.amount)} {s.label.toLowerCase()}
+              </span>
+            ))}
           </dd>
         </div>
         <div>

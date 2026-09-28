@@ -95,6 +95,7 @@ from app.models.legal_entity import LegalEntity
 from app.models.order import DeliveryMethodEnum, Order
 from app.models.order_delivery import OrderDelivery
 from app.models.pos_order import OrderSourceEnum
+from app.services.orders import order_surcharges
 from app.services.orders.order_pricing import VAT_RATE
 from app.services.orders.order_query import AGGREGATOR_CHANNEL_PREFIX, TERMINAL_STATUSES
 from app.services.pos.pos_reports._base import _COMPLETED_SALE
@@ -155,6 +156,8 @@ LINE_KEYS: tuple[str, ...] = (
     "cogs",
     *COGS_KINDS,
     "delivery_fees",
+    "delivery_charge",
+    "surcharges",
     "compensation",
     "payment_fees",
     "commission",
@@ -422,14 +425,16 @@ def line_columns() -> dict[str, object]:
     # production and transfers is a costing-engine change, not a report one.
     cogs_net = 1 + VAT_RATE
     kind_parts = {key: func.round(_COGS.c[key] / cogs_net, 2) for key in COGS_KINDS}
-    # What the customer paid us for delivery: the delivery fee and the
-    # small-basket fee. Outside the VAT base (VAT is charged on the goods only —
-    # `order_pricing` computes it on the discounted subtotal), so no VAT line;
-    # the card fee on it is already in `payment_fee`, VAT and all. Zero on a
-    # marketplace order, whose delivery fee the customer pays the marketplace.
-    delivery_fees = func.coalesce(Order.delivery_fee, 0) + func.coalesce(
-        Order.low_order_fee, 0
-    )
+    # What the customer paid us on top of the goods: the delivery fee and every
+    # surcharge in `order_surcharges` (today the small-basket fee), each its own
+    # detail line under `delivery_fees`. Outside the VAT base (VAT is charged on
+    # the goods only — `order_pricing` computes it on the discounted subtotal),
+    # so no VAT line; the card fee on them is already in `payment_fee`, VAT and
+    # all. Zero on a marketplace order, whose delivery fee the customer pays the
+    # marketplace.
+    delivery_charge = func.coalesce(Order.delivery_fee, 0)
+    surcharges = order_surcharges.sql_total(Order)
+    delivery_fees = delivery_charge + surcharges
     return {
         # The goods the customer was billed for before discounts, VAT included:
         # the charged total with the discount put back and the delivery fees
@@ -450,6 +455,8 @@ def line_columns() -> dict[str, object]:
         ),
         **{key: part.label(key) for key, part in kind_parts.items()},
         "delivery_fees": r(on_sale(delivery_fees)).label("delivery_fees"),
+        "delivery_charge": r(on_sale(delivery_charge)).label("delivery_charge"),
+        "surcharges": r(on_sale(surcharges)).label("surcharges"),
         # Paid by a marketplace on an order it cancelled: Talabat's 30% on an
         # order cancelled in transit, a Keeta customer-service cancellation. Net
         # of whatever the marketplace kept, so no fee line stands beside it.
@@ -523,8 +530,13 @@ class _Lines:
     cogs_raw: Decimal = _ZERO
     cogs_packaging: Decimal = _ZERO
     cogs_resale: Decimal = _ZERO
-    #: Delivery + small-basket fees the customer paid us. No VAT on them.
+    #: Every fee the customer paid us on top of the goods. No VAT on them. The
+    #: sum of the two below.
     delivery_fees: Decimal = _ZERO
+    #: The delivery fee alone.
+    delivery_charge: Decimal = _ZERO
+    #: The small-basket fee and any other `order_surcharges` fee.
+    surcharges: Decimal = _ZERO
     #: What marketplaces paid on orders they cancelled (net of their cut).
     compensation: Decimal = _ZERO
     payment_fees: Decimal = _ZERO
@@ -640,6 +652,8 @@ def order_pnl_from_mapping(m: Mapping) -> OrderPnl | None:
         cogs=_money_or_none(m["cogs"]),
         **{key: money(m[key]) for key in COGS_KINDS},
         delivery_fees=money(m["delivery_fees"]),
+        delivery_charge=money(m["delivery_charge"]),
+        surcharges=money(m["surcharges"]),
         compensation=money(m["compensation"]),
         payment_fees=money(m["payment_fees"]),
         commission=money(m["commission"]),
@@ -749,6 +763,8 @@ async def totals_by_channel(db: AsyncSession, *where) -> dict[str, PnlTotals]:
             cogs=_money_or_none(m["cogs"]),
             **{key: money(m[key]) for key in COGS_KINDS},
             delivery_fees=money(m["delivery_fees"]),
+            delivery_charge=money(m["delivery_charge"]),
+            surcharges=money(m["surcharges"]),
             compensation=money(m["compensation"]),
             payment_fees=money(m["payment_fees"]),
             commission=money(m["commission"]),
@@ -783,6 +799,8 @@ def statement_fields(lines: _Lines) -> dict:
         **{key: getattr(lines, key) for key in COGS_KINDS},
         "pc1": lines.pc1,
         "delivery_fees": lines.delivery_fees,
+        "delivery_charge": lines.delivery_charge,
+        "surcharges": lines.surcharges,
         "compensation": lines.compensation,
         "payment_fees": lines.payment_fees,
         "commission": lines.commission,
@@ -815,6 +833,8 @@ SHARE_KEYS: tuple[str, ...] = (
     *COGS_KINDS,
     "pc1",
     "delivery_fees",
+    "delivery_charge",
+    "surcharges",
     "compensation",
     "payment_fees",
     "commission",
