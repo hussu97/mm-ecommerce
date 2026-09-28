@@ -2309,3 +2309,125 @@ async def test_persist_finance_isolates_one_bad_fee_patch(monkeypatch):
     )
     assert detail["order_fees"] == 2  # A and B applied; BAD isolated
     assert written == 2
+
+
+# ── the ranged backfill holds no transaction across the marketplace pull ──────
+#
+# Every Talabat backfill failed with "connection is closed" (prod, 2026-09-28):
+# `_run_range_channel` loaded the marketplace session on its main DB session and
+# went straight into the minutes-long Report Builder download with that
+# transaction still open. The per-connection 60s
+# `idle_in_transaction_session_timeout` killed the backend, and the first upsert
+# after the download failed. The scheduled sweep never did this (F-AGG-7).
+
+
+class _TxnTrackingSession:
+    """A DB session stand-in that knows whether it has a transaction open: any
+    use opens one, and commit/rollback closes it, as with a real AsyncSession."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.in_transaction = False
+        self.commits = 0
+
+    def touch(self):
+        self.in_transaction = True
+
+    async def commit(self):
+        self.in_transaction = False
+        self.commits += 1
+
+    async def rollback(self):
+        self.in_transaction = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+async def _range_run_with(monkeypatch, *, modes):
+    from app.services.aggregators import ingest
+
+    db = _TxnTrackingSession("main")
+    opened: list[_TxnTrackingSession] = []
+    open_at_fetch: list[list[str]] = []
+
+    def factory():
+        s = _TxnTrackingSession(f"load{len(opened)}")
+        opened.append(s)
+        return s
+
+    async def fake_new_run(session, *_a, **_k):
+        session.touch()  # INSERT the run row
+        return SimpleNamespace(id="run-1")
+
+    async def fake_session_for(session, *_a, **_k):
+        session.touch()  # session_store.load / enrich / prepare all query
+        return SimpleNamespace(channel="talabat")
+
+    async def fetch(_session, *, since, until):
+        # Every DB session this run has touched must be clean right now.
+        open_at_fetch.append([s.name for s in [db, *opened] if s.in_transaction])
+        return SimpleNamespace(orders=[], truncation_note=None)
+
+    async def fake_persist(session, *_a, **_k):
+        session.touch()  # upserts
+        return 0, None, {"orders": 0}
+
+    async def noop(*_a, **_k):
+        return None
+
+    async def no_coverage(*_a, **_k):
+        return {}
+
+    provider = SimpleNamespace(fetch_sales=fetch, fetch_finance=fetch)
+    monkeypatch.setattr(ingest, "AsyncSessionFactory", factory)
+    monkeypatch.setattr(ingest, "_new_run", fake_new_run)
+    monkeypatch.setattr(ingest, "_session_for", fake_session_for)
+    monkeypatch.setattr(ingest, "_persist_channel_mode", fake_persist)
+    monkeypatch.setattr(ingest, "_finalize_run_status", noop)
+    monkeypatch.setattr(ingest, "_run_coverage_stats", no_coverage)
+    monkeypatch.setitem(ingest.PROVIDERS, "talabat", provider)
+
+    result = await ingest._run_range_channel(
+        db,
+        "talabat",
+        date(2026, 9, 25),
+        date(2026, 9, 27),
+        modes=modes,
+        promote=False,
+        reconcile=False,
+        promote_mod=None,
+        reconcile_mod=None,
+    )
+    return result, open_at_fetch, opened
+
+
+async def test_range_run_holds_no_transaction_across_the_marketplace_fetch(
+    monkeypatch,
+):
+    from app.models.aggregator import RUN_MODE_FINANCE, RUN_MODE_SALES
+
+    result, open_at_fetch, opened = await _range_run_with(
+        monkeypatch, modes=(RUN_MODE_SALES, RUN_MODE_FINANCE)
+    )
+
+    assert open_at_fetch == [[], []], (
+        "a DB transaction was open during the marketplace pull — it sits idle for "
+        "the whole download and the 60s idle-in-transaction timeout kills it"
+    )
+    assert result["status"] == "completed"
+
+
+async def test_range_run_loads_the_marketplace_session_on_its_own_session(
+    monkeypatch,
+):
+    from app.models.aggregator import RUN_MODE_SALES
+
+    _result, _open, opened = await _range_run_with(monkeypatch, modes=(RUN_MODE_SALES,))
+
+    # Loaded (and possibly minted) on a short-lived session that was committed.
+    assert [s.name for s in opened] == ["load0"]
+    assert opened[0].commits == 1 and not opened[0].in_transaction

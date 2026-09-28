@@ -1596,11 +1596,18 @@ async def _fetch_and_persist(
     until: datetime,
     commit_each_day: bool = False,
 ) -> tuple[int, str | None, dict]:
-    """Fetch then persist on ONE session — kept for the ranged backfill
-    (`run_range`), which holds a single session across both modes and is a manual,
-    bounded operation. The scheduled sweep (`_sweep_channel`) instead splits these
-    two phases across separate sessions so it holds no pooled connection across the
-    minutes-long fetch (F-AGG-7).
+    """Fetch, then persist on `db`, for the ranged backfill (`run_range`).
+
+    **The caller must hand in `db` with no transaction open.** The fetch does not
+    touch `db`, so a clean session holds no connection during the minutes-long
+    marketplace pull. A session with a transaction still open sits idle-in-
+    transaction for the whole download, and the per-connection
+    `idle_in_transaction_session_timeout` (60s, `app/core/database.py`) terminates
+    it: the first upsert afterwards fails with "connection is closed". That is what
+    every Talabat backfill did until 2026-09-28 (`_run_range_channel` loaded the
+    marketplace session on `db` and went straight into the fetch). The scheduled
+    sweep (`_sweep_channel`) avoids the same thing by using separate sessions
+    (F-AGG-7).
 
     `commit_each_day` is passed through to the sales persist so the ranged backfill
     commits each business date as it lands (see `_persist_channel_mode`).
@@ -2188,13 +2195,19 @@ async def _run_range_channel(
             errors.append(f"renormalize: {exc}")
             logger.exception("aggregator %s range renormalize failed", channel)
     else:
-        session = await _session_for(db, channel, provider)
+        # Load (and, for a password channel, mint) the marketplace session on its
+        # OWN short-lived session and commit, exactly as `_sweep_channel` does.
+        # Loading it on `db` left that transaction open straight into the fetch
+        # below, idle for the whole download, and the 60s idle-in-transaction
+        # timeout killed the connection: every Talabat backfill failed with
+        # "connection is closed" (prod, 2026-09-28).
+        async with AsyncSessionFactory() as load_db:
+            session = await _session_for(load_db, channel, provider)
+            await load_db.commit()
         if session is None:
             # Trigger-based reauth: flag + wait for the daemon before giving up.
-            # Commit first so this channel's connection is released for the
-            # up-to-360s wait rather than held idle-in-transaction (see the
-            # 2026-08-30 pool-exhaustion incident). `run` stays usable afterwards.
-            await db.commit()
+            # Nothing is held on `db` across the up-to-360s wait (see the
+            # 2026-08-30 pool-exhaustion incident).
             session = await _await_reauth(channel, provider)
         if session is None:
             error = "session not live — needs a headed re-login"
@@ -2224,6 +2237,10 @@ async def _run_range_channel(
         for mode in modes:
             while True:
                 try:
+                    # Release `db` before the network pull: no transaction may be
+                    # left open across it (see `_fetch_and_persist`). A no-op
+                    # when nothing is pending, which is every path here today.
+                    await db.commit()
                     written, trunc, detail = await _fetch_and_persist(
                         db,
                         channel,
