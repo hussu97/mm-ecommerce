@@ -667,6 +667,8 @@ export interface ProductionLine {
   produced_at: string | null;
   category_name: string | null;
   category_order: number | null;
+  // Semi-finished items made just in time for this line and used up by it.
+  intermediates?: Schemas['ProductionIntermediateResponse'][];
 }
 
 /** The full production order, with its lines — the detail view. */

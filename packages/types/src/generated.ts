@@ -20146,6 +20146,26 @@ export interface components {
             } | null;
         };
         /**
+         * ProductionIntermediateResponse
+         * @description A semi-finished item made just in time for a line (Lindor Topping for a
+         *     Lindor Brownie): produced as its own batch, then used up by the line's.
+         */
+        ProductionIntermediateResponse: {
+            /** Display Unit */
+            display_unit?: string | null;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Item Name */
+            item_name?: string | null;
+            /** Production Reference */
+            production_reference: string;
+            /** Quantity */
+            quantity: string;
+        };
+        /**
          * ProductionItemInput
          * @description One item to be *produced* at the source branch, in the combined transfer
          *     and production order. Only items that have a recipe may appear here.
@@ -20187,6 +20207,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Intermediates
+             * @default []
+             */
+            intermediates: components["schemas"]["ProductionIntermediateResponse"][];
             /**
              * Item Id
              * Format: uuid

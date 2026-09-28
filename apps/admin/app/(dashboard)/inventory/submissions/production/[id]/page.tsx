@@ -6,7 +6,7 @@
 // that differs from the plan is flagged "modified", and each produced line links
 // out to its PRODUCTION movement reference in the ledger.
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -123,7 +123,8 @@ export default function ProductionOrderDetailPage() {
                   const modified = line.status === 'produced' && produced != null && num(produced) !== num(line.planned_quantity);
                   const diff = produced == null ? null : num(produced) - num(line.planned_quantity);
                   return (
-                    <tr key={line.id} className={`border-t border-gray-100 ${interactiveRowClass}`}>
+                    <Fragment key={line.id}>
+                    <tr className={`border-t border-gray-100 ${interactiveRowClass}`}>
                       <td className="px-2 py-1 font-medium">
                         {line.item_name ?? line.item_id}
                         {line.item_sku && <span className="ml-1 text-xs text-gray-400">{line.item_sku}</span>}
@@ -141,6 +142,22 @@ export default function ProductionOrderDetailPage() {
                       <td className="px-2 py-1 text-xs text-gray-600">{line.production_reference ?? <span className="text-gray-300">—</span>}</td>
                       <td className="px-2 py-1 text-xs text-gray-600">{line.cancel_note ?? ''}</td>
                     </tr>
+                    {(line.intermediates ?? []).map((made) => (
+                      <tr key={made.production_reference} className="text-xs text-gray-500">
+                        <td className="py-1 pl-6 pr-2">
+                          ↳ {made.item_name ?? made.item_id}
+                          <Badge variant="neutral" className="ml-2">Semi-finished</Badge>
+                        </td>
+                        <td className="px-2 py-1">{made.display_unit ?? ''}</td>
+                        <td className="px-2 py-1" />
+                        <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{formatQuantity(num(made.quantity))} {made.display_unit ?? ''}</td>
+                        <td className="px-2 py-1" />
+                        <td className="px-2 py-1">Made &amp; used</td>
+                        <td className="px-2 py-1">{made.production_reference}</td>
+                        <td className="px-2 py-1">Produced for {line.item_name ?? 'this line'}, then consumed by it</td>
+                      </tr>
+                    ))}
+                    </Fragment>
                   );
                 })}
               </GroupRows>

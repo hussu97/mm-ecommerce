@@ -32,6 +32,8 @@ from app.models import (
     InventoryItem,
     InventoryLevel,
     InventoryTransaction,
+    InventoryTransactionItem,
+    InventoryTransactionTypeEnum,
     InventoryTransferTemplate,
     NotificationRule,
     Order,
@@ -65,6 +67,7 @@ from app.schemas.inventory import (
 from app.schemas.production import (
     CancelLineRequest,
     ProduceLineRequest,
+    ProductionIntermediateResponse,
     ProductionOrderCreate,
     ProductionOrderResponse,
     ProductionOrderSummary,
@@ -1217,7 +1220,48 @@ async def _serialise_production_order(
             ).all()
         )
 
+    # Made intermediates share their line's provenance (produce() stamps the
+    # line id on them) but are not the line's own production transaction.
+    intermediates: dict[str, list[ProductionIntermediateResponse]] = {}
+    produced_line_ids = [
+        str(line.id) for line in order.lines if line.production_transaction_id
+    ]
+    if produced_line_ids:
+        made = (
+            await db.execute(
+                select(InventoryTransaction, InventoryTransactionItem, InventoryItem)
+                .join(
+                    InventoryTransactionItem,
+                    InventoryTransactionItem.transaction_id == InventoryTransaction.id,
+                )
+                .join(
+                    InventoryItem, InventoryItem.id == InventoryTransactionItem.item_id
+                )
+                .where(
+                    InventoryTransaction.type
+                    == InventoryTransactionTypeEnum.PRODUCTION.value,
+                    InventoryTransaction.source_type == "production_line",
+                    InventoryTransaction.source_id.in_(produced_line_ids),
+                    InventoryTransaction.id.not_in(txn_ids),
+                )
+                .order_by(InventoryTransaction.posting_sequence)
+            )
+        ).all()
+        for txn, txn_item, made_item in made:
+            intermediates.setdefault(txn.source_id, []).append(
+                ProductionIntermediateResponse(
+                    item_id=made_item.id,
+                    item_name=made_item.name,
+                    quantity=Decimal(str(txn_item.quantity)),
+                    display_unit=made_item.ingredient_unit
+                    if txn_item.unit == "ingredient"
+                    else made_item.storage_unit,
+                    production_reference=txn.reference,
+                )
+            )
+
     for line_payload, line in zip(payload.lines, order.lines):
+        line_payload.intermediates = intermediates.get(str(line.id), [])
         item = lookup.get(line.item_id)
         if item is not None:
             line_payload.item_name = item.name

@@ -504,3 +504,113 @@ async def test_combined_transfer_and_production_links(env):
             )
             == 0
         )
+
+
+async def test_semi_finished_line_is_made_then_used(env):
+    """A stocked semi-finished line with its own recipe (Lindor Topping in a
+    Lindor Brownie) is produced just in time as its own batch and consumed by the
+    parent: +/− on the intermediate, its ingredients drawn, the parent costed
+    through it — and the production report lists it under the line."""
+    from app.api.v1.operations import _serialise_production_order
+
+    ids, Session = env
+    async with Session() as db:
+        choc = await _item(db, "Chocolate", "raw_material", unit="g")
+        topping = await _item(db, "Topping", "semi_finished", unit="g")
+        topped = await _item(db, "Topped Brownie", "produced_good")
+        await recipe_service.draft_and_activate(
+            db,
+            kind="inventory_item",
+            owner_id=topping.id,
+            lines=[
+                RecipeLineInput(item_id=choc.id, quantity=Decimal("0.5")),
+                RecipeLineInput(item_id=ids.flour, quantity=Decimal("0.5")),
+            ],
+            user_id=ids.user.id,
+        )
+        await recipe_service.draft_and_activate(
+            db,
+            kind="inventory_item",
+            owner_id=topped.id,
+            lines=[
+                RecipeLineInput(item_id=ids.flour, quantity=Decimal("2")),
+                RecipeLineInput(item_id=topping.id, quantity=Decimal("3")),
+            ],
+            user_id=ids.user.id,
+        )
+        await seed_stock(
+            db,
+            branch_id=ids.source.id,
+            warehouse_id=ids.source_wh,
+            item_id=choc.id,
+            quantity="100",
+            unit_cost="0.02",
+        )
+        order = await transfer_service.create_production_order(
+            db,
+            source_branch=ids.source,
+            user=ids.user,
+            production_items=[
+                SimpleNamespace(
+                    item_id=topped.id, quantity=Decimal("4"), unit="storage"
+                )
+            ],
+        )
+        await db.commit()
+        line_id = order.lines[0].id
+
+        # The editor prices the semi-finished line from its sub-recipe, not its
+        # empty shelf: 0.5 × 0.02 + 0.5 × 0.01 = 0.015 / g.
+        quote = await recipe_service.quote_lines(
+            db,
+            owner_kind="inventory_item",
+            owner_id=topped.id,
+            basis="unit",
+            batch_yield=None,
+            lines=[
+                RecipeLineInput(item_id=ids.flour, quantity=Decimal("2")),
+                RecipeLineInput(item_id=topping.id, quantity=Decimal("3")),
+            ],
+        )
+        by_item = {row["item_id"]: row for row in quote["lines"]}
+        assert by_item[topping.id]["unit_cost"] == Decimal("0.015")
+        assert by_item[topping.id]["line_cost"] == Decimal("0.045")
+        assert quote["unit_cost"] == Decimal("0.065")
+
+    async with Session() as db:
+        line = await transfer_service.produce_line(db, line_id=line_id, user=ids.user)
+        await db.commit()
+        production = await db.get(InventoryTransaction, line.production_transaction_id)
+        assert production.total_cost == Decimal("0.26")
+
+    async with Session() as db:
+        # Topping made 12 and used 12; its chocolate + flour drawn by its batch.
+        assert await _on_hand(db, topping.id, ids.source_wh) == Decimal("0.0000")
+        assert await _on_hand(db, choc.id, ids.source_wh) == Decimal("94.0000")
+        assert await _on_hand(db, ids.flour, ids.source_wh) == Decimal("986.0000")
+        assert await _on_hand(db, topped.id, ids.source_wh) == Decimal("4.0000")
+        moved = (
+            await db.execute(
+                select(InventoryTransaction.type, InventoryTransactionItem.quantity)
+                .join(
+                    InventoryTransactionItem,
+                    InventoryTransactionItem.transaction_id == InventoryTransaction.id,
+                )
+                .where(
+                    InventoryTransaction.branch_id == ids.source.id,
+                    InventoryTransactionItem.item_id == topping.id,
+                )
+            )
+        ).all()
+        assert sorted((t, Decimal(str(q))) for t, q in moved) == [
+            ("consumption_from_production", Decimal("12.0000")),
+            ("production", Decimal("12.0000")),
+        ]
+
+        report = await _serialise_production_order(
+            db, await transfer_service.load_production_order(db, order.id)
+        )
+        (made,) = report.lines[0].intermediates
+        assert made.item_id == topping.id
+        assert made.quantity == Decimal("12.0000")
+        assert made.display_unit == "g"

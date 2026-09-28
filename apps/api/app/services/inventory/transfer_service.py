@@ -1094,6 +1094,38 @@ async def produce(
             for line in legacy_recipe
         ]
 
+    # A made intermediate (a stocked semi-finished line with its own recipe —
+    # Lindor Topping, Kunafa Paste) is produced just in time, as its own batch
+    # with its own correction group, before this batch consumes it: the ledger
+    # shows it made (+) and used (−), its ingredients are drawn by that batch, and
+    # the costing engine prices it from them. Same provenance as this batch, so
+    # the ledger and the production report link it back to what it was made for.
+    intermediate_costs: dict[uuid.UUID, Decimal] = {}
+    if expanded is not None:
+        catalog = await recipe_service.load_active_catalog(db)
+        for ingredient_id, used, _waste, _paths, _version in recipe_lines:
+            ingredient = catalog.items.get(ingredient_id)
+            if (
+                ingredient is None
+                or used <= 0
+                or not recipe_service.is_made_intermediate(catalog, ingredient)
+            ):
+                continue
+            made, _ = await produce(
+                db,
+                branch=branch,
+                user=user,
+                item_id=ingredient_id,
+                quantity=used,
+                warehouse_id=warehouse,
+                notes=f"Made for {output_quantity} x {item.name}",
+                source_type=source_type,
+                source_id=sid,
+                business_date=business_date,
+            )
+            # Per ingredient unit, the unit the consumption line below is in.
+            intermediate_costs[ingredient_id] = Decimal(str(made.items[0].unit_cost))
+
     correction_group = uuid.uuid4()
     if recipe_lines:
         consumption = InventoryTransaction(
@@ -1129,7 +1161,9 @@ async def produce(
                 else Decimal("1")
             )
             cost = _c(
-                inventory_service.canonical_cost_for_unit(
+                intermediate_costs[ingredient_id]
+                if ingredient_id in intermediate_costs
+                else inventory_service.canonical_cost_for_unit(
                     ingredient, level.average_cost, "ingredient"
                 )
                 if ingredient and Decimal(str(level.average_cost or 0)) > 0

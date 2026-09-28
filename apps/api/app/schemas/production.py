@@ -77,6 +77,17 @@ class CancelLineRequest(BaseModel):
 # ─── Responses ────────────────────────────────────────────────────────────────
 
 
+class ProductionIntermediateResponse(BaseModel):
+    """A semi-finished item made just in time for a line (Lindor Topping for a
+    Lindor Brownie): produced as its own batch, then used up by the line's."""
+
+    item_id: UUID
+    item_name: str | None = None
+    quantity: Decimal
+    display_unit: str | None = None
+    production_reference: str
+
+
 class ProductionLineResponse(ORMModel):
     id: UUID
     item_id: UUID
@@ -106,6 +117,8 @@ class ProductionLineResponse(ORMModel):
     #: the abstract ``unit`` kind — so the printout and report show the unit
     #: instead of the literal word "storage".
     display_unit: str | None = None
+    #: Made intermediates this line's production made and consumed.
+    intermediates: list[ProductionIntermediateResponse] = []
 
 
 class ProductionOrderResponse(ORMModel):
