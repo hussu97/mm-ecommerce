@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { isInAppBrowserHydrationError } from "@/lib/sentry-filters";
 
 const SENTRY_DSN = process.env.NEXT_PUBLIC_SENTRY_DSN;
 const SENTRY_ENVIRONMENT =
@@ -34,6 +35,11 @@ if (SENTRY_DSN) {
       ? sampleRate("NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE", 0)
       : 0,
     replaysOnErrorSampleRate: 1.0,
+    // Dropping the event here also stops the Replay integration flushing a
+    // replay for it, which is what raises Sentry's "Hydration Error" issue.
+    beforeSend(event) {
+      return isInAppBrowserHydrationError(event, navigator.userAgent) ? null : event;
+    },
   });
 }
 
