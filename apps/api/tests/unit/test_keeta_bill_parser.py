@@ -190,3 +190,104 @@ def test_parse_finance_keeps_weekly_bill_with_stable_id():
         result.statements[0].statement_id
         == "KEETA_BILL_1644189187_2026-09-01_2026-09-07"
     )
+
+
+def _multi_row_bill(rows: list[dict[int, object]]) -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Order Summary"
+    ws.append([])
+    ws.append([])
+    ws.append([_H38_MULTI.get(c) for c in range(1, 39)])
+    for data in rows:
+        ws.append([data.get(c) for c in range(1, 39)])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+_H38_MULTI = {
+    **_H38,
+    14: "Transaction type",
+    17: "Total Compensation to Merchant (VAT included)",
+    34: "Notes",
+}
+
+
+def test_an_orders_rows_are_summed_into_one_line_per_category():
+    """5297842074897565 (15–21 Sep bill): a Delivery Order row (+48.10) and the
+    Order Refund that claws it back (−49.50). Each row used to emit its own
+    line under the same key, so the ingest upsert kept only the refund's −49.50;
+    the settlement is −1.40."""
+    order = "5297842074897565"
+    sale = {
+        6: "20 Sep 2026",
+        9: order,
+        14: "Delivery Order",
+        16: 70.0,
+        20: -16.5,
+        21: -1.4,
+        22: -4.0,
+        30: 48.1,
+    }
+    refund = {
+        6: "20 Sep 2026",
+        9: order,
+        14: "Order Refund",
+        16: -70.0,
+        20: 16.5,
+        21: 0.0,
+        22: 4.0,
+        30: -49.5,
+        34: "Wrong side dishes",
+    }
+    lines = _parse_bill_xlsx(_multi_row_bill([sale, refund]), "S")
+    keys = [ln.source_key for ln in lines]
+    assert len(keys) == len(set(keys)), "one line per (order, category)"
+    cat = {ln.fee_category: ln.amount for ln in lines}
+    assert cat["net_payable"] == Decimal("-1.4")
+    assert cat["gross_sales"] == Decimal("0")
+    assert cat["commission"] == Decimal("0")
+    assert cat["bank_fee"] == Decimal("-1.4")
+
+
+def test_a_keeta_funded_refund_nets_to_sale_less_refund_plus_compensation():
+    """5167841430845412: +37.42 sale, −38.25 refund, +37.42 meal compensation
+    → 36.59 settled, not the 37.42 of the last row."""
+    order = "5167841430845412"
+    rows = [
+        {
+            6: "8 Sep 2026",
+            9: order,
+            14: "Delivery Order",
+            16: 55.0,
+            20: -12.75,
+            21: -0.83,
+            22: -4.0,
+            30: 37.42,
+        },
+        {
+            6: "8 Sep 2026",
+            9: order,
+            14: "Order Refund",
+            16: -55.0,
+            20: 12.75,
+            21: 0.0,
+            22: 4.0,
+            30: -38.25,
+        },
+        {
+            6: "8 Sep 2026",
+            9: order,
+            14: "Customer Compensation",
+            17: 37.42,
+            30: 37.42,
+            34: "Meal Compensation",
+        },
+    ]
+    cat = {
+        ln.fee_category: ln.amount
+        for ln in _parse_bill_xlsx(_multi_row_bill(rows), "S")
+    }
+    assert cat["net_payable"] == Decimal("36.59")
+    assert cat["bank_fee"] == Decimal("-0.83")

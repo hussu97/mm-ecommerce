@@ -46,6 +46,7 @@ a business date means to the people reading the reconciliation.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import logging
 import re
@@ -537,6 +538,13 @@ def _parse_bill_xlsx(
     `external_order_id`). Blank money cells are left out (a missing figure is
     unknown, never 0); a real 0.0 in the sheet is kept as stated. Amounts are AED
     major units, so `_money` reads them without any /100 conversion.
+
+    **An order can have several rows**, and they are summed: a refund after
+    delivery is the "Delivery Order" row plus an "Order Refund" row that claws
+    it back, and a Keeta-funded one adds a "Customer Compensation" row. They
+    share one line key per fee category, so emitting each row separately let the
+    last row overwrite the others: 5297842074897565 settled at +48.10 − 49.50 =
+    −1.40 and was booked at −49.50 (`_merge_order_rows`).
     """
     import io
 
@@ -629,9 +637,31 @@ def _parse_bill_xlsx(
                 if not keep_zero and amount == 0:
                     continue
                 _emit(line_type, fee_category, amount)
-        return lines
+        return _merge_order_rows(lines)
     finally:
         workbook.close()
+
+
+def _merge_order_rows(
+    lines: list[StandardStatementLine],
+) -> list[StandardStatementLine]:
+    """One line per `source_key`, its amount the sum of every row that produced
+    it — an order's Delivery Order, Order Refund and Customer Compensation rows
+    each emit a line per fee category under the same key. Notes are kept in
+    row order, deduplicated. First-appearance order is preserved."""
+    merged: dict[str, StandardStatementLine] = {}
+    for line in lines:
+        seen = merged.get(line.source_key)
+        if seen is None:
+            merged[line.source_key] = line
+            continue
+        notes = [n for n in (seen.description, line.description) if n]
+        merged[line.source_key] = dataclasses.replace(
+            seen,
+            amount=(seen.amount or Decimal("0")) + (line.amount or Decimal("0")),
+            description=" | ".join(dict.fromkeys(notes)) or None,
+        )
+    return list(merged.values())
 
 
 # "Invoice Details" sheet: the weekly *settlement* view — one row per shop per
