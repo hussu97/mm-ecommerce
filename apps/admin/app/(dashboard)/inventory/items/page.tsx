@@ -317,6 +317,9 @@ export default function ItemsPage() {
           // The estate-wide FIFO average (every branch's stock together); the
           // breakdown it opens can be narrowed to one branch.
           header: 'Cost (all branches)',
+          sortable: true,
+          sortKey: 'average-cost',
+          sortAccessor: (i) => (i.average_cost == null ? null : Number(i.average_cost)),
           // Highlighted + clickable: opens the cost-layer breakdown for the
           // current on-hand (how this average is reached, and from which POs).
           render: (i) => (
