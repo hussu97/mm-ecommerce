@@ -188,6 +188,42 @@ def test_keeta_status_codes_map():
     assert promote._target_status("keeta", "99") is None  # unknown → indeterminate
 
 
+def _desk_cancel(responsible):
+    return {
+        "canceledScene": 5050,
+        "orderCancelSceneDesc": "Customer service",
+        "merchantOrderTraces": [
+            {"opType": 20, "opScene": 4010},
+            {
+                "opType": 30,
+                "opScene": 5050,
+                "commonExt": {"cancelCode": 505002, "responsible": responsible},
+            },
+        ],
+    }
+
+
+def test_a_desk_cancellation_the_store_is_responsible_for_is_not_paid():
+    """5377840126154950: cancelled by Keeta customer service, "Responsibility:
+    Store", "Compensation from Keeta: No compensation". Its provisional net
+    (48.60) is not money Keeta owes, so it is not a provider-paid cancellation;
+    5167841430845412 (responsible 50) was, and billed a +37.42 compensation."""
+    store = _agg(status="cancelled", net_payable=Decimal("48.60"), raw=_desk_cancel(20))
+    keeta = _agg(status="cancelled", net_payable=Decimal("37.42"), raw=_desk_cancel(50))
+    keeta_60 = _agg(
+        status="cancelled", net_payable=Decimal("41.92"), raw=_desk_cancel(60)
+    )
+    unseen = _agg(
+        status="cancelled", net_payable=Decimal("37.42"), raw=_desk_cancel(99)
+    )
+    assert not promote._provider_cancelled_but_paid(store)
+    assert promote._provider_cancelled_but_paid(keeta)
+    assert promote._provider_cancelled_but_paid(keeta_60)
+    assert not promote._provider_cancelled_but_paid(unseen)
+    # Unbilled and not provider-paid → the settled net is unknown until the bill.
+    assert promote._cancellation_net(store, provider_paid=False) is None
+
+
 def test_provider_cancelled_but_paid_needs_net_and_a_provider_funded_scene():
     # Two filters, both required. Cancelled at Keeta's own customer-service desk
     # AND still paid the net → we keep it. The scene is what tips a positive-net

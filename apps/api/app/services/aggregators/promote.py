@@ -262,6 +262,17 @@ _PROVIDER_FUNDED_CANCEL_SCENE_CODE = "5050"
 #: The same party by its humanised `orderCancelSceneDesc` — the locale-dependent
 #: fallback for a payload that somehow omits the numeric `canceledScene`.
 _PROVIDER_FUNDED_CANCEL_SCENES = frozenset({"customer service"})
+#: Who Keeta's customer-service desk held responsible for a 5050 cancellation, as
+#: the cancel trace records it (`merchantOrderTraces[…].commonExt.responsible`).
+#: The desk cancels for both parties. 50 and 60 are Keeta's own side, which it
+#: compensates: every such order billed positive (5167841430845412 +37.42 "Meal
+#: Compensation"; 4477840909416491, 4647843283131972, 4677840390710681 +40–42).
+#: 20 is the store ("Refund reason: Incorrect order prepared", "Compensation from
+#: Keeta: No compensation" on 5377840126154950), which it does not: both billed
+#: ones settled negative (4627840397156918 −30.75, 4967841466887609 −27.00). An
+#: allowlist, like the scene: a value we have not seen is the shop's cost until
+#: the weekly bill says otherwise.
+_PROVIDER_FUNDED_RESPONSIBLE = frozenset({"50", "60"})
 
 
 def _cancellation_paid_by_provider(agg: AggregatorOrder) -> bool:
@@ -276,16 +287,42 @@ def _cancellation_paid_by_provider(agg: AggregatorOrder) -> bool:
 
     Keyed on the numeric `canceledScene` first (locale-proof), falling back to the
     humanised `orderCancelSceneDesc` only when the code is absent.
+
+    The desk is not always the party that pays, though: it also cancels orders it
+    holds the store responsible for, and those it does not compensate. So where
+    the cancel trace names who was responsible, only Keeta's own side
+    (`_PROVIDER_FUNDED_RESPONSIBLE`) counts. A payload with no such trace keeps
+    the scene-only reading it has always had.
     """
     raw = agg.raw or {}
     code = raw.get("canceledScene")
-    if code is not None and str(code).strip() == _PROVIDER_FUNDED_CANCEL_SCENE_CODE:
-        return True
     scene = raw.get("orderCancelSceneDesc")
-    return (
-        isinstance(scene, str)
-        and scene.strip().lower() in _PROVIDER_FUNDED_CANCEL_SCENES
-    )
+    if code is not None:
+        desk = str(code).strip() == _PROVIDER_FUNDED_CANCEL_SCENE_CODE
+    else:
+        desk = (
+            isinstance(scene, str)
+            and scene.strip().lower() in _PROVIDER_FUNDED_CANCEL_SCENES
+        )
+    if not desk:
+        return False
+    responsible = _cancel_responsible(raw)
+    return responsible is None or responsible in _PROVIDER_FUNDED_RESPONSIBLE
+
+
+def _cancel_responsible(raw: dict) -> str | None:
+    """The party Keeta held responsible for the cancellation, from the cancel
+    trace (`opType` 30); None when the payload carries no such trace."""
+    traces = raw.get("merchantOrderTraces")
+    if not isinstance(traces, list):
+        return None
+    for trace in traces:
+        if not isinstance(trace, dict) or str(trace.get("opType")) != "30":
+            continue
+        ext = trace.get("commonExt")
+        if isinstance(ext, dict) and ext.get("responsible") is not None:
+            return str(ext["responsible"]).strip()
+    return None
 
 
 def _refunded_after_delivery(agg: AggregatorOrder) -> str | None:
