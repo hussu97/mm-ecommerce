@@ -671,6 +671,12 @@ class Settings(BaseSettings):
     #: branches (Sharjah/Barsha) are unaffected in practice — their lines are
     #: rebuilt from the GrubOps push — so this effectively only touches Al Karama.
     TALABAT_ORDER_DETAIL_ENRICH: bool = True
+    #: Read the Talabat **return PIN** for orders cancelled after the rider
+    #: collected them: on demand when the GrubOps cancellation lands, and on the
+    #: hourly sales refresh for any row the CSV says went out and never arrived
+    #: (`marketplace_returns`). Read-only, a handful of calls a week, fail-soft —
+    #: switchable off without a revert.
+    TALABAT_RETURN_PIN_ENABLED: bool = True
     #: Take the **hours** fan-out live independently of the broader catalog write.
     #: `CATALOG_SYNC_ENABLED` stays the master gate (the writers refuse when it is
     #: off), but even with it on the hours push stays **dry-run** — it logs and

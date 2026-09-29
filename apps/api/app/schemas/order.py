@@ -24,6 +24,7 @@ from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 # still in it.
 from app.models.payment_gateway import PaymentMethodEnum  # noqa: F401
 from app.schemas.courier import CourierBadge
+from app.schemas.marketplace_return import MarketplaceReturnInfo
 from app.schemas.pnl import OrderPnlBrief
 from app.schemas.pos.legal_entity import OrderLegalEntity
 from app.schemas.surcharge import SurchargeLine
@@ -693,3 +694,6 @@ class OrderAdminDetails(BaseModel):
     pricing_status: str | None = None
     ingest_flags: list[str] = []
     ingested_late: bool = False
+    #: A marketplace order cancelled after its rider collected it: the return
+    #: PIN and whether the box has been received back. Null otherwise.
+    marketplace_return: MarketplaceReturnInfo | None = None

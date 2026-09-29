@@ -490,3 +490,45 @@ async def notify_rider_assigned(
         payload=payload,
         collapse_id=f"rider-{order.order_number}-{assignment}",
     )
+
+
+async def notify_return_expected(
+    db: AsyncSession, order: Order, *, pin: str | None
+) -> int:
+    """
+    A marketplace cancelled an order after its rider collected it; it is coming
+    back, and this is the PIN to give the rider.
+
+    Sent once the PIN is known, so the register that printed the order's receipt
+    prints the return docket now rather than on its next 45-second poll. The PIN
+    is in the body because the person at the counter needs it the moment the rider
+    walks in, possibly before anyone unlocks the iPad.
+    """
+    if not order.branch_id:
+        return 0
+    reference = order.external_reference or order.order_number
+    channel = (order.aggregator_channel or "Marketplace").title()
+    body = f"{channel} #{reference} is coming back"
+    if pin:
+        body = f"{body} · Return PIN {pin}"
+    payload = _alert(
+        "Return incoming",
+        body,
+        sound="default",
+        extra={
+            "event": "return_expected",
+            "order_number": order.order_number,
+            "order_id": str(order.id),
+            "branch_id": str(order.branch_id),
+            "return_pin": pin,
+            "requires_acknowledgement": False,
+        },
+        # Wakes a backgrounded register so it can print the return docket.
+        wake_the_app=True,
+    )
+    return await _send_to_branch(
+        db,
+        order.branch_id,
+        payload=payload,
+        collapse_id=f"return-{order.order_number}",
+    )

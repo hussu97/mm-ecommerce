@@ -7694,6 +7694,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/orders/{order_id}/return-received": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Return Received
+         * @description The marketplace's rider brought a cancelled order back, and it is in the shop.
+         *
+         *     Only for an order the marketplace cancelled after collecting it (it has a
+         *     `return_info`). Stamps who took it in and, when its recipe consumption had been
+         *     posted, restocks the returned goods in full — the same inventory return a
+         *     counter void makes. The order stays `cancelled`: the sale is still unwound;
+         *     this records where the box went.
+         *
+         *     Idempotent, because two people will press it.
+         */
+        post: operations["mark_return_received_api_v1_pos_orders__order_id__return_received_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/orders/{order_id}/schedule": {
         parameters: {
             query?: never;
@@ -17055,6 +17083,44 @@ export interface components {
             system: string;
         };
         /**
+         * MarketplaceReturnInfo
+         * @description What the register and the admin show for an order coming back.
+         *
+         *     `status`:
+         *     - `pin_pending` — cancelled after it left the kitchen; the PIN is not read yet.
+         *     - `awaiting_return` — the rider is bringing it back; give them `return_pin`.
+         *     - `received` — taken back in (`received_at` / `received_by`).
+         *     - `not_returning` — the marketplace says nothing is coming back.
+         */
+        MarketplaceReturnInfo: {
+            /** Cancel Owner */
+            cancel_owner?: string | null;
+            /** Cancel Reason */
+            cancel_reason?: string | null;
+            /** Cancelled At */
+            cancelled_at?: string | null;
+            /** Channel */
+            channel: string;
+            /** External Order Id */
+            external_order_id: string;
+            /** Received At */
+            received_at?: string | null;
+            /** Received By */
+            received_by?: string | null;
+            /**
+             * Restocked
+             * @default false
+             */
+            restocked: boolean;
+            /** Return Pin */
+            return_pin?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pin_pending" | "awaiting_return" | "received" | "not_returning";
+        };
+        /**
          * MenuGroupClone
          * @description Open a new shop's menu as a copy of an existing branch's tree.
          */
@@ -17549,6 +17615,7 @@ export interface components {
              * @default false
              */
             ingested_late: boolean;
+            marketplace_return?: components["schemas"]["MarketplaceReturnInfo"] | null;
             /** Pricing Status */
             pricing_status?: string | null;
             /**
@@ -19526,6 +19593,7 @@ export interface components {
             pos_status: string | null;
             /** Pricing Status */
             pricing_status?: string | null;
+            return_info?: components["schemas"]["MarketplaceReturnInfo"] | null;
             /** Rounding Amount */
             rounding_amount: string;
             /** Source */
@@ -39017,6 +39085,7 @@ export interface operations {
                 pos_status?: string | null;
                 order_type?: string | null;
                 open_only?: boolean;
+                returns_pending?: boolean;
                 q?: string | null;
                 limit?: number;
                 offset?: number;
@@ -39746,6 +39815,37 @@ export interface operations {
         };
     };
     resume_order_api_v1_pos_orders__order_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_return_received_api_v1_pos_orders__order_id__return_received_post: {
         parameters: {
             query?: never;
             header?: never;

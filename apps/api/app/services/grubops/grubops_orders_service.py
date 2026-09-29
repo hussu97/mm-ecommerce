@@ -1081,8 +1081,9 @@ async def _apply_status(
         # keeping.
         if reason:
             order.aggregator_cancel_reason = reason
+        previous = order.status
         with acting_as(StatusSourceEnum.AGGREGATOR, at=at, note=reason):
-            await order_lifecycle.transition(
+            moved = await order_lifecycle.transition(
                 db,
                 order,
                 target,
@@ -1095,6 +1096,14 @@ async def _apply_status(
                 on_invalid="skip",
             )
         _sync_pos_status(order, target)
+        if moved:
+            # Cancelled after it left the kitchen: the rider may be bringing it
+            # back, and Talabat's return PIN lives only in its portal. Opens the
+            # return and reads the PIN a few seconds from now (no-op for any
+            # other channel or an earlier cancel).
+            from app.services.aggregators import marketplace_returns
+
+            await marketplace_returns.open_on_cancellation(db, order, previous=previous)
         return
 
     if target not in _LADDER:

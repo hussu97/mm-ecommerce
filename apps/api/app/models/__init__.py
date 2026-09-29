@@ -161,6 +161,7 @@ from .marketing import (  # noqa: F401
     TimedEvent,
     TimedEventTypeEnum,
 )
+from .marketplace_return import MarketplaceReturn  # noqa: F401
 from .menu import (  # noqa: F401
     Allergen,
     BranchModifierOption,
@@ -313,6 +314,7 @@ __all__ = [
     "PaymentTransaction",
     "PaymentTransactionStatusEnum",
     "OrderDelivery",
+    "MarketplaceReturn",
     "OrderReceiver",
     "OrderStatusEvent",
     "StatusActor",

@@ -33,6 +33,7 @@ from app.models.inventory_v2 import (
     InventorySourceEvent,
     InventorySourceEventStatusEnum,
 )
+from app.models.marketplace_return import MarketplaceReturn
 from app.models.order import DeliveryMethodEnum, Order, OrderItem
 from app.models.product import Product
 from app.models.user import User
@@ -187,6 +188,11 @@ async def _teardown(engine, ids) -> None:
         await db.execute(
             OrderItem.__table__.delete().where(OrderItem.order_id == ids["order_id"])
         )
+        await db.execute(
+            MarketplaceReturn.__table__.delete().where(
+                MarketplaceReturn.order_id == ids["order_id"]
+            )
+        )
         await db.execute(Order.__table__.delete().where(Order.id == ids["order_id"]))
         await db.execute(text("SET session_replication_role = 'origin'"))
         await db.commit()
@@ -296,5 +302,66 @@ async def test_post_packing_cancellation_leaves_the_goods_consumed(engine):
             assert exception is not None
             assert exception.status == InventorySourceEventStatusEnum.EXCEPTION.value
             assert exception.error_code == "return_disposition_required"
+    finally:
+        await _teardown(engine, ids)
+
+
+async def test_a_marketplace_return_received_back_restocks_and_resolves(engine):
+    """Talabat cancelled it after the rider collected it (post-packing: consumed,
+    disposition exception logged); the rider brings it back and the register
+    marks it received — the goods go back on hand and the exception resolves."""
+    from app.services.aggregators import marketplace_returns
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        ids = await _seed_order(db)
+    try:
+        async with Session() as db:
+            order = await db.get(Order, ids["order_id"])
+            user = await db.get(User, ids["user_id"])
+            await source_event_service.accept_order(db, order=order, user=user)
+            await db.commit()
+        async with Session() as db:
+            order = await db.get(Order, ids["order_id"])
+            await source_event_service.record_order_cancellation(
+                db, order, pre_packing=False
+            )
+            db.add(
+                MarketplaceReturn(
+                    order_id=order.id,
+                    channel="talabat",
+                    external_order_id="3924587196",
+                    status="awaiting_return",
+                    return_pin="7058",
+                )
+            )
+            await db.commit()
+
+        for _ in range(2):  # a second tap is a no-op
+            async with Session() as db:
+                order = await db.get(Order, ids["order_id"])
+                user = await db.get(User, ids["user_id"])
+                row = await marketplace_returns.mark_received(db, order, user=user)
+                await db.commit()
+
+        async with Session() as db:
+            returns = await _returns(db, ids["order_id"])
+            assert len(returns) == 1
+            assert await _level_qty(db, ids["ingredient_id"]) == Decimal("0")
+            exception = await db.scalar(
+                select(InventorySourceEvent).where(
+                    InventorySourceEvent.idempotency_key
+                    == f"order-cancel:{ids['order_id']}:1"
+                )
+            )
+            assert exception.status == InventorySourceEventStatusEnum.POSTED.value
+            row = await db.scalar(
+                select(MarketplaceReturn).where(
+                    MarketplaceReturn.order_id == ids["order_id"]
+                )
+            )
+            assert row.status == "received"
+            assert row.received_by_id == ids["user_id"]
+            assert row.restock_transaction_id == returns[0].id
     finally:
         await _teardown(engine, ids)

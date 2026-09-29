@@ -453,13 +453,21 @@ def _set_cancellation_net(
 def _cancel_reason(agg: AggregatorOrder) -> str | None:
     """A short, humanised reason the marketplace cancelled, for display only.
 
-    Keeta exposes `orderCancelSceneDesc` ("Customer service", "Item unavailable");
-    other channels don't carry one on the scrape, so this is best-effort and never
+    Keeta exposes `orderCancelSceneDesc` ("Customer service", "Item unavailable")
+    and Talabat's export its `Cancellation owner` / `Cancellation reason`; other
+    channels don't carry one on the scrape, so this is best-effort and never
     invented. Kept to the `aggregator_cancel_reason` column width.
     """
-    reason = (agg.raw or {}).get("orderCancelSceneDesc")
+    raw = agg.raw or {}
+    reason = raw.get("orderCancelSceneDesc")
     if isinstance(reason, str) and reason.strip():
         return reason.strip()[:60]
+    # Talabat's export names who cancelled and why ("Customer" / "Unable to find
+    # customer"). Empty on every Talabat order before 2026-09-29.
+    owner = str(raw.get("Cancellation owner") or "").strip()
+    why = str(raw.get("Cancellation reason") or "").strip()
+    if why:
+        return (f"{owner}: {why}" if owner else why)[:60]
     return None
 
 
@@ -1117,6 +1125,14 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
                     ),
                     on_invalid="skip",
                 )
+            if order.status == OrderStatusEnum.CANCELLED:
+                # Cancelled after the rider collected it and never delivered:
+                # the box is coming back, with a return PIN the sales sweep read
+                # from the portal. The backstop for the GrubOps trigger, and the
+                # only path for a branch GrubOps does not own.
+                from app.services.aggregators import marketplace_returns
+
+                await marketplace_returns.record_from_scrape(db, order, agg)
             return
     else:
         _set_cancellation_net(order, None)

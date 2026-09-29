@@ -35,8 +35,13 @@ from app.models import (
     acting_as,
 )
 from app.models.base import utcnow
+from app.models.marketplace_return import (
+    MarketplaceReturn,
+    MarketplaceReturnStatusEnum,
+)
 from app.models.user import User
 from app.schemas.courier import CourierBadge
+from app.schemas.marketplace_return import MarketplaceReturnInfo
 from app.schemas.pos_order import (
     AddItemRequest,
     ApplyChargeRequest,
@@ -97,6 +102,8 @@ def _list_load_options():
         # inside an async request raises MissingGreenlet rather than quietly
         # issuing a second query.
         selectinload(Order.delivery),
+        # The return PIN of a marketplace order coming back (`return_info`).
+        selectinload(Order.marketplace_return),
         # The branch's trading hours decide whether a terminal may accept an
         # order by itself.
         selectinload(Order.branch),
@@ -191,6 +198,10 @@ def _serialise(order: Order) -> PosOrderResponse:
     # window; it passes None (an optimistic hint), and a wrong hint costs a 409
     # and an alarm rather than a driver at a shut shop.
     payload.may_auto_accept = pos_order_service.may_auto_accept(order, None)
+    # Guarded like the courier: only when the query loaded it (both the list and
+    # `get_order` do), so a caller that forgot costs a missing PIN, not a 500.
+    if "marketplace_return" not in inspect(order).unloaded:
+        payload.return_info = MarketplaceReturnInfo.of(order.marketplace_return)
     # Written out rather than left to the enum's `str` base, so the register
     # reads `"packed"` and never `"OrderStatusEnum.PACKED"`.
     payload.status = order.status.value if order.status is not None else None
@@ -246,6 +257,9 @@ async def list_orders(
     pos_status: str | None = None,
     order_type: str | None = None,
     open_only: bool = False,
+    # Only marketplace orders on their way back (a return PIN pending or known).
+    # The register's return-docket fallback poll; a handful of rows at most.
+    returns_pending: bool = False,
     q: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -268,6 +282,21 @@ async def list_orders(
         stmt = stmt.where(Order.order_type == order_type)
     if open_only:
         stmt = stmt.where(Order.pos_status.in_(sorted(pos_order_service.OPEN_STATUSES)))
+    if returns_pending:
+        # An IN over the (tiny) returns table, so the plan starts there rather
+        # than at the branch's whole order history.
+        stmt = stmt.where(
+            Order.id.in_(
+                select(MarketplaceReturn.order_id).where(
+                    MarketplaceReturn.status.in_(
+                        (
+                            MarketplaceReturnStatusEnum.PIN_PENDING.value,
+                            MarketplaceReturnStatusEnum.AWAITING_RETURN.value,
+                        )
+                    )
+                )
+            )
+        )
     if q and q.strip():
         # Server-side search over the whole (day's) list, not the loaded page:
         # every identifier someone arrives holding — order/check number, the
@@ -906,6 +935,30 @@ async def mark_handed_over(
     reloaded = await _load(db, order_id)
     await email_service.notify_order(db, reloaded)
     return _serialise(reloaded)
+
+
+@router.post("/{order_id}/return-received", response_model=PosOrderResponse)
+async def mark_return_received(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("pos.register.access")),
+):
+    """
+    The marketplace's rider brought a cancelled order back, and it is in the shop.
+
+    Only for an order the marketplace cancelled after collecting it (it has a
+    `return_info`). Stamps who took it in and, when its recipe consumption had been
+    posted, restocks the returned goods in full — the same inventory return a
+    counter void makes. The order stays `cancelled`: the sale is still unwound;
+    this records where the box went.
+
+    Idempotent, because two people will press it.
+    """
+    from app.services.aggregators import marketplace_returns
+
+    order = await _load(db, order_id)
+    await marketplace_returns.mark_received(db, order, user=user)
+    return _serialise(await _load(db, order_id))
 
 
 @router.post("/{order_id}/collected", response_model=PosOrderResponse)

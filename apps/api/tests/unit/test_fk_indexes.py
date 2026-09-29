@@ -64,6 +64,11 @@ _RAW_MIGRATION_INDEX = (
 # column now has a real index) as the thing to celebrate, not an entry to
 # re-justify.
 ALLOW_LIST: dict[tuple[str, str], str] = {
+    # Migration 306: marketplace returns. A handful of rows a month, read by
+    # order (unique-indexed); who received it and the restock movement are only
+    # displayed, and a user/transaction delete scanning a table this size is free.
+    ("marketplace_returns", "received_by_id"): "display-only, tiny table",
+    ("marketplace_returns", "restock_transaction_id"): "display-only, tiny table",
     # Migration 287: the replenishment forecast's shadow history and settings.
     # History is read by date (indexed) and item (indexed); the branch columns
     # are only displayed, and branches are soft-deleted, so the ON DELETE

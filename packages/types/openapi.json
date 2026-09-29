@@ -21060,6 +21060,109 @@
         "title": "MappingResolveResult",
         "type": "object"
       },
+      "MarketplaceReturnInfo": {
+        "description": "What the register and the admin show for an order coming back.\n\n`status`:\n- `pin_pending` \u2014 cancelled after it left the kitchen; the PIN is not read yet.\n- `awaiting_return` \u2014 the rider is bringing it back; give them `return_pin`.\n- `received` \u2014 taken back in (`received_at` / `received_by`).\n- `not_returning` \u2014 the marketplace says nothing is coming back.",
+        "properties": {
+          "cancel_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Owner"
+          },
+          "cancel_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Reason"
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "external_order_id": {
+            "title": "External Order Id",
+            "type": "string"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At"
+          },
+          "received_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received By"
+          },
+          "restocked": {
+            "default": false,
+            "title": "Restocked",
+            "type": "boolean"
+          },
+          "return_pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Pin"
+          },
+          "status": {
+            "enum": [
+              "pin_pending",
+              "awaiting_return",
+              "received",
+              "not_returning"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "channel",
+          "external_order_id"
+        ],
+        "title": "MarketplaceReturnInfo",
+        "type": "object"
+      },
       "MenuGroupClone": {
         "description": "Open a new shop's menu as a copy of an existing branch's tree.",
         "properties": {
@@ -22496,6 +22599,16 @@
             "default": false,
             "title": "Ingested Late",
             "type": "boolean"
+          },
+          "marketplace_return": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketplaceReturnInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pricing_status": {
             "anyOf": [
@@ -28549,6 +28662,16 @@
               }
             ],
             "title": "Pricing Status"
+          },
+          "return_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketplaceReturnInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "rounding_amount": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -69549,6 +69672,16 @@
           },
           {
             "in": "query",
+            "name": "returns_pending",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Returns Pending",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
             "name": "q",
             "required": false,
             "schema": {
@@ -70851,6 +70984,55 @@
           }
         ],
         "summary": "Resume Order",
+        "tags": [
+          "POS Orders"
+        ]
+      }
+    },
+    "/api/v1/pos/orders/{order_id}/return-received": {
+      "post": {
+        "description": "The marketplace's rider brought a cancelled order back, and it is in the shop.\n\nOnly for an order the marketplace cancelled after collecting it (it has a\n`return_info`). Stamps who took it in and, when its recipe consumption had been\nposted, restocks the returned goods in full \u2014 the same inventory return a\ncounter void makes. The order stays `cancelled`: the sale is still unwound;\nthis records where the box went.\n\nIdempotent, because two people will press it.",
+        "operationId": "mark_return_received_api_v1_pos_orders__order_id__return_received_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PosOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Mark Return Received",
         "tags": [
           "POS Orders"
         ]

@@ -278,6 +278,52 @@ _MAX_LIST_ORDERS_PAGES = 40
 #: portal. A month backfill runs day-by-day (each day well under this).
 _MAX_DETAIL_FETCHES = 200
 
+#: The return PIN and the rider's timeline for one order. The portal's order
+#: drawer labels `pin` "Return PIN"; the schema's `returnOrderPin` exists but was
+#: null on every cancellation checked (36, Jul–Sep 2026). `pin` is null while an
+#: order is in flight and is minted on EVERY cancellation — even one cancelled
+#: before a rider arrived — so whether anything is actually coming back is read
+#: from `orderStatuses` (picked up, never delivered), not from the PIN.
+#: `placedTimestamp` is not needed here; a wrong `vendorId` answers "Order Not
+#: Found". Captured live from the partner-app bundle 2026-09-29.
+_RETURN_DETAILS_QUERY = """
+query GetOrderDetails($params: OrderReq!) {
+  orders {
+    order(input: $params) {
+      pin
+      returnOrderPin
+      order {
+        orderId
+        status
+        __typename
+      }
+      orderStatuses {
+        status
+        timestamp
+        detail {
+          ... on Cancelled {
+            owner
+            reason
+            __typename
+          }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+""".strip()
+
+#: The rider has the box: either of Talabat's two pickup words.
+_PICKED_UP_STATUSES = frozenset({"PICKED_UP", "PICKED_UP_BY_RIDER"})
+
+#: At most this many return-detail reads per sales sweep. A return is a handful
+#: a month (5 in Jul–Sep 2026); this is only a guard against a surprise.
+_MAX_RETURN_FETCHES = 25
+
 _LIST_PAYOUTS_QUERY = """
 query ListPayouts($params: ListPayoutsRequest!) {
   finances {
@@ -436,6 +482,56 @@ def _parse_dt(value: Any) -> datetime | None:
         return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def is_return_candidate_row(row: dict) -> bool:
+    """Whether a Report Builder CSV row reads as a box coming back.
+
+    Cancelled, after it went out for delivery (`In delivery at`), and never
+    delivered — a cancellation *after* delivery is a refund the customer kept the
+    food for. Matched the portal's timeline on every return in prod (2026-09-29).
+    """
+    status = str(row.get("Order status") or "").strip().lower()
+    return (
+        status == "cancelled"
+        and _parse_dt(row.get("In delivery at")) is not None
+        and _parse_dt(row.get("Delivered at")) is None
+    )
+
+
+def parse_return_details(detail: dict) -> dict[str, Any]:
+    """`GetOrderDetails` (return shape) → the JSON-safe facts a return needs.
+
+    `returning` is the whole decision: the rider picked it up, it was never
+    delivered, and it ended cancelled. The PIN is kept whatever the answer, so the
+    admin can still quote it.
+    """
+    statuses = [s for s in (detail.get("orderStatuses") or []) if isinstance(s, dict)]
+    words = [str(s.get("status") or "").upper() for s in statuses]
+    order = detail.get("order") or {}
+    cancelled = next((s for s in statuses if s.get("status") == "CANCELLED"), None)
+    cancel_detail = (cancelled or {}).get("detail") or {}
+    pin = detail.get("returnOrderPin") or detail.get("pin")
+    is_cancelled = (
+        str(order.get("status") or "").upper() == "CANCELLED" or cancelled is not None
+    )
+    return {
+        "pin": str(pin).strip() if pin not in (None, "") else None,
+        "picked_up": any(w in _PICKED_UP_STATUSES for w in words),
+        "delivered": "DELIVERED" in words,
+        "cancelled": is_cancelled,
+        "returning": (
+            is_cancelled
+            and any(w in _PICKED_UP_STATUSES for w in words)
+            and "DELIVERED" not in words
+        ),
+        "cancel_owner": cancel_detail.get("owner"),
+        "cancel_reason": cancel_detail.get("reason"),
+        "cancelled_at": (cancelled or {}).get("timestamp"),
+        "timeline": [
+            {"status": s.get("status"), "at": s.get("timestamp")} for s in statuses
+        ],
+    }
 
 
 #: The export's status-timeline columns, in the order an order moves through
@@ -1294,7 +1390,86 @@ class TalabatClient(BaseAggregatorClient):
         csv_text = await self._download_csv(session, download_url)
         orders = self._orders_from_csv(csv_text)
         orders = await self._enrich_orders(session, orders, since=since, until=until)
+        await self._attach_return_details(session, orders)
         return SalesResult(orders=orders, truncation_note=truncation_note)
+
+    # ── return PIN (orders cancelled after the rider collected them) ──────────
+    async def fetch_return_details(
+        self, session: LoadedSession, *, order_id: str, vendor_id: str
+    ) -> dict[str, Any] | None:
+        """The return PIN and rider timeline of one order, parsed; None if absent.
+
+        One `GetOrderDetails` read keyed on the order id and its store. Raises the
+        base's auth/unavailable errors like every other call — the callers decide
+        what a failure means (the trigger retries, the sweep skips the order).
+        """
+        data = await self._graphql(
+            session,
+            endpoint=_FINANCE_GRAPHQL,
+            query=_RETURN_DETAILS_QUERY,
+            variables={
+                "params": {
+                    "orderId": order_id,
+                    "GlobalVendorCode": {
+                        "globalEntityId": self._global_entity_id(session),
+                        "vendorId": vendor_id,
+                    },
+                }
+            },
+            operation_name="GetOrderDetails",
+        )
+        detail = (data.get("orders") or {}).get("order")
+        if not isinstance(detail, dict):
+            return None
+        return parse_return_details(detail)
+
+    async def _attach_return_details(
+        self, session: LoadedSession, orders: list[StandardOrder]
+    ) -> None:
+        """Read the return PIN for every row that looks like a return.
+
+        A row looks like one when the CSV says it was cancelled after it went out
+        for delivery and never delivered (`is_return_candidate_row`). The parsed
+        detail rides on `raw["_mm_return"]`, where promotion picks it up
+        (`marketplace_returns.record_from_scrape`). Fail-soft per order: a failed
+        read leaves the row as the CSV had it, and the next hourly refresh tries
+        again.
+        """
+        if not settings.TALABAT_RETURN_PIN_ENABLED:
+            return
+        fetched = 0
+        for order in orders:
+            raw = order.raw if isinstance(order.raw, dict) else None
+            if raw is None or not is_return_candidate_row(raw):
+                continue
+            if not order.external_outlet_id:
+                continue
+            if fetched >= _MAX_RETURN_FETCHES:
+                logger.warning(
+                    "talabat return PIN: cap of %s reached; rest wait for next sweep",
+                    _MAX_RETURN_FETCHES,
+                )
+                return
+            fetched += 1
+            try:
+                details = await self.fetch_return_details(
+                    session,
+                    order_id=order.external_order_id,
+                    vendor_id=order.external_outlet_id,
+                )
+            except AggregatorAuthError:
+                # A dead session fails every later call the same way; the sweep's
+                # own calls already flip it to needs_bootstrap.
+                return
+            except Exception:  # noqa: BLE001 — fail-soft, the CSV row stands
+                logger.warning(
+                    "talabat return PIN: could not read %s",
+                    order.external_order_id,
+                    exc_info=True,
+                )
+                continue
+            if details is not None:
+                raw["_mm_return"] = details
 
     # ── per-order fee + per-line price enrichment (order list / detail) ───────
     async def _list_orders_meta(

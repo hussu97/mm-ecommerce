@@ -10,6 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.courier import CourierBadge
+from app.schemas.marketplace_return import MarketplaceReturnInfo
 from app.schemas.pos.charges import percentage_is_fraction
 from app.schemas.pos.legal_entity import OrderLegalEntity
 from app.schemas.surcharge import SurchargeLine
@@ -362,6 +363,12 @@ class PosOrderResponse(ORMModel):
     #: The server decides rather than the app: the branch's hours live here, and
     #: two iPads at one counter must not disagree about whether the shop is open.
     may_auto_accept: bool = True
+    #: A marketplace order cancelled after its rider collected it, coming back:
+    #: the return PIN to give the rider and whether it has been received back.
+    #: Null on every other order. Not `marketplace_return` on purpose — ORM
+    #: validation would lazy-load the relationship; `_serialise` fills this from
+    #: it only when the query eager-loaded it.
+    return_info: MarketplaceReturnInfo | None = None
 
     subtotal: Decimal
     discount_amount: Decimal

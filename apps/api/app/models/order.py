@@ -40,6 +40,7 @@ from .pos_order import (
 if TYPE_CHECKING:
     from .branch import Branch
     from .legal_entity import LegalEntity
+    from .marketplace_return import MarketplaceReturn
     from .order_delivery import OrderDelivery
     from .order_driver import OrderDriver
     from .order_receiver import OrderReceiver
@@ -811,6 +812,17 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: `customer_*`. Null on an ordinary order.
     receiver: Mapped[OrderReceiver | None] = relationship(
         "OrderReceiver",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    #: A marketplace order cancelled after its rider collected it, coming back to
+    #: the shop: the return PIN the rider must be given, and whether the box has
+    #: been taken back in (`aggregators.marketplace_returns`). One row at most;
+    #: null on every order that is not such a return. Lazy — the register list
+    #: and the admin details eager-load it where they read it.
+    marketplace_return: Mapped[MarketplaceReturn | None] = relationship(
+        "MarketplaceReturn",
         back_populates="order",
         cascade="all, delete-orphan",
         uselist=False,

@@ -165,6 +165,7 @@ x-api-environment: &api-environment
   AGGREGATOR_TIMEOUT_SECONDS: ${AGGREGATOR_TIMEOUT_SECONDS:-20.0}
   AGGREGATOR_REQUESTS_PER_SECOND: ${AGGREGATOR_REQUESTS_PER_SECOND:-1.0}
   TALABAT_ORDER_DETAIL_ENRICH: ${TALABAT_ORDER_DETAIL_ENRICH:-true}
+  TALABAT_RETURN_PIN_ENABLED: ${TALABAT_RETURN_PIN_ENABLED:-true}
   # ── Catalog & hours sync (menu/hours push) ──────────────────────────
   # Both default OFF: the read side opens marketplace sessions, and the
   # write side would change a live menu / branch hours. They stay false in

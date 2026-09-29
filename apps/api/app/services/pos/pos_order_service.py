@@ -224,6 +224,8 @@ async def get_order(db: AsyncSession, order_id: uuid.UUID) -> Order:
             # POS response is assembled outside the greenlet that could lazily
             # fetch them.
             selectinload(Order.delivery),
+            # The return PIN (`return_info`) of a marketplace order coming back.
+            selectinload(Order.marketplace_return),
         )
         # Without this the identity map hands back the order with whatever
         # collections it was first loaded with, so a line added moments ago is

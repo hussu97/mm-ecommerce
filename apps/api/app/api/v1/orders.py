@@ -37,6 +37,7 @@ from app.core.permissions import require
 from app.models.aggregator import AggregatorOrder, AggregatorOrderStatusEvent
 from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
+from app.models.marketplace_return import MarketplaceReturn
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
@@ -45,6 +46,7 @@ from app.models.pos_order import OrderPayment, OrderSourceEnum
 from app.models.user import User
 from app.schemas.courier import CourierBadge
 from app.schemas.fulfilment import FulfilmentResponse
+from app.schemas.marketplace_return import MarketplaceReturnInfo
 from app.schemas.order import (
     AdminOrderListResponse,
     OrderAdminDetails,
@@ -1676,4 +1678,9 @@ async def order_admin_details(
         pricing_status=order.pricing_status,
         ingest_flags=list(order.ingest_flags or []),
         ingested_late=bool(order.ingested_late),
+        marketplace_return=MarketplaceReturnInfo.of(
+            await db.scalar(
+                select(MarketplaceReturn).where(MarketplaceReturn.order_id == order.id)
+            )
+        ),
     )

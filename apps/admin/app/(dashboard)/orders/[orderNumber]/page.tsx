@@ -810,6 +810,15 @@ export default function OrderDetailPage() {
             </div>
           )}
 
+          {/* A marketplace return: Talabat cancelled it after its rider collected
+              it, and the rider is bringing it back. The PIN is what the rider
+              must be given at the counter — Talabat shows it only in its portal,
+              so it is read from there. The register marks it received back
+              (which restocks what it consumed). */}
+          {details?.marketplace_return && details.marketplace_return.status !== 'not_returning' && (
+            <MarketplaceReturnBlock info={details.marketplace_return} />
+          )}
+
           {/* The standardized actions. Packed while the order is at the shop
               (arrived_at_pos, or confirmed before the sweep lands it); Cancel
               from the shop, packed, OR delivered — a marketplace/merchant refund
@@ -1418,3 +1427,51 @@ export default function OrderDetailPage() {
 // ── Fulfilment ────────────────────────────────────────────────────────────────
 
 // Each courier's own vocabulary, stored verbatim and translated only here.
+
+type MarketplaceReturnInfo = Schemas['MarketplaceReturnInfo'];
+
+const RETURN_STATUS_LABEL: Record<MarketplaceReturnInfo['status'], string> = {
+  pin_pending: 'Return expected · PIN not read yet',
+  awaiting_return: 'Awaiting return',
+  received: 'Received back',
+  not_returning: 'Not returning',
+};
+
+function MarketplaceReturnBlock({ info }: { info: MarketplaceReturnInfo }) {
+  const received = info.status === 'received';
+  const why = [info.cancel_owner, info.cancel_reason]
+    .filter(Boolean)
+    .map((part) => humanizeCancelReason(String(part)))
+    .join(' · ');
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="text-[11px] font-body uppercase tracking-widest text-amber-600">
+          Marketplace return
+        </span>
+        <Badge variant={received ? 'success' : 'warning'}>{RETURN_STATUS_LABEL[info.status]}</Badge>
+      </div>
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+        <span className="text-sm font-body text-gray-600">
+          Return PIN{' '}
+          <span className="font-display text-2xl tracking-widest text-gray-900">
+            {info.return_pin ?? '—'}
+          </span>
+        </span>
+        {why && <span className="text-sm font-body text-gray-500">{why}</span>}
+        {info.cancelled_at && (
+          <span className="text-sm font-body text-gray-500">
+            Cancelled {formatDateTime(info.cancelled_at)}
+          </span>
+        )}
+      </div>
+      {received && (
+        <p className="mt-1 text-sm font-body text-gray-600">
+          Received back{info.received_at ? ` ${formatDateTime(info.received_at)}` : ''}
+          {info.received_by ? ` by ${info.received_by}` : ''}
+          {info.restocked ? ' · restocked' : ''}
+        </p>
+      )}
+    </div>
+  );
+}
