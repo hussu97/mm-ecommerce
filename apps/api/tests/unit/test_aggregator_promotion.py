@@ -220,8 +220,42 @@ def test_a_desk_cancellation_the_store_is_responsible_for_is_not_paid():
     assert promote._provider_cancelled_but_paid(keeta)
     assert promote._provider_cancelled_but_paid(keeta_60)
     assert not promote._provider_cancelled_but_paid(unseen)
-    # Unbilled and not provider-paid → the settled net is unknown until the bill.
-    assert promote._cancellation_net(store, provider_paid=False) is None
+    # Not provider-paid, but still booked at Keeta's provisional earnings until
+    # the bill lands, and flagged provisional so the P&L counts it as pending.
+    net = promote._cancellation_net(store, provider_paid=False)
+    assert net == Decimal("48.60")
+    assert promote._cancellation_provisional(store, net, billed_without=False)
+
+
+def test_the_bill_overrides_a_provisional_keeta_cancellation():
+    """On the bill → its settled net, not provisional. The shop's bill for the
+    week landed without the order → Keeta paid nothing: 0, not provisional
+    (5097840598108149, absent from its 1–7 Sep bill)."""
+    billed = _agg(
+        status="cancelled",
+        net_payable=Decimal("-30.75"),
+        raw=_desk_cancel(20),
+        statement_id="KEETA_BILL_1_2026-07-14_2026-07-20",
+    )
+    net = promote._cancellation_net(billed, provider_paid=False)
+    assert net == Decimal("-30.75")
+    assert not promote._cancellation_provisional(billed, net, billed_without=False)
+
+    left_off = _agg(
+        status="cancelled", net_payable=Decimal("26.40"), raw=_desk_cancel(20)
+    )
+    net = promote._cancellation_net(left_off, provider_paid=False, billed_without=True)
+    assert net == Decimal("0.00")
+    assert not promote._cancellation_provisional(left_off, net, billed_without=True)
+
+    # A cancellation that is not the desk's (the shop rejected it) keeps its
+    # provisional net out of the books, as before: it settles at nothing.
+    merchant = _agg(
+        status="cancelled",
+        net_payable=Decimal("23.25"),
+        raw={"canceledScene": 5000, "orderCancelSceneDesc": "Merchant"},
+    )
+    assert promote._cancellation_net(merchant, provider_paid=False) is None
 
 
 def test_provider_cancelled_but_paid_needs_net_and_a_provider_funded_scene():

@@ -913,6 +913,9 @@ async def _upsert_statement(
     # Correct the order feed's PROVISIONAL fees with the settlement's authoritative
     # ones, so the sales↔statement reconciliation ties out (see the function).
     await backfill_order_economics_from_statement(db, channel, statement.statement_id)
+    # A cancelled Keeta order this shop's bill LEFT OFF was settled at nothing;
+    # nudge those orders so the next promote overrides their provisional net.
+    await _touch_keeta_cancellations_left_off(db, channel, statement)
 
 
 async def _fill_statement_totals_from_lines(
@@ -1133,6 +1136,40 @@ async def backfill_order_economics_from_statement(
         )
         updated += int(result.rowcount or 0)
     return updated
+
+
+async def _touch_keeta_cancellations_left_off(
+    db: AsyncSession, channel: str, statement: Any
+) -> int:
+    """Bump `updated_at` on the cancelled Keeta orders of this bill's shop and
+    period that the bill did not settle, so promote (`updated_at > promoted_at`)
+    re-books them: it sees the bill has landed without them and settles their
+    provisional cancellation net at 0 (`promote._keeta_billed_without`).
+    """
+    outlet = getattr(statement, "external_outlet_id", None)
+    start = getattr(statement, "period_start", None)
+    end = getattr(statement, "period_end", None)
+    if channel != CHANNEL_KEETA or not (outlet and start and end):
+        return 0
+    result = await db.execute(
+        sql_update(AggregatorOrder)
+        .where(
+            AggregatorOrder.channel == channel,
+            AggregatorOrder.statement_id.is_(None),
+            # `cancelled_at` is not stamped on every cancelled row (older ones
+            # carry only Keeta's raw status code 50).
+            or_(
+                AggregatorOrder.cancelled_at.is_not(None),
+                AggregatorOrder.status.in_(("cancelled", "50")),
+            ),
+            AggregatorOrder.business_date >= start,
+            AggregatorOrder.business_date <= end,
+            AggregatorOrder.raw["shopId"].astext == str(outlet),
+        )
+        .values(updated_at=utcnow())
+        .execution_options(synchronize_session=False)
+    )
+    return int(result.rowcount or 0)
 
 
 async def _stamp_orders_from_settled_ids(

@@ -491,6 +491,15 @@ def line_columns() -> dict[str, object]:
                 ),
                 true(),
             ),
+            # A marketplace cancellation booked at its provisional figure until
+            # the bill settles it (Keeta's customer-service cancellations).
+            (
+                and_(
+                    Order.source == OrderSourceEnum.AGGREGATOR.value,
+                    Order.marketplace_cancellation_provisional.is_(True),
+                ),
+                true(),
+            ),
             (
                 and_(
                     Order.source == OrderSourceEnum.ONLINE.value,

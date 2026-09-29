@@ -62,6 +62,7 @@ from app.models.aggregator import (
     GRAIN_LINE,
     AggregatorOrder,
     AggregatorOrderItem,
+    AggregatorStatement,
     AggregatorStatementLine,
 )
 from app.models.base import utcnow
@@ -295,19 +296,24 @@ def _cancellation_paid_by_provider(agg: AggregatorOrder) -> bool:
     the scene-only reading it has always had.
     """
     raw = agg.raw or {}
-    code = raw.get("canceledScene")
-    scene = raw.get("orderCancelSceneDesc")
-    if code is not None:
-        desk = str(code).strip() == _PROVIDER_FUNDED_CANCEL_SCENE_CODE
-    else:
-        desk = (
-            isinstance(scene, str)
-            and scene.strip().lower() in _PROVIDER_FUNDED_CANCEL_SCENES
-        )
-    if not desk:
+    if not _keeta_desk_cancellation(raw):
         return False
     responsible = _cancel_responsible(raw)
     return responsible is None or responsible in _PROVIDER_FUNDED_RESPONSIBLE
+
+
+def _keeta_desk_cancellation(raw: dict) -> bool:
+    """Cancelled at Keeta's customer-service desk (`canceledScene` 5050), for
+    either party. Keyed on the numeric code first (locale-proof), falling back to
+    the humanised `orderCancelSceneDesc` only when the code is absent."""
+    code = raw.get("canceledScene")
+    if code is not None:
+        return str(code).strip() == _PROVIDER_FUNDED_CANCEL_SCENE_CODE
+    scene = raw.get("orderCancelSceneDesc")
+    return (
+        isinstance(scene, str)
+        and scene.strip().lower() in _PROVIDER_FUNDED_CANCEL_SCENES
+    )
 
 
 def _cancel_responsible(raw: dict) -> str | None:
@@ -355,7 +361,9 @@ def _refunded_after_delivery(agg: AggregatorOrder) -> str | None:
     return "full"
 
 
-def _cancellation_net(agg: AggregatorOrder, *, provider_paid: bool) -> Decimal | None:
+def _cancellation_net(
+    agg: AggregatorOrder, *, provider_paid: bool, billed_without: bool = False
+) -> Decimal | None:
     """What the marketplace settled on this cancelled order, signed; None if unknown.
 
     Only a figure the marketplace has committed to counts:
@@ -370,8 +378,18 @@ def _cancellation_net(agg: AggregatorOrder, *, provider_paid: bool) -> Decimal |
       provisional net that is NOT paid (a merchant cancellation shows +23.25 and
       settles at nothing or less), so it stays unknown until billed.
 
+    Keeta, until its bill lands, also books a customer-service cancellation the
+    store was responsible for at Keeta's provisional earnings — the figure its
+    own order page shows — flagged provisional (`_cancellation_provisional`) so
+    the P&L counts it as waiting on a fee. The bill overrides it: the settled
+    net when the order is on the bill, **0 when the shop's bill for that week
+    has arrived without it** (`billed_without`) — Keeta left it off, so it paid
+    nothing (5097840598108149, absent from its 1–7 Sep bill).
+
     Other channels: unknown, as before.
     """
+    if agg.channel == "keeta" and billed_without and not agg.statement_id:
+        return Decimal("0.00")
     net = agg.net_payable
     if net is None:
         return None
@@ -380,14 +398,56 @@ def _cancellation_net(agg: AggregatorOrder, *, provider_paid: bool) -> Decimal |
     if agg.channel == "keeta":
         if getattr(agg, "statement_id", None) or provider_paid:
             return money(net)
+        if _keeta_desk_cancellation(agg.raw or {}):
+            return money(net)
     return None
 
 
-def _set_cancellation_net(order: Order, net: Decimal | None) -> None:
-    """Write `marketplace_cancellation_net` only when it changes (idempotent
-    re-promotes must not dirty the row)."""
+def _cancellation_provisional(
+    agg: AggregatorOrder, net: Decimal | None, *, billed_without: bool
+) -> bool:
+    """Whether `net` is still Keeta's provisional figure, not its bill's."""
+    return (
+        agg.channel == "keeta"
+        and net is not None
+        and not agg.statement_id
+        and not billed_without
+    )
+
+
+async def _keeta_billed_without(db: AsyncSession, agg: AggregatorOrder) -> bool:
+    """Whether the shop's weekly Keeta bill covering this order's day has landed
+    — and the order is not on it (it would carry `statement_id` if it were)."""
+    if agg.channel != "keeta" or agg.statement_id or not agg.business_date:
+        return False
+    shop = (agg.raw or {}).get("shopId")
+    if shop is None:
+        return False
+    found = await db.scalar(
+        select(AggregatorStatement.id)
+        .where(
+            AggregatorStatement.channel == "keeta",
+            AggregatorStatement.external_outlet_id == str(shop),
+            AggregatorStatement.period_start <= agg.business_date,
+            AggregatorStatement.period_end >= agg.business_date,
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
+def _set_cancellation_net(
+    order: Order, net: Decimal | None, *, provisional: bool = False
+) -> None:
+    """Write `marketplace_cancellation_net` (and whether it is provisional) only
+    when it changes (idempotent re-promotes must not dirty the row)."""
     if getattr(order, "marketplace_cancellation_net", None) != net:
         order.marketplace_cancellation_net = net
+    provisional = bool(provisional and net is not None)
+    if bool(getattr(order, "marketplace_cancellation_provisional", False)) != (
+        provisional
+    ):
+        order.marketplace_cancellation_provisional = provisional
 
 
 def _cancel_reason(agg: AggregatorOrder) -> str | None:
@@ -1027,8 +1087,16 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
             # paid 37.42), and Talabat's as a cancellation worth nothing (it paid
             # 162 on four orders): neither was what the marketplace paid.
             provider_paid = _provider_cancelled_but_paid(agg)
+            billed_without = await _keeta_billed_without(db, agg)
+            net = _cancellation_net(
+                agg, provider_paid=provider_paid, billed_without=billed_without
+            )
             _set_cancellation_net(
-                order, _cancellation_net(agg, provider_paid=provider_paid)
+                order,
+                net,
+                provisional=_cancellation_provisional(
+                    agg, net, billed_without=billed_without
+                ),
             )
             if refund == "full":
                 order.aggregator_cancel_reason = (

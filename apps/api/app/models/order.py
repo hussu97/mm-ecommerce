@@ -293,6 +293,13 @@ class Order(Base, UUIDMixin, TimestampMixin):
     marketplace_cancellation_net: Mapped[Any | None] = mapped_column(
         Numeric(10, 2), nullable=True
     )
+    #: True while `marketplace_cancellation_net` is the marketplace's PROVISIONAL
+    #: figure (Keeta's order-level earnings on a customer-service cancellation)
+    #: rather than what its bill settled. The P&L counts such an order as still
+    #: waiting on a fee; promote clears it once the bill lands.
+    marketplace_cancellation_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     #: A merchant-funded promotion the marketplace billed back to the shop —
     #: Keeta's "Promotion funded by merchant" (`feeDtl.merchantFee.activityFee`).
