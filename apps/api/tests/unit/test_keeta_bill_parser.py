@@ -291,3 +291,71 @@ def test_a_keeta_funded_refund_nets_to_sale_less_refund_plus_compensation():
     }
     assert cat["net_payable"] == Decimal("36.59")
     assert cat["bank_fee"] == Decimal("-0.83")
+
+
+def test_rows_book_under_their_settlement_cycle_not_the_download():
+    """Each row keys on its own Billing Cycle, so overlapping downloads of the
+    same cycle produce identical line keys; a row with no Billing Cycle falls
+    back to its transaction date (1–7, 8–14, 15–21, 22–end of month)."""
+    headers = {**_H38, 7: "Billing Cycle"}
+    in_cycle = {**_D38, 6: "22 Jul 2026", 7: "2026.07.22~2026.07.31"}
+    no_cycle = {**_D38, 6: "8 Sep 2026", 9: "5167840151629999"}
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Order Summary"
+    ws.append([])
+    ws.append([])
+    ws.append([headers.get(c) for c in range(1, 39)])
+    for data in (in_cycle, no_cycle):
+        ws.append([data.get(c) for c in range(1, 39)])
+    buf = io.BytesIO()
+    wb.save(buf)
+    lines = _parse_bill_xlsx(buf.getvalue(), "DOWNLOAD", shop_id="1644174206")
+    by_order = {ln.external_order_id: ln.statement_id for ln in lines}
+    assert by_order["5167840151623393"] == "KEETA_BILL_1644174206_2026-07-22_2026-07-31"
+    assert by_order["5167840151629999"] == "KEETA_BILL_1644174206_2026-09-08_2026-09-14"
+    assert all(ln.source_key.startswith(ln.statement_id + ":") for ln in lines)
+    # No shop → the download's own id, as before.
+    assert {ln.statement_id for ln in _parse_bill_xlsx(buf.getvalue(), "DOWNLOAD")} == {
+        "DOWNLOAD"
+    }
+
+
+def test_a_download_is_split_into_cycle_statements_covering_its_days():
+    from app.services.aggregators.normalized import StandardStatement
+    from app.services.providers.keeta_provider import _split_bill_by_cycle
+
+    headers = {**_H38, 7: "Billing Cycle"}
+    rows = [
+        {**_D38, 6: "15 Aug 2026", 7: "2026.08.15~2026.08.21"},
+        {**_D38, 6: "22 Aug 2026", 7: "2026.08.22~2026.08.31", 9: "5167840151620000"},
+    ]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Order Summary"
+    ws.append([])
+    ws.append([])
+    ws.append([headers.get(c) for c in range(1, 39)])
+    for data in rows:
+        ws.append([data.get(c) for c in range(1, 39)])
+    buf = io.BytesIO()
+    wb.save(buf)
+    download = StandardStatement(
+        statement_id="KEETA_BILL_1_2026-08-15_2026-08-22",
+        period_start="2026-08-15",
+        period_end="2026-08-22",
+        external_outlet_id="1",
+        lines=_parse_bill_xlsx(buf.getvalue(), "X", shop_id="1"),
+    )
+    parts = {
+        s.statement_id: (s.period_start, s.period_end)
+        for s in _split_bill_by_cycle(download)
+    }
+    assert parts == {
+        "KEETA_BILL_1_2026-08-15_2026-08-21": ("2026-08-15", "2026-08-21"),
+        # Only the 22nd of the 22–31 cycle is in this download.
+        "KEETA_BILL_1_2026-08-22_2026-08-31": ("2026-08-22", "2026-08-22"),
+    }
+    assert (
+        _split_bill_by_cycle(StandardStatement(statement_id="EMPTY", lines=[])) == []
+    ), "a download with no order rows settles nothing"

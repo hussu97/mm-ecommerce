@@ -46,6 +46,7 @@ a business date means to the people reading the reconciliation.
 from __future__ import annotations
 
 import base64
+import calendar
 import dataclasses
 import json
 import logging
@@ -410,6 +411,26 @@ def _billing_cycle_bounds(value: Any) -> tuple[date | None, date | None]:
     return (_dotted_date(left), _dotted_date(right))
 
 
+def _keeta_cycle(day: date) -> tuple[date, date]:
+    """The Keeta settlement cycle a transaction day falls in.
+
+    Keeta settles in four cycles a month — the 1st–7th, 8th–14th, 15th–21st and
+    22nd–end of month — whatever range a billing-report download was requested
+    for. Verified against every row of 49 downloaded bills (2,626 order rows and
+    332 invoice rows, Jul–Sep 2026): each row's own "Billing Cycle" matched this.
+    """
+    last = calendar.monthrange(day.year, day.month)[1]
+    for start, end in ((1, 7), (8, 14), (15, 21), (22, last)):
+        if start <= day.day <= end:
+            return date(day.year, day.month, start), date(day.year, day.month, end)
+    raise ValueError(day)  # unreachable
+
+
+def keeta_cycle_statement_id(shop: str, start: date, end: date) -> str:
+    """The one statement a (shop, settlement cycle) books under."""
+    return f"KEETA_BILL_{shop}_{start.isoformat()}_{end.isoformat()}"
+
+
 def _period_from_yyyymm(value: Any) -> tuple[date | None, date | None]:
     """A `YYYYMM` int/str (e.g. `202607`) → (first day, last day of that month)."""
     try:
@@ -529,7 +550,7 @@ def _header_col(headers: tuple[Any, ...], *needles: str) -> int | None:
 
 
 def _parse_bill_xlsx(
-    xlsx_bytes: bytes, statement_id: str
+    xlsx_bytes: bytes, statement_id: str, shop_id: str | None = None
 ) -> list[StandardStatementLine]:
     """Parse the "Order Summary" sheet into per-order statement lines.
 
@@ -545,6 +566,14 @@ def _parse_bill_xlsx(
     share one line key per fee category, so emitting each row separately let the
     last row overwrite the others: 5297842074897565 settled at +48.10 − 49.50 =
     −1.40 and was booked at −49.50 (`_merge_order_rows`).
+
+    **Each row books under its own settlement cycle** when the shop is known:
+    `KEETA_BILL_{shop}_{cycleStart}_{cycleEnd}`, from the row's "Billing Cycle"
+    (else its transaction date, `_keeta_cycle`). Keeta downloads are requested
+    for arbitrary ranges and overlap (22–31 Jul, 23–31 Jul and 23 Jul–1 Aug for
+    one shop; consecutive weeks share their boundary day), so keying lines on
+    the download counted the same order once per download. Keyed on the cycle,
+    every download of the same cycle lands on the same lines.
     """
     import io
 
@@ -581,6 +610,7 @@ def _parse_bill_xlsx(
             return []
         date_col = _header_col(headers, _BILL_TXN_DATE_HEADER)
         notes_col = _header_col(headers, _BILL_NOTES_HEADER)
+        cycle_col = _header_col(headers, "billing cycle")
         # Commission: "Total Commission" where the layout has it (== subtotal +
         # top-up), else the "Subtotal of commission fee" plus any min-commission
         # top-up. The newer 38-column layout drops the "Total Commission" column.
@@ -598,15 +628,27 @@ def _parse_bill_xlsx(
             if order_no is None or not str(order_no).strip():
                 continue
             order_no = str(order_no).strip()
-            line_date = _date_str(_keeta_short_date(_cell0(values, date_col)))
+            txn_day = _keeta_short_date(_cell0(values, date_col))
+            line_date = _date_str(txn_day)
             notes_val = _cell0(values, notes_col)
             notes = str(notes_val).strip() if notes_val not in (None, "") else None
+            row_statement = statement_id
+            if shop_id:
+                cycle_start, cycle_end = _billing_cycle_bounds(
+                    _cell0(values, cycle_col)
+                )
+                if (cycle_start is None or cycle_end is None) and txn_day:
+                    cycle_start, cycle_end = _keeta_cycle(txn_day)
+                if cycle_start and cycle_end:
+                    row_statement = keeta_cycle_statement_id(
+                        shop_id, cycle_start, cycle_end
+                    )
 
             def _emit(line_type: str, fee_category: str, amount: Decimal) -> None:
                 lines.append(
                     StandardStatementLine(
-                        source_key=f"{statement_id}:{order_no}:{fee_category}",
-                        statement_id=statement_id,
+                        source_key=f"{row_statement}:{order_no}:{fee_category}",
+                        statement_id=row_statement,
                         external_order_id=order_no,
                         line_date=line_date,
                         line_type=line_type,
@@ -682,6 +724,9 @@ def _parse_bill_payouts(
     statement_id: str,
     payload_shop_id: str | None,
     task_view_id: str | None,
+    *,
+    download_start: date | None = None,
+    download_end: date | None = None,
 ) -> list[StandardPayout]:
     """Parse the "Invoice Details" sheet into one payout per weekly billing cycle.
 
@@ -744,7 +789,7 @@ def _parse_bill_payouts(
 
         payouts: list[StandardPayout] = []
         for cycle_key, group in groups.items():
-            _start, cycle_end = _billing_cycle_bounds(cycle_key)
+            cycle_start, cycle_end = _billing_cycle_bounds(cycle_key)
             cycle_end_str = _date_str(cycle_end)
             if cycle_end_str is None:
                 logger.warning(
@@ -754,10 +799,27 @@ def _parse_bill_payouts(
                 )
                 continue
             shop_id = payload_shop_id or group["shop_id"] or "unknown"
+            # A download that covers only part of the cycle (23–31 Jul of the
+            # 22–31 cycle) sums only its days: it may create the payout, never
+            # overwrite a whole cycle's amount (`partial`, see `_upsert_payout`).
+            partial = bool(
+                cycle_start
+                and (
+                    download_start is None
+                    or download_end is None
+                    or download_start > cycle_start
+                    or download_end < cycle_end
+                )
+            )
             payouts.append(
                 StandardPayout(
                     transfer_id=f"KEETA_BILL_{shop_id}_{cycle_end_str}",
-                    statement_id=statement_id,
+                    statement_id=(
+                        keeta_cycle_statement_id(shop_id, cycle_start, cycle_end)
+                        if cycle_start and shop_id != "unknown"
+                        else statement_id
+                    ),
+                    partial=partial,
                     transfer_date=cycle_end_str,
                     payment_due_date=cycle_end_str,
                     transfer_amount=group["total"],
@@ -769,6 +831,68 @@ def _parse_bill_payouts(
         return payouts
     finally:
         workbook.close()
+
+
+def _split_bill_by_cycle(statement: StandardStatement) -> list[StandardStatement]:
+    """A billing-report download → one statement per settlement cycle it holds.
+
+    The lines already carry their cycle's statement id (`_parse_bill_xlsx`).
+    Each cycle statement's period is the part of the cycle THIS download covers
+    — the ingest widens it as more downloads land (`_upsert_statement`), so the
+    period always says which days of the cycle have actually been billed, which
+    is what `promote._keeta_billed_without` reads. A download with no order rows
+    yields no statement: there is nothing it settles, and an empty statement
+    spanning its range (the May–Jul "Statement of Account" PDF was one) would
+    read as "billed, and every cancelled order in it was left off".
+    """
+    groups: dict[str, list[StandardStatementLine]] = {}
+    for line in statement.lines:
+        groups.setdefault(line.statement_id or statement.statement_id, []).append(line)
+    if not groups:
+        return []
+    download_start = _parse_iso(statement.period_start)
+    download_end = _parse_iso(statement.period_end)
+    out: list[StandardStatement] = []
+    for statement_id, lines in groups.items():
+        cycle = _cycle_from_statement_id(statement_id)
+        if cycle is None:
+            out.append(dataclasses.replace(statement, lines=lines))
+            continue
+        start, end = cycle
+        covered_start = max(start, download_start) if download_start else start
+        covered_end = min(end, download_end) if download_end else end
+        out.append(
+            dataclasses.replace(
+                statement,
+                statement_id=statement_id,
+                period_start=covered_start.isoformat(),
+                period_end=covered_end.isoformat(),
+                lines=lines,
+                raw={
+                    **(statement.raw or {}),
+                    "download_statement_id": statement.statement_id,
+                },
+            )
+        )
+    return out
+
+
+def _cycle_from_statement_id(statement_id: str) -> tuple[date, date] | None:
+    """`KEETA_BILL_{shop}_{start}_{end}` → (start, end) when it is a cycle id."""
+    parts = statement_id.split("_")
+    if len(parts) != 5 or parts[:2] != ["KEETA", "BILL"]:
+        return None
+    start, end = _parse_iso(parts[3]), _parse_iso(parts[4])
+    if start is None or end is None or _keeta_cycle(start) != (start, end):
+        return None
+    return start, end
+
+
+def _parse_iso(value: str | None) -> date | None:
+    try:
+        return date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
 
 
 def _normalize_status(value: str | None) -> str | None:
@@ -1497,6 +1621,10 @@ class KeetaClient(BaseAggregatorClient):
                         "id (taskViewId / statement_id / time) — cannot key it."
                     ),
                 )
+            if _get_value(payload, "bill_xlsx_b64"):
+                statements = _split_bill_by_cycle(statement)
+                payouts = self._bill_payouts_from(payload, statement.statement_id)
+                return FinanceResult(statements=statements, payouts=payouts)
             payouts = self._bill_payouts_from(payload, statement.statement_id)
             return FinanceResult(statements=[statement], payouts=payouts)
 
@@ -1648,7 +1776,9 @@ class KeetaClient(BaseAggregatorClient):
                     "keeta: invalid bill_xlsx_b64 for %s — no lines", statement_id
                 )
                 return []
-            return _parse_bill_xlsx(xlsx_bytes, statement_id)
+            return _parse_bill_xlsx(
+                xlsx_bytes, statement_id, _first_text(row, _OUTLET_ID_KEYS)
+            )
 
         amount = _first_money(
             row,
@@ -1709,11 +1839,16 @@ class KeetaClient(BaseAggregatorClient):
                 "keeta: invalid bill_xlsx_b64 for %s — no payouts", statement_id
             )
             return []
+        display_start, display_end = _period_from_display(
+            _get_value(row, "displayTimeText")
+        )
         return _parse_bill_payouts(
             xlsx_bytes,
             statement_id,
             _first_text(row, _OUTLET_ID_KEYS),
             _first_text(row, ("taskViewId",)),
+            download_start=display_start,
+            download_end=display_end,
         )
 
     def _payout_from(self, row: dict[str, Any]) -> StandardPayout | None:

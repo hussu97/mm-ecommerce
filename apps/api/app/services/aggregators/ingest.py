@@ -854,6 +854,16 @@ async def _upsert_statement(
             if k in preserve
             else proposed
         )
+    if channel == CHANNEL_KEETA:
+        # A Keeta statement is one settlement cycle and its period the days of it
+        # billed so far — every download of the cycle widens it, never narrows
+        # it (`keeta_provider._split_bill_by_cycle`).
+        update["period_start"] = func.least(
+            insert_stmt.excluded.period_start, AggregatorStatement.period_start
+        )
+        update["period_end"] = func.greatest(
+            insert_stmt.excluded.period_end, AggregatorStatement.period_end
+        )
     update["updated_at"] = _touched_at(AggregatorStatement, update)
     await db.execute(
         insert_stmt.on_conflict_do_update(
@@ -1392,12 +1402,18 @@ async def _upsert_payout(db: AsyncSession, channel: str, payout) -> None:
         "payment_reference": payout.payment_reference,
         "currency": payout.currency,
     }
+    insert = pg_insert(AggregatorPayout).values(**values)
+    if getattr(payout, "partial", False):
+        # Part of a cycle only (see `StandardPayout.partial`): a first sighting
+        # is better than nothing, but a whole cycle's figure is never replaced.
+        await db.execute(
+            insert.on_conflict_do_nothing(constraint="uq_aggregator_payout")
+        )
+        return
     update = {k: v for k, v in values.items() if k not in ("channel", "transfer_id")}
     update["updated_at"] = _touched_at(AggregatorPayout, update)
     await db.execute(
-        pg_insert(AggregatorPayout)
-        .values(**values)
-        .on_conflict_do_update(constraint="uq_aggregator_payout", set_=update)
+        insert.on_conflict_do_update(constraint="uq_aggregator_payout", set_=update)
     )
 
 

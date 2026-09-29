@@ -986,12 +986,19 @@ def test_parse_finance_bill_xlsx_yields_statement_with_outlet_and_period():
     assert result.truncation_note is None
     assert len(result.statements) == 1
     stmt = result.statements[0]
-    # A bill is keyed on (shop, period), not the per-download-task taskViewId, so
-    # Keeta re-listing the same bill under a new task upserts rather than duplicates.
-    assert stmt.statement_id == "KEETA_BILL_1644189187_2026-08-15_2026-08-22"
+    # A bill is keyed on (shop, settlement CYCLE), not the download's range or
+    # its taskViewId: Keeta's weekly downloads run one day past the cycle ("15 Aug
+    # ~ 22 Aug" settles cycle 15–21) and overlap, so every download of the same
+    # cycle upserts the same statement rather than counting its orders again.
+    assert stmt.statement_id == "KEETA_BILL_1644189187_2026-08-15_2026-08-21"
     assert stmt.external_outlet_id == "1644189187"
+    # The period is the part of the cycle this download covers — all of it here.
     assert stmt.period_start == "2026-08-15"
-    assert stmt.period_end == "2026-08-22"
+    assert stmt.period_end == "2026-08-21"
+    assert (
+        stmt.raw["download_statement_id"]
+        == "KEETA_BILL_1644189187_2026-08-15_2026-08-22"
+    )
     assert stmt.currency == "AED"
     # The bytes are stripped out of the archived raw JSONB.
     assert "bill_xlsx_b64" not in (stmt.raw or {})

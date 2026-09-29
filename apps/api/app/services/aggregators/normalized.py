@@ -190,6 +190,9 @@ class StandardPayout:
     transfer_status: str | None = None
     payment_reference: str | None = None
     currency: str | None = None
+    #: Summed from only part of its cycle (a download that started or ended
+    #: inside it): may create the payout, never overwrite a whole cycle's.
+    partial: bool = False
 
 
 @dataclass(frozen=True)
