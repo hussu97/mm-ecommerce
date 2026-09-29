@@ -164,22 +164,30 @@ async def seeded(engine):
             )
         )
 
-        supplier = Supplier(name=f"{MARKER} supplier", is_vat_deductible=True)
-        db.add(supplier)
-        await db.flush()
-        db.add(
-            PurchaseOrder(
-                reference=f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
-                supplier_id=supplier.id,
-                branch_id=branch.id,
-                business_date=BDATE,
-                status="closed",
-                subtotal_net=Decimal("200"),
-                vat_total=Decimal("10"),
-                total_gross=Decimal("210"),
-                total_cost=Decimal("210"),
-            )
-        )
+        # Two suppliers the same day: purchases book one row per supplier.
+        # "b supplier" sorts after "a supplier", and after it is created, so
+        # the read's name order is what is under test, not insertion order.
+        for name, net, vat, pos in (
+            ("b supplier", Decimal("60"), Decimal("3"), 1),
+            ("A supplier", Decimal("100"), Decimal("5"), 2),
+        ):
+            supplier = Supplier(name=f"{MARKER} {name}", is_vat_deductible=True)
+            db.add(supplier)
+            await db.flush()
+            for _ in range(pos):
+                db.add(
+                    PurchaseOrder(
+                        reference=f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
+                        supplier_id=supplier.id,
+                        branch_id=branch.id,
+                        business_date=BDATE,
+                        status="closed",
+                        subtotal_net=net,
+                        vat_total=vat,
+                        total_gross=net + vat,
+                        total_cost=net + vat,
+                    )
+                )
         await db.commit()
         ids = {"branch_id": branch.id, "fatema_id": fatema.id, "najm_id": najm.id}
     yield ids, Session
@@ -256,10 +264,27 @@ async def test_compute_window_splits_every_category(seeded):
     assert courier["net_value"] == Decimal("5.00")
     assert courier["vat_amount"] == Decimal("0.25")
 
-    raw = fat[(VatCategoryEnum.RAW_GOODS.value, INP)]
-    assert raw["net_value"] == Decimal("200.00")
-    assert raw["vat_amount"] == Decimal("10.00")
-    assert raw["gross_value"] == Decimal("210.00")
+    # Purchases, one row per supplier, by name.
+    raw = [
+        r
+        for r in rows
+        if r["legal_entity_id"] == ids["fatema_id"]
+        and r["category"] == VatCategoryEnum.RAW_GOODS.value
+    ]
+    assert [
+        (r["supplier_name"], r["net_value"], r["vat_amount"], r["source_count"])
+        for r in raw
+    ] == [
+        (f"{MARKER} A supplier", Decimal("200.00"), Decimal("10.00"), 2),
+        (f"{MARKER} b supplier", Decimal("60.00"), Decimal("3.00"), 1),
+    ]
+    assert all(r["supplier_id"] is not None for r in raw)
+    # Nothing else carries a supplier.
+    assert all(
+        r["supplier_id"] is None
+        for r in rows
+        if r["category"] != VatCategoryEnum.RAW_GOODS.value
+    )
 
     # Najm: output VAT zero; input commission shown but non-recoverable.
     naj = _by_cat(rows, ids["najm_id"])
@@ -272,6 +297,32 @@ async def test_compute_window_splits_every_category(seeded):
     assert naj_comm["net_value"] == Decimal("10.00")
     assert naj_comm["vat_amount"] == Decimal("0.00")
     assert naj_comm["vat_recoverable"] is False
+
+
+async def test_a_ledger_built_before_suppliers_rebuilds_its_history(seeded):
+    """A purchase row with no supplier is the mark of a cache built before
+    suppliers were recorded: `_needs_backfill` asks for a full rebuild."""
+    ids, Session = seeded
+    async with Session() as db:
+        await vat_ledger.compute_window(db, BDATE, BDATE)
+        await db.commit()
+        assert await vat_ledger._needs_backfill(db) is False
+        await db.execute(
+            VatLedgerEntry.__table__.update()
+            .where(
+                VatLedgerEntry.id
+                == select(VatLedgerEntry.id)
+                .where(
+                    VatLedgerEntry.business_date == BDATE,
+                    VatLedgerEntry.category == VatCategoryEnum.RAW_GOODS.value,
+                )
+                .limit(1)
+                .scalar_subquery()
+            )
+            .values(supplier_id=None)
+        )
+        assert await vat_ledger._needs_backfill(db) is True
+        await db.rollback()
 
 
 async def test_recompute_is_idempotent(seeded):

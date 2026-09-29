@@ -46,6 +46,10 @@ class VatLedgerRow(BaseModel):
     vat_registered: bool
     category: str
     direction: str
+    #: Who billed it, on a purchase (`raw_goods`) row; null on every other
+    #: category (and on a purchase whose supplier row has since gone).
+    supplier_id: uuid.UUID | None = None
+    supplier_name: str | None = None
     net_value: Decimal
     vat_amount: Decimal
     gross_value: Decimal

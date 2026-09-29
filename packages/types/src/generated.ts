@@ -24752,6 +24752,10 @@ export interface components {
             net_value: string;
             /** Source Count */
             source_count: number;
+            /** Supplier Id */
+            supplier_id?: string | null;
+            /** Supplier Name */
+            supplier_name?: string | null;
             /** Vat Amount */
             vat_amount: string;
             /** Vat Recoverable */

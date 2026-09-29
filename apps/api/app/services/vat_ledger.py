@@ -37,7 +37,7 @@ from app.core.config import settings
 from app.core.money import money, to_decimal
 from app.models.aggregator import AggregatorStatementLine
 from app.models.base import utcnow
-from app.models.inventory import PurchaseOrder, PurchaseOrderStatusEnum
+from app.models.inventory import PurchaseOrder, PurchaseOrderStatusEnum, Supplier
 from app.models.legal_entity import LegalEntity
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
@@ -106,13 +106,17 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         logger.warning("vat_ledger: no default legal entity; skipping window")
         return 0
 
-    grains: dict[tuple[str, uuid.UUID, str, str], _Grain] = {}
+    grains: dict[tuple[str, uuid.UUID, str, str, uuid.UUID | None], _Grain] = {}
 
     def cell(
-        bdate: str, entity_id: uuid.UUID | None, category: str, direction: str
+        bdate: str,
+        entity_id: uuid.UUID | None,
+        category: str,
+        direction: str,
+        supplier_id: uuid.UUID | None = None,
     ) -> _Grain:
         eid = entity_id or default_entity
-        key = (bdate, eid, category, direction)
+        key = (bdate, eid, category, direction, supplier_id)
         grain = grains.get(key)
         if grain is None:
             grain = _Grain()
@@ -239,10 +243,13 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
     # Fatema. `vat_total` is already zero for a non-deductible supplier. A
     # partially-received PO carries its full ordered VAT here — a known v1 timing
     # nuance; most POS-origin POs auto-receive and close same day.
+    #
+    # One row per supplier, so a period's input VAT reads by who billed it.
     pos = await db.execute(
         select(
             PurchaseOrder.business_date,
             PurchaseOrder.branch_id,
+            PurchaseOrder.supplier_id,
             func.coalesce(func.sum(PurchaseOrder.subtotal_net), 0),
             func.coalesce(func.sum(PurchaseOrder.vat_total), 0),
             func.coalesce(func.sum(PurchaseOrder.total_gross), 0),
@@ -258,9 +265,13 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
                 ]
             ),
         )
-        .group_by(PurchaseOrder.business_date, PurchaseOrder.branch_id)
+        .group_by(
+            PurchaseOrder.business_date,
+            PurchaseOrder.branch_id,
+            PurchaseOrder.supplier_id,
+        )
     )
-    for bdate, branch_id, net, vat, gross, count in pos:
+    for bdate, branch_id, supplier_id, net, vat, gross, count in pos:
         entity = await tax_identity_service.resolve(
             db, branch_id=branch_id, source="cashier"
         )
@@ -270,6 +281,7 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
             entity_id,
             VatCategoryEnum.RAW_GOODS.value,
             VatDirectionEnum.INPUT.value,
+            supplier_id,
         )
         g.net += to_decimal(net)
         g.vat += to_decimal(vat)
@@ -305,7 +317,7 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
     # An unregistered entity reclaims nothing: keep the cost visible but zero the
     # VAT and flag it non-recoverable. Output rows already carry zero VAT.
     now = utcnow()
-    for (bdate, entity_id, category, direction), g in grains.items():
+    for (bdate, entity_id, category, direction, _supplier), g in grains.items():
         if direction == VatDirectionEnum.INPUT.value and not registered.get(
             entity_id, True
         ):
@@ -326,6 +338,7 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
             "legal_entity_id": entity_id,
             "category": category,
             "direction": direction,
+            "supplier_id": supplier_id,
             "net_value": money(g.net),
             "vat_amount": money(g.vat),
             "gross_value": money(g.gross),
@@ -333,7 +346,7 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
             "source_count": g.count,
             "recomputed_at": now,
         }
-        for (bdate, entity_id, category, direction), g in grains.items()
+        for (bdate, entity_id, category, direction, supplier_id), g in grains.items()
     ]
     if rows:
         await db.execute(pg_insert(VatLedgerEntry).values(rows))
@@ -350,7 +363,8 @@ async def read_ledger(
     """Read the cache for a window, one aggregated row per (entity, category).
 
     Sums the per-day grains into per-(entity, category, direction) totals — the
-    console reads a window, not a single day. Pure read; never recomputes.
+    console reads a window, not a single day — and purchases per supplier too,
+    named and sorted by name within their category. Pure read; never recomputes.
     """
     stmt = (
         select(
@@ -359,6 +373,8 @@ async def read_ledger(
             LegalEntity.vat_registered,
             VatLedgerEntry.category,
             VatLedgerEntry.direction,
+            VatLedgerEntry.supplier_id,
+            Supplier.name,
             func.coalesce(func.sum(VatLedgerEntry.net_value), 0),
             func.coalesce(func.sum(VatLedgerEntry.vat_amount), 0),
             func.coalesce(func.sum(VatLedgerEntry.gross_value), 0),
@@ -366,15 +382,21 @@ async def read_ledger(
             func.coalesce(func.sum(VatLedgerEntry.source_count), 0),
         )
         .join(LegalEntity, LegalEntity.id == VatLedgerEntry.legal_entity_id)
+        .outerjoin(Supplier, Supplier.id == VatLedgerEntry.supplier_id)
         .group_by(
             VatLedgerEntry.legal_entity_id,
             LegalEntity.legal_name,
             LegalEntity.vat_registered,
             VatLedgerEntry.category,
             VatLedgerEntry.direction,
+            VatLedgerEntry.supplier_id,
+            Supplier.name,
         )
         .order_by(
-            LegalEntity.legal_name, VatLedgerEntry.direction, VatLedgerEntry.category
+            LegalEntity.legal_name,
+            VatLedgerEntry.direction,
+            VatLedgerEntry.category,
+            func.lower(Supplier.name).nulls_first(),
         )
     )
     if date_from:
@@ -391,6 +413,8 @@ async def read_ledger(
         vat_registered,
         category,
         direction,
+        supplier_id,
+        supplier_name,
         net,
         vat,
         gross,
@@ -404,6 +428,8 @@ async def read_ledger(
                 "vat_registered": bool(vat_registered),
                 "category": category,
                 "direction": direction,
+                "supplier_id": supplier_id,
+                "supplier_name": supplier_name,
                 "net_value": money(net),
                 "vat_amount": money(vat),
                 "gross_value": money(gross),
@@ -500,6 +526,18 @@ async def _needs_backfill(db: AsyncSession) -> bool:
     `VAT_LEDGER_WINDOW_DAYS` of them, and older months would stay out of the
     ledger. Once the rebuild has written those rows it is False again."""
     if await _is_empty(db):
+        return True
+    # Built before purchases carried their supplier: one purchase row with none
+    # rebuilds the whole history, which writes every one with its supplier.
+    unattributed = await db.scalar(
+        select(VatLedgerEntry.id)
+        .where(
+            VatLedgerEntry.category == VatCategoryEnum.RAW_GOODS.value,
+            VatLedgerEntry.supplier_id.is_(None),
+        )
+        .limit(1)
+    )
+    if unattributed is not None:
         return True
     has_charges = await db.scalar(
         select(AggregatorStatementLine.id).where(_no_order_line()).limit(1)

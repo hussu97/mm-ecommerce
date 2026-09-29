@@ -604,6 +604,10 @@ export interface VatLedgerRow {
   vat_registered: boolean;
   category: string;
   direction: VatDirection;
+  /** Who billed it, on a purchase (`raw_goods`) row — one row per supplier.
+   * Null on every other category. */
+  supplier_id: string | null;
+  supplier_name: string | null;
   net_value: number;
   vat_amount: number;
   gross_value: number;

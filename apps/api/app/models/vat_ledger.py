@@ -79,7 +79,9 @@ class VatLedgerEntry(Base, UUIDMixin, TimestampMixin):
     console can read a legal entity's VAT position in one cheap query instead of
     re-aggregating five source tables on every page load.
 
-    One row per ``(business_date, legal_entity_id, category, direction)``. Each
+    One row per ``(business_date, legal_entity_id, category, direction,
+    supplier_id)`` — ``supplier_id`` set only on purchase rows, so a purchase's
+    VAT can be read per supplier; null (and not distinct) everywhere else. Each
     carries an explicit net / VAT / gross split. For an entity that is not
     VAT-registered (the Barsha counter's Najm AlShamal), input rows are written
     with ``vat_amount = 0`` and ``vat_recoverable = false`` — the cost is visible
@@ -93,13 +95,16 @@ class VatLedgerEntry(Base, UUIDMixin, TimestampMixin):
             "legal_entity_id",
             "category",
             "direction",
+            "supplier_id",
             name="uq_vat_ledger_grain",
+            postgresql_nulls_not_distinct=True,
         ),
         status_vocabulary("vat_ledger_entries", "direction", VatDirectionEnum),
         status_vocabulary("vat_ledger_entries", "category", VatCategoryEnum),
         business_date_format("vat_ledger_entries"),
         Index("ix_vat_ledger_entity_date", "legal_entity_id", "business_date"),
         Index("ix_vat_ledger_business_date", "business_date"),
+        Index("ix_vat_ledger_supplier", "supplier_id"),
     )
 
     #: The frozen trading day (YYYY-MM-DD), same basis as ``orders.business_date``.
@@ -111,6 +116,14 @@ class VatLedgerEntry(Base, UUIDMixin, TimestampMixin):
     )
     category: Mapped[str] = mapped_column(String(40), nullable=False)
     direction: Mapped[str] = mapped_column(String(6), nullable=False)
+    #: Who sold it, on a purchase (``raw_goods``) row — stock and misc lines of
+    #: that supplier's received POs alike. Null on every other category. Nulled,
+    #: not cascaded, if the supplier row goes: the cache is rebuilt anyway.
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     #: Value excluding VAT.
     net_value: Mapped[Any] = mapped_column(
         Numeric(12, 2), nullable=False, server_default="0"

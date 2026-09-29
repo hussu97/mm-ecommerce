@@ -5,7 +5,7 @@
 // `vat_ledger_entries` cache through `/pos/reports/vat-ledger`; the money is
 // computed server-side, this only lays it out (rule 10).
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 import { legalEntitiesApi, posReportsApi } from '@/lib/pos-api';
 import type { LegalEntity, VatLedgerResponse, VatLedgerRow } from '@/lib/pos-types';
@@ -22,7 +22,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   aggregator_commission: 'Aggregator commission',
   payment_processing: 'Payment processing',
   courier_fees: 'Courier fees',
-  raw_goods: 'Raw goods',
+  raw_goods: 'Purchases (received POs)',
   marketplace_marketing: 'Marketplace marketing',
   marketplace_cancellation: 'Marketplace cancellation',
   marketplace_period_charges: 'Marketplace platform & period charges',
@@ -108,6 +108,33 @@ export function VatTab({ window }: { window: Window }) {
   );
 }
 
+/**
+ * One entry per category in the order the API sent them. A category the ledger
+ * splits by supplier (purchases) arrives as several rows: they are summed into
+ * the category line, and listed beneath it, already sorted by name.
+ */
+function groupByCategory(rows: VatLedgerRow[]) {
+  const groups: { category: string; total: VatLedgerRow; suppliers: VatLedgerRow[] }[] = [];
+  for (const row of rows) {
+    let group = groups.find((g) => g.category === row.category);
+    if (!group) {
+      group = {
+        category: row.category,
+        total: { ...row, supplier_id: null, supplier_name: null, net_value: 0, vat_amount: 0, gross_value: 0, source_count: 0 },
+        suppliers: [],
+      };
+      groups.push(group);
+    }
+    group.total.net_value += Number(row.net_value);
+    group.total.vat_amount += Number(row.vat_amount);
+    group.total.gross_value += Number(row.gross_value);
+    group.total.source_count += row.source_count;
+    group.total.vat_recoverable = group.total.vat_recoverable && row.vat_recoverable;
+    if (row.supplier_id) group.suppliers.push(row);
+  }
+  return groups;
+}
+
 function VatBlock({
   title,
   rows,
@@ -139,18 +166,31 @@ function VatBlock({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={`${row.category}-${row.direction}`} className="border-b border-gray-100 last:border-0">
-                  <td className="px-3 py-2 font-medium">
-                    {categoryLabel(row.category)}
-                    {showRecoverable && !row.vat_recoverable && (
-                      <Badge variant="warning" className="ml-2">Non-recoverable</Badge>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(row.net_value)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(row.vat_amount)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(row.gross_value)}</td>
-                </tr>
+              {groupByCategory(rows).map(({ category, total, suppliers }) => (
+                <Fragment key={`${category}-${total.direction}`}>
+                  <tr className="border-b border-gray-100 last:border-0">
+                    <td className="px-3 py-2 font-medium">
+                      {categoryLabel(category)}
+                      {showRecoverable && !total.vat_recoverable && (
+                        <Badge variant="warning" className="ml-2">Non-recoverable</Badge>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(total.net_value)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(total.vat_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(total.gross_value)}</td>
+                  </tr>
+                  {suppliers.map((row) => (
+                    <tr
+                      key={`${category}-${row.supplier_id}`}
+                      className="border-b border-gray-100 last:border-0 text-xs text-gray-500"
+                    >
+                      <td className="px-3 py-1.5 pl-8">{row.supplier_name ?? 'Unknown supplier'}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(row.net_value)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(row.vat_amount)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(row.gross_value)}</td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
             <tfoot>
