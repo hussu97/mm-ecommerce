@@ -386,7 +386,6 @@ async def add_item(
         unit_price_override=data.unit_price,
         selected_options=[o.model_dump(mode="json") for o in data.selected_options],
         kitchen_notes=data.kitchen_notes,
-        course_id=data.course_id,
         weight=data.weight,
     )
     return _serialise(await _load(db, order_id))
@@ -432,15 +431,8 @@ async def apply_discount(
     order_id: uuid.UUID,
     data: ApplyDiscountRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.discounts.open")),
 ):
-    # Imperative rather than a `require(...)` dependency: which permission this
-    # takes depends on the body — an open discount is typed in, a predefined
-    # one is picked from a list — and a static dependency cannot read the body.
-    ensure(
-        user,
-        "pos.discounts.open" if data.source == "open" else "pos.discounts.predefined",
-    )
     order = await _load(db, order_id)
     order = await pos_order_service.apply_discount(
         db,
@@ -525,21 +517,12 @@ async def apply_charge(
 @router.post("/{order_id}/send-to-kitchen", response_model=list[KitchenTicketResponse])
 async def send_to_kitchen(
     order_id: uuid.UUID,
-    course_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("pos.kitchen.manage")),
 ):
-    """
-    Fire the check to the kitchen.
-
-    Pass `course_id` to fire one course only — starters now, mains when the
-    table has finished them. Omit it and everything outstanding goes at once,
-    which is what a takeaway wants.
-    """
+    """Fire every outstanding line on the check to the kitchen."""
     order = await _load(db, order_id)
-    tickets = await pos_order_service.send_to_kitchen(
-        db, order=order, course_id=course_id
-    )
+    tickets = await pos_order_service.send_to_kitchen(db, order=order)
     return [await _serialise_ticket(db, t) for t in tickets]
 
 

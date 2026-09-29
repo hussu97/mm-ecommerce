@@ -1,4 +1,4 @@
-"""Discounts, promotions and timed events."""
+"""Promotions: the counter's auto discounts and coupons."""
 
 from __future__ import annotations
 
@@ -12,24 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db
 from app.core.exceptions import UnprocessableError
 from app.core.permissions import require, require_any
-from app.models import (
-    Discount,
-    Promotion,
-    TimedEvent,
-)
+from app.models import Promotion
 from app.models.user import User
 from app.schemas.marketing import (  # noqa: F401 — re-exported for older imports
     AvailablePromotionResponse,
-    DiscountCreate,
-    DiscountResponse,
-    DiscountUpdate,
     PromotionCreate,
     PromotionResponse,
     PromotionUpdate,
     PromotionUsageResponse,
-    TimedEventCreate,
-    TimedEventResponse,
-    TimedEventUpdate,
     check_branch_modes,
 )
 from app.services.pos import auto_promotion_service
@@ -47,20 +37,8 @@ from .pos_config import build_crud_router
 # a hole for exactly that reason) or, as here, written and never wired up, and
 # neither shows up in a grep for "which routes demand what". The five live
 # copies became `require(...)`/`ensure(...)`; this dead one is simply gone.
-# Should these three entities ever need finer gating than "admin", they take a
+# Should promotions ever need finer gating than "admin", they take a
 # `Depends(require("marketing.<thing>"))` like everybody else.
-
-
-# ─── Discounts ────────────────────────────────────────────────────────────────
-
-
-discounts_router = build_crud_router(
-    model=Discount,
-    create_schema=DiscountCreate,
-    update_schema=DiscountUpdate,
-    response_schema=DiscountResponse,
-    entity_type="discount",
-)
 
 
 # ─── Promotions ───────────────────────────────────────────────────────────────
@@ -180,22 +158,8 @@ async def available_promotions(
     ]
 
 
-# ─── Timed events ─────────────────────────────────────────────────────────────
-
-
-timed_events_router = build_crud_router(
-    model=TimedEvent,
-    create_schema=TimedEventCreate,
-    update_schema=TimedEventUpdate,
-    response_schema=TimedEventResponse,
-    entity_type="timed_event",
-)
-
-
 __all__ = [
-    "discounts_router",
     "pos_promotions_router",
     "promotion_usage_router",
     "promotions_router",
-    "timed_events_router",
 ]

@@ -103,7 +103,7 @@ def _is_auto_managed(discount) -> bool:
 
 def _has_manual_order_discount(order: Order) -> bool:
     """
-    A cashier-applied order-level discount (open/predefined/coupon).
+    A cashier-applied order-level discount (an open one).
 
     Its presence means the cashier has already set the order discount by hand,
     and the one-order-level-discount rule says the auto promotion stands down.

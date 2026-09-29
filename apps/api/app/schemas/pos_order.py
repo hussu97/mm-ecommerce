@@ -62,8 +62,6 @@ class AddItemRequest(BaseModel):
     unit_price: Decimal | None = Field(None, ge=0)
     selected_options: list[SelectedOption] = Field(default_factory=list)
     kitchen_notes: str | None = None
-    #: Fire this line with a named course rather than immediately.
-    course_id: UUID | None = None
     #: Required for a product priced per kilo; rejected for anything else.
     weight: Decimal | None = Field(None, gt=0, decimal_places=3)
 
@@ -111,7 +109,10 @@ class ApplyDiscountRequest(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     is_percentage: bool = False
     value: Decimal = Field(gt=0)
-    source: Literal["open", "predefined", "coupon", "promotion"] = "open"
+    #: Only `open` is accepted; `coupon` and `promotion` are written by the
+    #: promotion engine and refused here (kept in the type so a client sending
+    #: one gets the explanatory 400, not a bare 422).
+    source: Literal["open", "coupon", "promotion"] = "open"
     order_item_id: UUID | None = None
     reference_id: UUID | None = None
 
@@ -172,7 +173,6 @@ class OrderItemResponse(ORMModel):
     #: somebody has to copy onto a card by hand, spelling included.
     personalisation_note: str | None = None
     kitchen_flow_id: UUID | None
-    course_id: UUID | None = None
     sent_to_kitchen_at: datetime | None
     added_at: datetime | None
 
@@ -204,8 +204,8 @@ class OrderDiscountResponse(ORMModel):
     source: str
     name: str
     #: What the discount came from: the `Promotion` for a `promotion` row (auto
-    #: or coupon — so the till can tell which one produced a line discount), the
-    #: configured `Discount` for a predefined one, null for an open discount.
+    #: or coupon — so the till can tell which one produced a line discount);
+    #: whatever the till sent for an open discount (usually null).
     reference_id: UUID | None = None
     is_percentage: bool
     value: Decimal

@@ -30,7 +30,6 @@ from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
-    InventoryItemIngredient,
     InventoryLevel,
     Warehouse,
 )
@@ -238,25 +237,18 @@ async def active_version(
 
 
 async def item_produces_something(db: AsyncSession, item_id: uuid.UUID) -> bool:
-    """Whether an inventory item is *made* — has an active recipe (v2) or a legacy
-    bill of materials. This is the "produces something" test the production order
-    uses: only such items can appear as a production line."""
-    if (
+    """Whether an inventory item is *made* — has an active recipe. This is the
+    "produces something" test the production order uses: only such items can
+    appear as a production line."""
+    return (
         await active_version(db, RecipeOwnerKindEnum.INVENTORY_ITEM.value, item_id)
         is not None
-    ):
-        return True
-    legacy = await db.scalar(
-        select(func.count())
-        .select_from(InventoryItemIngredient)
-        .where(InventoryItemIngredient.parent_item_id == item_id)
     )
-    return bool(legacy)
 
 
 async def producible_item_ids(db: AsyncSession) -> set[uuid.UUID]:
-    """Every inventory item that produces something — active v2 recipe or legacy
-    BOM. The admin transfer/production grid gates its "qty to produce" input on
+    """Every inventory item that produces something — an active recipe. The
+    admin transfer/production grid gates its "qty to produce" input on
     membership of this set, so only makeable items are offered."""
     v2 = (
         (
@@ -273,12 +265,7 @@ async def producible_item_ids(db: AsyncSession) -> set[uuid.UUID]:
         .scalars()
         .all()
     )
-    legacy = (
-        (await db.execute(select(InventoryItemIngredient.parent_item_id).distinct()))
-        .scalars()
-        .all()
-    )
-    return {i for i in v2 if i is not None} | {i for i in legacy if i is not None}
+    return {i for i in v2 if i is not None}
 
 
 async def item_production_basis(
@@ -289,8 +276,8 @@ async def item_production_basis(
     Returns ``('unit', None)`` or ``('batch', batch_yield)``, read from the item's
     *current active* recipe version — so a later basis or yield change flows into
     the next production order raised, while orders already raised keep the value
-    snapshotted onto their lines. A legacy-BOM item (no v2 version) has no basis
-    and produces in units.
+    snapshotted onto their lines. An item with no active version produces in
+    units.
     """
     version = await active_version(
         db, RecipeOwnerKindEnum.INVENTORY_ITEM.value, item_id
@@ -311,7 +298,7 @@ async def producible_item_bases(
 
     The admin grid reads this to render the "qty to produce" cell in the item's
     basis (batches vs units) and show the live unit conversion. Items missing from
-    the map (legacy BOM, or not producible) are treated as unit basis by callers.
+    the map (not producible) are treated as unit basis by callers.
     """
     rows = (
         await db.execute(

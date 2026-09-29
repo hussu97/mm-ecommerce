@@ -39,9 +39,6 @@ from app.models import (  # noqa: E402
     BusinessSettings,
     Category,
     Charge,
-    Combo,
-    ComboSize,
-    Discount,
     InventoryItem,
     MenuGroup,
     MenuGroupProduct,
@@ -99,7 +96,6 @@ CASHIER_STAFF_PERMISSIONS = [
     "pos.payment.perform",
     "pos.kitchen.manage",
     "pos.orders.split_join",
-    "pos.discounts.predefined",
     "pos.products.availability",
     "orders.manage",
     "catalogue.read",
@@ -676,39 +672,15 @@ class Importer:
 
     async def import_marketing(self) -> None:
         """
-        Discounts, promotions and combos.
+        Promotions.
 
         Foodics exports little more than the name for these — the rules live in
         screens the export API does not cover — so each is created inactive
-        with its numbers zeroed. That is deliberate: a discount that arrives
+        with its numbers zeroed. That is deliberate: a promotion that arrives
         switched on with a guessed value would start taking money off real
-        orders the moment it lands.
+        orders the moment it lands. (Foodics discounts and combos have no home
+        here: `discounts` and `combos` were dropped in 307_drop_dead_tables.)
         """
-        for row in self.export.get("discounts", []):
-            name = row["name"]
-            # "Open Discount" is Foodics' name for a cashier-entered amount,
-            # which is a qualification rather than a fixed value.
-            is_open = "open" in name.lower()
-            await self.upsert(
-                Discount,
-                {"name": name},
-                {
-                    "name_localized": row.get("name_localized"),
-                    "translations": translations(("name", row.get("name_localized"))),
-                    "reference": row.get("reference") or slugify(name, "discount"),
-                },
-                create_only={
-                    "qualification": "open" if is_open else "order",
-                    "amount": Decimal("0"),
-                    "is_percentage": False,
-                    "is_taxable": True,
-                    "minimum_order_price": Decimal("0"),
-                    "minimum_product_price": Decimal("0"),
-                    "order_types": [],
-                    "is_active": False,
-                },
-            )
-
         for row in self.export.get("promotions", []):
             name = row["name"]
             percent = re.search(r"(\d+(?:\.\d+)?)\s*%", name)
@@ -736,31 +708,6 @@ class Importer:
                     "is_active": False,
                 },
             )
-
-        for order, row in enumerate(self.export.get("combos", [])):
-            name = row["name"]
-            combo = await self.upsert(
-                Combo,
-                {"sku": row.get("sku") or slugify(name, f"combo-{order}")},
-                {
-                    "name": name,
-                    "name_localized": row.get("name_localized"),
-                    "translations": translations(("name", row.get("name_localized"))),
-                },
-                # Inactive until someone adds the sizes and the items it
-                # contains — none of which the export carries.
-                create_only={"display_order": order, "is_active": False},
-            )
-            if not await self.one(ComboSize, combo_id=combo.id, name="Regular"):
-                self.db.add(
-                    ComboSize(
-                        combo_id=combo.id,
-                        name="Regular",
-                        price=Decimal("0"),
-                        display_order=0,
-                    )
-                )
-                await self.db.flush()
 
     async def import_reference_data(self) -> None:
         for row in self.export.get("reasons", []):

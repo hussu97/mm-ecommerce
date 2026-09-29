@@ -512,11 +512,6 @@
   "POST /api/v1/pos/orders/{order_id}/send-to-kitchen": {
    "params": [
     [
-     "course_id",
-     "query",
-     false
-    ],
-    [
      "order_id",
      "path",
      true
@@ -649,17 +644,6 @@
  "schemas": {
   "AddItemRequest": {
    "properties": {
-    "course_id": {
-     "anyOf": [
-      {
-       "type": "null"
-      },
-      {
-       "format": "uuid",
-       "type": "string"
-      }
-     ]
-    },
     "kitchen_notes": {
      "anyOf": [
       {
@@ -792,7 +776,6 @@
      "enum": [
       "coupon",
       "open",
-      "predefined",
       "promotion"
      ],
      "type": "string"
@@ -3329,17 +3312,6 @@
     },
     "base_price": {
      "type": "string"
-    },
-    "course_id": {
-     "anyOf": [
-      {
-       "type": "null"
-      },
-      {
-       "format": "uuid",
-       "type": "string"
-      }
-     ]
     },
     "discount_amount": {
      "type": "string"

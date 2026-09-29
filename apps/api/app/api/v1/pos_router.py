@@ -25,11 +25,9 @@ from .inventory import pos_purchase_orders_router
 from .inventory_v2 import pos_inventory_router, pos_recipes_router
 from .inventory_v2 import pos_manager_read_router as inventory_v2_manager_read_router
 from .marketing import (
-    discounts_router,
     pos_promotions_router,
     promotion_usage_router,
     promotions_router,
-    timed_events_router,
 )
 from .menu_groups import router as menu_groups_router
 from .modifiers import router as modifiers_router
@@ -41,7 +39,6 @@ from .operations import (
 from .po_misc import pos_po_misc_router
 from .pos_config import (
     charges_router,
-    courses_router,
     kitchen_flows_router,
     payment_methods_router,
     reasons_router,
@@ -78,7 +75,6 @@ pos_api_router.include_router(menu_groups_router, prefix="/menu-groups", tags=["
 pos_api_router.include_router(
     availability_router, prefix="/pos/availability", tags=["Availability"]
 )
-pos_api_router.include_router(courses_router, prefix="/courses", tags=["Menu"])
 
 # ─── Selling ──────────────────────────────────────────────────────────────────
 pos_api_router.include_router(
@@ -99,7 +95,6 @@ pos_api_router.include_router(taxes_router, prefix="/taxes", tags=["Taxes"])
 pos_api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Taxes"])
 
 # ─── Money off ────────────────────────────────────────────────────────────────
-pos_api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
 # Usage first: `/promotions/usage` must not fall through to `/promotions/{id}`.
 pos_api_router.include_router(
     promotion_usage_router, prefix="/promotions", tags=["Marketing"]
@@ -109,9 +104,6 @@ pos_api_router.include_router(
 )
 pos_api_router.include_router(
     pos_promotions_router, prefix="/pos/promotions", tags=["POS Promotions"]
-)
-pos_api_router.include_router(
-    timed_events_router, prefix="/timed-events", tags=["Marketing"]
 )
 
 # ─── Hardware and the floor ───────────────────────────────────────────────────

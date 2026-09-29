@@ -1,16 +1,16 @@
 """
 Referential integrity for the columns the database cannot enforce it on.
 
-Eight columns across five tables store a `UUID[]` instead of a join table:
-`devices.category_ids`, `discounts.branch_ids`, `promotions.branch_ids` /
-`trigger_product_ids` / `reward_product_ids`,
-`timed_events.branch_ids` / `product_ids` / `category_ids`, and
-`notification_rules.branch_ids` / `recipient_user_ids`.
+Six columns across two tables store a `UUID[]` instead of a join table:
+`devices.category_ids`, and `promotions.branch_ids` / `auto_branch_ids` /
+`coupon_branch_ids` / `trigger_product_ids` / `reward_product_ids`. (Three more
+tables — `discounts`, `timed_events`, `notification_rules` — carried the same
+shape until they were dropped, never used, in `307_drop_dead_tables`.)
 
 Postgres has no way to say "every element of this array is a live `branches.id`".
 So nothing does. A branch can be deleted while three promotions still scope
-themselves to it; a typo in an id is accepted and simply never matches; a
-notification rule can name a member of staff who left. None of it errors — the
+themselves to it; a typo in an id is accepted and simply never matches. None
+of it errors — the
 scoping just silently stops meaning what it says, which is the worst failure
 mode a discount rule can have, because the symptom is *money* and the cause is
 invisible.
@@ -24,8 +24,8 @@ one a reader can see, because the scoping list still names something real.
 
 Declared here rather than on the models so there is one list to read, and
 consulted from `crud_service.create`/`update` rather than from each router,
-because that is the one door all of these writes already go through — three of
-the five entities are built by `pos_config.build_crud_router` and never touch a
+because that is the one door all of these writes already go through — the
+promotion routes are built by `pos_config.build_crud_router` and never touch a
 hand-written handler at all.
 """
 
@@ -50,11 +50,10 @@ REFERENCES: dict[str, dict[str, str]] = {
     # Which menu categories this terminal shows. A display routed to a category
     # that no longer exists shows an empty screen and says nothing about why.
     "Device": {"category_ids": "Category"},
-    # Empty means every branch, so a *wrong* id is not "no branches" — it is
-    # "this branch", for a branch that is not there. The discount then applies
-    # nowhere while the console shows it scoped to one site.
-    "Discount": {"branch_ids": "Branch"},
     "Promotion": {
+        # Empty means every branch, so a *wrong* id is not "no branches" — it
+        # is "this branch", for a branch that is not there. The promotion then
+        # applies nowhere while the console shows it scoped to one site.
         "branch_ids": "Branch",
         # Where it runs automatically / as a till coupon. A stale id is a mode
         # set for a branch that is not there.
@@ -65,18 +64,6 @@ REFERENCES: dict[str, dict[str, str]] = {
         # or one whose free product cannot be granted.
         "trigger_product_ids": "Product",
         "reward_product_ids": "Product",
-    },
-    "TimedEvent": {
-        "branch_ids": "Branch",
-        "product_ids": "Product",
-        "category_ids": "Category",
-    },
-    "NotificationRule": {
-        "branch_ids": "Branch",
-        # A rule that names somebody who has left is silence, not an error:
-        # nobody is told about the till variance and nobody is told nobody was
-        # told.
-        "recipient_user_ids": "User",
     },
 }
 

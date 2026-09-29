@@ -71,7 +71,6 @@ export function SalesTab({ window }: { window: Window }) {
               { value: 'discount', label: 'Discount' },
               { value: 'coupon', label: 'Coupon' },
               { value: 'promotion', label: 'Promotion' },
-              { value: 'timed_event', label: 'Timed event' },
               { value: 'charge', label: 'Charge' },
               { value: 'tax', label: 'Tax' },
             ]}

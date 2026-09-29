@@ -35,7 +35,7 @@ from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.kitchen_flow import KitchenFlow
-from app.models.marketing import Discount, Promotion
+from app.models.marketing import Promotion
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_method import PaymentMethod, PaymentMethodTypeEnum
@@ -825,7 +825,6 @@ async def _build_item(
     unit_price_override: Decimal | None = None,
     weight: Decimal | None = None,
     kitchen_notes: str | None = None,
-    course_id: uuid.UUID | None = None,
     price_snapshot: PriceSnapshot | None = None,
     kitchen_flow_id: uuid.UUID | None = None,
     route_to_kitchen: bool = True,
@@ -880,7 +879,6 @@ async def _build_item(
         status=OrderItemStatusEnum.ACTIVE.value,
         is_open_price=is_open_price,
         kitchen_notes=kitchen_notes,
-        course_id=course_id,
         kitchen_flow_id=kitchen_flow_id,
         creator_id=user.id,
         added_at=added_at or utcnow(),
@@ -901,7 +899,6 @@ async def add_item(
     unit_price_override: Decimal | None = None,
     selected_options: list[dict] | None = None,
     kitchen_notes: str | None = None,
-    course_id: uuid.UUID | None = None,
     weight: Decimal | None = None,
 ) -> OrderItem:
     _assert_open(order)
@@ -965,7 +962,6 @@ async def add_item(
         unit_price_override=unit_price_override,
         weight=weight,
         kitchen_notes=kitchen_notes,
-        course_id=course_id,
     )
     await db.flush()
     await recalculate(db, order)
@@ -1090,33 +1086,22 @@ async def apply_discount(
     _assert_open(order)
     _assert_counter_check(order)
 
-    # Authority. An `open` discount is typed at the till (and gated on
-    # `pos.discounts.open`); anything else must name the configured row it comes
-    # from and take its name, kind and value FROM that row — the way
-    # `apply_charge` does for a `charge_id`. Without this a cashier could label a
-    # typed-in discount `predefined` to sidestep the open-discount permission, or
-    # send `promotion` to forge a row the engine and the reports read as
-    # auto-managed. `promotion` is the engine's alone and is refused here.
+    # Authority. The till applies exactly one kind of discount by hand: an
+    # `open` one, typed in and gated on `pos.discounts.open`. Everything else on
+    # `order_discounts` is written by the promotion engine (`promotion`) — the
+    # auto discount and the coupon picked with `PUT .../coupon` — and a client
+    # sending either label would forge a row the engine and the reports read as
+    # auto-managed, so both are refused here.
     if source == DiscountSourceEnum.PROMOTION.value:
         raise BadRequestError(
             "A promotion is applied by the register itself and cannot be set "
             "at the till"
         )
     if source != DiscountSourceEnum.OPEN.value:
-        if reference_id is None:
-            raise BadRequestError(
-                "A predefined discount must name the discount to apply"
-            )
-        configured = await db.get(Discount, reference_id)
-        if (
-            configured is None
-            or configured.deleted_at is not None
-            or not configured.is_active
-        ):
-            raise BadRequestError("Discount not found")
-        name = configured.name
-        is_percentage = bool(configured.is_percentage)
-        value = Decimal(str(configured.amount))
+        raise BadRequestError(
+            "A coupon is selected with PUT /pos/orders/{id}/coupon, not applied "
+            "as a discount"
+        )
 
     if is_percentage and not (0 < value <= 1):
         raise BadRequestError("Percentage discounts are fractions between 0 and 1")
@@ -1478,9 +1463,7 @@ async def recalculate(
 # ─── Kitchen ──────────────────────────────────────────────────────────────────
 
 
-async def send_to_kitchen(
-    db: AsyncSession, *, order: Order, course_id=None
-) -> list[KitchenTicket]:
+async def send_to_kitchen(db: AsyncSession, *, order: Order) -> list[KitchenTicket]:
     """
     Fire every line not yet sent, grouped into one ticket per kitchen station.
     Re-firing is safe — already-sent lines are skipped.
@@ -1491,13 +1474,6 @@ async def send_to_kitchen(
         for i in order.items
         if i.sent_to_kitchen_at is None and i.status != OrderItemStatusEnum.VOID.value
     ]
-    if course_id is not None:
-        # Firing one course: starters now, mains when the table is ready.
-        # Without this a single send dumps the whole check on the pass and the
-        # mains go cold while the starters are being eaten.
-        pending = [i for i in pending if i.course_id == course_id]
-        if not pending:
-            raise ConflictError("Nothing left to fire in that course")
     if not pending:
         raise ConflictError("Every line has already been sent to the kitchen")
 
@@ -1507,8 +1483,8 @@ async def send_to_kitchen(
 
     now = utcnow()
     # Number the new tickets after the highest this order already has. Two fires
-    # of the same check racing — a double-tapped "send", one course fired from
-    # two stations — both read the same high-water mark and pick the same next
+    # of the same check racing — a double-tapped "send", the same check fired
+    # from two stations — both read the same high-water mark and pick the same next
     # number. The (order_id, sequence) unique constraint (migration 219,
     # F-POS-31) catches the loser, who re-reads the mark and retries inside a
     # savepoint so the rest of the transaction survives, the same shape

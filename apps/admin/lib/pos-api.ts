@@ -42,8 +42,6 @@ export type ProjectionDrift = Schemas['ProjectionDriftResponse'];
 export type BranchInventorySettings = Schemas['BranchInventorySettingsResponse'];
 export type StockAudit = Schemas['StockAuditRequest'];
 export type StockAuditPreview = Schemas['StockAuditPreviewResponse'];
-export type TransferTemplate = Schemas['TransferTemplateResponse'];
-export type TransferTemplateWrite = Schemas['TransferTemplateUpsert'];
 // The parent transfer order (admin-raised, fans out to many branches) and its
 // per-branch child leg. `TransferOrder` no longer carries lines directly — it
 // rolls up `total_by_item` across its `children`, each a `Transfer`.
@@ -358,10 +356,6 @@ export const inventoryApi = {
       headers: { 'Content-Type': file.type },
     }),
 
-  productRecipe: (productId: string) => api.get<Record<string, unknown>>(`/inventory/recipes/products/${productId}`),
-  setProductRecipe: (productId: string, ingredients: unknown[]) =>
-    api.put<Record<string, unknown>>(`/inventory/recipes/products/${productId}`, { ingredients }),
-
   recipeOwners: (
     ownerKind: string,
     params: { search?: string; active?: string; recipe?: string; sort?: string; sort_dir?: string; branch_id?: string },
@@ -425,16 +419,6 @@ export const inventoryApi = {
     api.patch<BranchInventorySettings>(`/inventory/branch-settings/${branchId}`, data),
 
   // ── Inter-branch stock transfers ──────────────────────────────────────────
-  // Templates are the reusable per-source-branch pick lists a register draws on
-  // to raise a transfer; the transfer/return log is the read-only history.
-  transferTemplates: (sourceBranchId: string) =>
-    api.get<TransferTemplate[]>(`/inventory/transfer-templates${buildQs({ source_branch_id: sourceBranchId })}`),
-  createTransferTemplate: (data: TransferTemplateWrite) =>
-    api.post<TransferTemplate>('/inventory/transfer-templates', data),
-  updateTransferTemplate: (id: string, data: TransferTemplateWrite) =>
-    api.put<TransferTemplate>(`/inventory/transfer-templates/${id}`, data),
-  deactivateTransferTemplate: (id: string) =>
-    api.post<TransferTemplate>(`/inventory/transfer-templates/${id}/deactivate`, {}),
   // Transfer ORDERS are the admin-raised parents: one source branch fanning out
   // to many destinations. Creating one moves no stock (status `pending`); the
   // source's POS marks each child sent and the destinations receive. The log

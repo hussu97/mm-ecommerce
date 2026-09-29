@@ -17,8 +17,8 @@ Two forms, one rule:
   used to be `Depends(get_current_active_user)`; it resolves the same user,
   refuses the same way, and returns the user for handlers that need it.
 * `ensure(user, permission)` — the imperative form, for the handful of sites
-  where the permission depends on the request body (open vs predefined
-  discounts, refund vs payment) and a static dependency cannot express it.
+  where the permission depends on the request body (an open price or charge,
+  refund vs payment) and a static dependency cannot express it.
   Each such site carries a comment saying why it stays inline.
 """
 

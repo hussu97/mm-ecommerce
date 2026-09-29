@@ -46,7 +46,6 @@ from .inventory import (
 )
 from .inventory import (
     purchase_orders_router,
-    recipes_router,
     suppliers_router,
     warehouses_router,
 )
@@ -63,21 +62,17 @@ from .inventory_v2 import (
 )
 from .item_mappings import router as item_mappings_router
 from .marketing import (
-    discounts_router,
     pos_promotions_router,
     promotion_usage_router,
     promotions_router,
-    timed_events_router,
 )
 from .menu_groups import router as menu_groups_router
 from .modifiers import router as modifiers_router
 from .operations import (
     dashboard_router,
-    notification_rules_router,
     production_orders_router,
     production_router,
     transfer_orders_router,
-    transfer_templates_router,
 )
 from .orders import router as orders_router
 from .payment_gateways import router as payment_gateways_router
@@ -85,7 +80,6 @@ from .payments import router as payments_router
 from .po_misc import po_misc_categories_router, po_misc_periods_router
 from .pos_config import (
     charges_router,
-    courses_router,
     kitchen_flows_router,
     legal_entities_router,
     payment_methods_router,
@@ -192,7 +186,6 @@ api_router.include_router(
 )
 api_router.include_router(charges_router, prefix="/charges", tags=["Charges"])
 api_router.include_router(reasons_router, prefix="/reasons", tags=["Reasons"])
-api_router.include_router(courses_router, prefix="/courses", tags=["Menu"])
 api_router.include_router(menu_groups_router, prefix="/menu-groups", tags=["Menu"])
 api_router.include_router(
     kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]
@@ -260,9 +253,6 @@ api_router.include_router(
     po_misc_periods_router, prefix="/inventory/po-misc-periods", tags=["Inventory"]
 )
 api_router.include_router(
-    recipes_router, prefix="/inventory/recipes", tags=["Inventory"]
-)
-api_router.include_router(
     inventory_control_router, prefix="/inventory", tags=["Inventory Control"]
 )
 api_router.include_router(
@@ -273,7 +263,6 @@ api_router.include_router(
 )
 
 # ─── Marketing ────────────────────────────────────────────────────────────────
-api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
 # Usage first: `/promotions/usage` must not fall through to `/promotions/{id}`.
 api_router.include_router(
     promotion_usage_router, prefix="/promotions", tags=["Marketing"]
@@ -281,9 +270,6 @@ api_router.include_router(
 api_router.include_router(promotions_router, prefix="/promotions", tags=["Marketing"])
 api_router.include_router(
     pos_promotions_router, prefix="/pos/promotions", tags=["POS Promotions"]
-)
-api_router.include_router(
-    timed_events_router, prefix="/timed-events", tags=["Marketing"]
 )
 
 # ─── Operations ───────────────────────────────────────────────────────────────
@@ -294,20 +280,12 @@ api_router.include_router(
     replenishment_router, prefix="/inventory/replenishment", tags=["Inventory"]
 )
 api_router.include_router(
-    transfer_templates_router,
-    prefix="/inventory/transfer-templates",
-    tags=["Inventory"],
-)
-api_router.include_router(
     production_router, prefix="/inventory/production", tags=["Inventory"]
 )
 api_router.include_router(
     production_orders_router,
     prefix="/inventory/production-orders",
     tags=["Inventory"],
-)
-api_router.include_router(
-    notification_rules_router, prefix="/notification-rules", tags=["Notifications"]
 )
 api_router.include_router(
     dashboard_router, prefix="/pos/dashboard", tags=["POS Dashboard"]

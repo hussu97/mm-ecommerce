@@ -60,8 +60,6 @@ class TransferOrderCreate(BaseModel):
     source_warehouse_id: UUID | None = None
     required_date: date | None = None
     notes: str | None = None
-    #: The template this order was raised from, if any — snapshotted for provenance.
-    template_id: UUID | None = None
     #: A stable token so a retried create does not raise the fan-out twice.
     client_request_id: str | None = Field(None, max_length=64)
     items: list[TransferOrderItemInput] = Field(min_length=1)
@@ -178,8 +176,6 @@ class TransferOrderResponse(ORMModel):
     #: Set when the admin overrode on-hand at create; groups the shortfall
     #: top-up adjustments this order posted (see the adjustment report).
     adjustment_group_id: UUID | None = None
-    template_id: UUID | None = None
-    template_version: int | None = None
     created_at: datetime
     #: Totals rolled up across every child, one row per item.
     total_by_item: list[TransferOrderTotalLine] = []

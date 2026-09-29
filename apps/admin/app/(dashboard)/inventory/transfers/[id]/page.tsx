@@ -149,7 +149,6 @@ export default function TransferOrderDetailPage() {
         <Detail label="Business date" value={order.business_date} />
         <Detail label="Created" value={order.created_at ? formatDateTime(order.created_at) : '—'} />
         {order.required_date && <Detail label="Required by" value={order.required_date} />}
-        {order.template_version != null && <Detail label="Raised from" value={`Template v${order.template_version}`} />}
         {order.adjustment_group_id && <Detail label="Overrides" value="Posted a shortfall top-up — see the report below" />}
         {order.notes && <Detail label="Notes" value={order.notes} />}
       </div>

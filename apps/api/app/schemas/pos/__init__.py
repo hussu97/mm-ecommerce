@@ -76,11 +76,6 @@ from .tables import (
     TableResponse,
     TableUpdate,
 )
-from .tags import (
-    CourseCreate,
-    CourseResponse,
-    CourseUpdate,
-)
 from .taxes import (
     TaxCreate,
     TaxGroupCreate,
@@ -125,9 +120,6 @@ __all__ = [
     "ChargeCreate",
     "ChargeResponse",
     "ChargeUpdate",
-    "CourseCreate",
-    "CourseResponse",
-    "CourseUpdate",
     "DeviceCreate",
     "DevicePairRequest",
     "DevicePairResponse",

@@ -66,7 +66,7 @@ async def test_the_dependency_names_its_permission():
 
 async def test_ensure_is_the_same_check_in_imperative_form():
     """For the call sites where the permission depends on the request body
-    (open vs predefined discounts, refund vs payment) and a static dependency
+    (an open price or charge, refund vs payment) and a static dependency
     cannot express it."""
     ensure(_user("pos.discounts.open"), "pos.discounts.open")  # does not raise
     with pytest.raises(ForbiddenError):
@@ -178,16 +178,21 @@ async def test_the_migration_map_accounts_for_every_retired_slug():
     a role still holds that the API will reject as unknown the next time
     somebody opens the role editor.
     """
-    from app.models.role import ALL_PERMISSIONS, PERMISSION_MIGRATION
+    from app.models.role import (
+        ALL_PERMISSIONS,
+        PERMISSION_MIGRATION,
+        PERMISSIONS_RETIRED_AFTER_105,
+    )
 
     live = set(ALL_PERMISSIONS)
+    retired = {**PERMISSION_MIGRATION, **PERMISSIONS_RETIRED_AFTER_105}
 
     # Nothing retired is also live, and nothing live is also retired.
-    both = sorted(live & set(PERMISSION_MIGRATION))
+    both = sorted(live & set(retired))
     assert both == [], f"{both} are both live and marked retired"
 
     # Every target is a slug that exists today.
-    unknown = sorted({t for t in PERMISSION_MIGRATION.values() if t is not None} - live)
+    unknown = sorted({t for t in retired.values() if t is not None} - live)
     assert unknown == [], (
         f"the migration map points at slugs that do not exist: {unknown}"
     )

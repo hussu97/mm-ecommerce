@@ -208,12 +208,11 @@ _ORDER_DIMENSIONS = {
 _LINE_DIMENSIONS = {"discount", "charge", "tax"}
 
 
-#: Discounts carry where they came from, so coupon, promotion and timed-event
-#: are the same grouping narrowed to one source.
+#: Discounts carry where they came from, so coupon and promotion are the same
+#: grouping narrowed to one source.
 _DISCOUNT_SOURCES = {
     "coupon": "coupon",
     "promotion": "promotion",
-    "timed_event": "timed_event",
 }
 
 

@@ -1,12 +1,13 @@
 """
-A discount that is not `open` must come from a configured row, not the client.
+The till applies one kind of discount by hand: an `open` one.
 
-`pos.discounts.open` is the permission for a typed-in discount; a `predefined`
-one is picked from a list and gated more cheaply. Trusting the client's
-name/value under the `predefined` label let a cashier type any amount under the
-cheaper permission, and a `source="promotion"` row masquerades as engine-managed.
-The fix (F-POS-3): for `source != open`, load the `Discount` by `reference_id`
-and take its name/kind/value; refuse `promotion` from the till entirely.
+`pos.discounts.open` is the permission for a typed-in discount. Every other
+`order_discounts` row is written by the promotion engine (`promotion` — the
+auto discount or a coupon selected with `PUT .../coupon`), so a client-sent
+`promotion` or `coupon` label would forge a row the engine and the reports read
+as auto-managed (F-POS-3). Both are refused. The `predefined` source — a
+discount picked from the `discounts` table — went with that table in
+`307_drop_dead_tables`; it was never used in production.
 """
 
 from __future__ import annotations
@@ -33,22 +34,9 @@ def _order():
     )
 
 
-def _discount(**over):
-    fields = dict(
-        id=uuid.uuid4(),
-        name="Loyalty 10%",
-        is_percentage=True,
-        amount=Decimal("0.10"),
-        is_active=True,
-        deleted_at=None,
-    )
-    fields.update(over)
-    return SimpleNamespace(**fields)
-
-
-def _db(*, discount=None):
+def _db():
     db = SimpleNamespace()
-    db.get = AsyncMock(return_value=discount)
+    db.get = AsyncMock(return_value=None)
     db.add = MagicMock()
     db.delete = AsyncMock()
     db.flush = AsyncMock()
@@ -76,58 +64,18 @@ async def test_promotion_source_is_refused_from_the_till():
         )
 
 
-async def test_predefined_without_a_reference_is_refused():
-    with pytest.raises(BadRequestError, match="name the discount"):
+async def test_coupon_source_is_refused_from_the_till():
+    with pytest.raises(BadRequestError, match="coupon"):
         await pos_order_service.apply_discount(
             _db(),
             order=_order(),
             user=SimpleNamespace(id=uuid.uuid4()),
-            name="Loyalty",
+            name="Anything",
             is_percentage=True,
-            value=Decimal("0.10"),
-            source="predefined",
-            reference_id=None,
-        )
-
-
-async def test_predefined_with_a_missing_reference_is_refused():
-    with pytest.raises(BadRequestError, match="not found"):
-        await pos_order_service.apply_discount(
-            _db(discount=None),
-            order=_order(),
-            user=SimpleNamespace(id=uuid.uuid4()),
-            name="Loyalty",
-            is_percentage=True,
-            value=Decimal("0.10"),
-            source="predefined",
+            value=Decimal("0.99"),
+            source="coupon",
             reference_id=uuid.uuid4(),
         )
-
-
-async def test_predefined_takes_its_value_from_the_configured_row_not_the_client():
-    configured = _discount(
-        name="Loyalty 10%", is_percentage=True, amount=Decimal("0.10")
-    )
-    db = _db(discount=configured)
-
-    await pos_order_service.apply_discount(
-        db,
-        order=_order(),
-        user=SimpleNamespace(id=uuid.uuid4()),
-        # The client tries to smuggle in a 90% discount under the predefined label.
-        name="Totally 90% off",
-        is_percentage=True,
-        value=Decimal("0.90"),
-        source="predefined",
-        reference_id=configured.id,
-    )
-
-    (added,) = [c.args[0] for c in db.add.call_args_list]
-    assert added.name == "Loyalty 10%", "the name came from the configured discount"
-    assert added.is_percentage is True
-    assert added.value == Decimal("0.10"), "the client's 90% was ignored"
-    assert added.source == "predefined"
-    assert added.reference_id == configured.id
 
 
 async def test_an_open_discount_still_takes_the_typed_value():
