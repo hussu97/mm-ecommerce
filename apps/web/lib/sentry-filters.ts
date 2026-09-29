@@ -20,3 +20,29 @@ export function isInAppBrowserHydrationError(event: ErrorEvent, userAgent: strin
   const message = event.exception?.values?.[0]?.value ?? event.message ?? '';
   return HYDRATION_ERROR.test(message);
 }
+
+/**
+ * Instagram's Android WebView evaluates its own telemetry scripts in the page
+ * (`app://navigation_performance_logger_android`) and talks to the app through
+ * a `@JavascriptInterface` bridge. When the app tears the bridge down first —
+ * the visitor closes the in-app browser mid-load — the next call throws "Error
+ * invoking postMessage: Java object is gone" from inside that script, which our
+ * global onerror handler then reports. None of it is our code or our bug.
+ *
+ * Our own frames are https:// URLs, or `app:///_next/...` once Sentry rewrites
+ * them (three slashes), so an `app://<host>` frame is a script the host
+ * injected. The error is dropped only when every frame is one of those, so an
+ * error that passes through our bundle is still reported.
+ */
+const INJECTED_SCRIPT_FRAME = /^app:\/\/(?!\/)/;
+
+// Android WebView's message for a call into a removed JavascriptInterface; the
+// site never registers or calls one, so it can only come from the host app.
+const DEAD_NATIVE_BRIDGE = /Java object is gone/;
+
+export function isInjectedScriptError(event: ErrorEvent): boolean {
+  const exception = event.exception?.values?.[0];
+  if (DEAD_NATIVE_BRIDGE.test(exception?.value ?? event.message ?? '')) return true;
+  const frames = exception?.stacktrace?.frames ?? [];
+  return frames.length > 0 && frames.every((frame) => INJECTED_SCRIPT_FRAME.test(frame.filename ?? ''));
+}
