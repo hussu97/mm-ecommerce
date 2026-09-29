@@ -1076,14 +1076,16 @@ async def backfill_order_economics_from_statement(
         values: dict[str, Any] = {}
         changed = []
         # Older Keeta bills (the 40-column layout, before ~Sep 8) have no
-        # `net_payable` line. A customer-service cancellation's payment is then
-        # its `merchant_compensation` line, and that IS what Keeta paid. Anything
-        # else is the sum of the bill's own legs, which is what reconciles to the
-        # payout (gross + commission + subsidies + bank fee): a sale reversed
-        # after delivery reads -40 + 9 + 4 = -27, a charge, not the +26.20 the
-        # order feed had provisionally.
+        # `net_payable` line, so the net is the sum of the bill's own legs, which
+        # is what reconciles to the payout (gross + commission + subsidies + bank
+        # fee), plus any `merchant_compensation` Keeta paid on top. The legs now
+        # carry every row of the order summed (the sale and the refund that
+        # reverses it), so a Keeta-funded refund is +40.80 − 42.00 + 40.80 =
+        # 39.60 (4677840390710681), not the compensation's 40.80 alone, and a
+        # store-fault one is +26.20 − 27.00 = −0.80.
         if net is None and channel == CHANNEL_KEETA:
-            net = compensation if compensation is not None else legs
+            if legs is not None or compensation is not None:
+                net = (legs or 0) + (compensation or 0)
         # Settlement wins over the provisional order-feed net.
         if net is not None:
             v = Decimal(str(net))
