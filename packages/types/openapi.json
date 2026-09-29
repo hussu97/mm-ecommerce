@@ -27233,6 +27233,11 @@
               }
             ],
             "title": "Share"
+          },
+          "vat_recovered": {
+            "default": 0.0,
+            "title": "Vat Recovered",
+            "type": "number"
           }
         },
         "required": [
@@ -27289,6 +27294,22 @@
               }
             ],
             "title": "Total Share"
+          },
+          "vat_recovered": {
+            "default": 0.0,
+            "title": "Vat Recovered",
+            "type": "number"
+          },
+          "vat_recovered_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Recovered Share"
           }
         },
         "required": [

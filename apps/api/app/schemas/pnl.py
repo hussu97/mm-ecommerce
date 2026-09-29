@@ -202,10 +202,13 @@ class PnlMiscExpenseRow(BaseModel):
     category: str
     #: Admin-only (rent, salary…) — only shown to holders of the permission.
     admin_only: bool
-    #: Net of reclaimable VAT; the full gross where the entity cannot reclaim.
+    #: VAT included — what the invoices say.
     amount: float
     #: `amount` as a % of the total column's GMV; null with no GMV.
     share: float | None
+    #: The input VAT inside `amount` the entity reclaims; zero when it is not
+    #: VAT-registered.
+    vat_recovered: float = 0.0
     lines: int
 
 
@@ -216,9 +219,13 @@ class PnlMiscExpenses(BaseModel):
     #: False under a channel filter (overhead has no channel).
     included: bool
     rows: list[PnlMiscExpenseRow]
+    #: VAT included.
     total: float
     total_share: float | None
-    #: PC3 − `total`.
+    #: The input VAT reclaimed on `total`, credited back as its own line.
+    vat_recovered: float = 0.0
+    vat_recovered_share: float | None = None
+    #: PC3 − `total` + `vat_recovered`.
     pc4: float
     pc4_pct: float | None
 

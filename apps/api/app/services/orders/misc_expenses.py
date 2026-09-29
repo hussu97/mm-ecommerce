@@ -12,10 +12,13 @@ Which lines count: those on a **received** PO (``partially_received`` or
 never a cost. The branch filter is the PO's branch; the entity filter resolves
 that branch's counter entity, as the VAT ledger does for purchases.
 
-The amount is **net of VAT when the entity reclaims it** — the P&L's rule for
-every cost (reclaimed input VAT is not a cost) — and the full gross when it
-cannot (the Barsha counter's entity is not VAT-registered). The VAT split
-itself is the supplier's, frozen on the line (``supplier_service``).
+The amount is the **gross, VAT included** — what the invoice says, so the row
+matches the PO a person can open. The input VAT the entity reclaims on it is
+its own figure, ``vat_recovered``, which the report credits back as a separate
+line between PC3 and PC4; net of that credit PC4 is exactly what it was when
+the rows were stated net. Zero where the entity cannot reclaim (the Barsha
+counter's entity is not VAT-registered). The VAT split itself is the
+supplier's, frozen on the line (``supplier_service``).
 """
 
 from __future__ import annotations
@@ -52,8 +55,12 @@ class MiscExpense:
     category_id: uuid.UUID
     category: str
     admin_only: bool
-    #: The window's share of the lines' cost, quantised once at the end.
+    #: The window's share of the lines' cost, VAT included, quantised once at
+    #: the end.
     amount: Decimal
+    #: The input VAT inside `amount` that the entity reclaims — zero when it is
+    #: not VAT-registered. `amount - vat_recovered` is the net cost.
+    vat_recovered: Decimal
     #: Distinct misc lines contributing.
     lines: int
 
@@ -132,7 +139,8 @@ async def misc_expenses(
         stmt = stmt.where(PurchaseOrderMiscCategory.admin_only.is_(False))
 
     totals: dict[uuid.UUID, MiscExpense] = {}
-    raw: dict[uuid.UUID, Decimal] = defaultdict(lambda: Decimal("0"))
+    raw_gross: dict[uuid.UUID, Decimal] = defaultdict(lambda: Decimal("0"))
+    raw_cost: dict[uuid.UUID, Decimal] = defaultdict(lambda: Decimal("0"))
     for category_id, name, admin_only, branch_id, net, gross, count in (
         await db.execute(stmt)
     ).all():
@@ -142,7 +150,8 @@ async def misc_expenses(
         if legal_entity_ids and (entity is None or entity.id not in legal_entity_ids):
             continue
         reclaims = tax_identity_service.is_vat_registered(entity)
-        raw[category_id] += Decimal(str((net if reclaims else gross) or 0))
+        raw_gross[category_id] += Decimal(str(gross or 0))
+        raw_cost[category_id] += Decimal(str((net if reclaims else gross) or 0))
         row = totals.setdefault(
             category_id,
             MiscExpense(
@@ -150,12 +159,16 @@ async def misc_expenses(
                 category=name,
                 admin_only=bool(admin_only),
                 amount=Decimal("0"),
+                vat_recovered=Decimal("0"),
                 lines=0,
             ),
         )
         row.lines += int(count)
     for category_id, row in totals.items():
-        row.amount = money(raw[category_id])
+        row.amount = money(raw_gross[category_id])
+        # The difference of the two quantised figures rather than a third
+        # rounding, so gross − VAT recovered is the net cost to the fils.
+        row.vat_recovered = row.amount - money(raw_cost[category_id])
     return sorted(
         (row for row in totals.values() if row.amount != 0 or row.lines),
         key=lambda row: row.category.lower(),

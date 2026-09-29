@@ -267,3 +267,33 @@ def test_the_migration_seeds_the_owner_list_and_backfills_by_id():
         "54ef9a8d-2fe8-48fe-ab49-e3e3982f11ce",
     ):
         assert line_id in source
+
+
+def test_pc4_is_unchanged_by_stating_misc_gross_with_vat_recovered_below():
+    """Rows carry VAT; the reclaimed VAT is credited back before PC4, so PC4 is
+    PC3 less the *net* cost exactly as before."""
+    import uuid
+    from decimal import Decimal as D
+
+    from app.services.orders.misc_expenses import MiscExpense
+    from app.services.orders.order_pnl import PnlTotals
+    from app.services.orders.pnl_report import PnlReport
+
+    total = PnlTotals(gmv=D("1000.00"))
+    rows = [
+        MiscExpense(uuid.uuid4(), "Cake Supplies", False, D("105.00"), D("5.00"), 1),
+        MiscExpense(uuid.uuid4(), "Rent", True, D("345.21"), D("16.44"), 1),
+    ]
+    report = PnlReport(
+        date_from="2026-09-21",
+        date_to="2026-09-30",
+        channels=[],
+        total=total,
+        period_charges=[],
+        period_charges_included=True,
+        misc_expenses=rows,
+        misc_expenses_included=True,
+    )
+    assert report.misc_expenses_total == D("450.21")
+    assert report.misc_vat_recovered == D("21.44")
+    assert report.pc4 == total.pc3 - D("428.77")  # 100.00 + 328.77 net

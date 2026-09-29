@@ -102,9 +102,10 @@ const ROWS: Row[] = [
 
 /**
  * Below PC3: misc purchase-order spend (rent, groceries, a licence…) by
- * category, each line spread equally per day over its own period — so only the
- * days inside this window count. It is overhead with no channel, so only the
- * total column carries it; the rest show a dash.
+ * category, VAT included, each line spread equally per day over its own period
+ * — so only the days inside this window count. The input VAT reclaimed on it is
+ * credited back as its own line before PC4. It is overhead with no channel, so
+ * only the total column carries it; the rest show a dash.
  */
 function MiscExpenseRows({ report, columns }: { report: PnlReport; columns: Column[] }) {
   const misc = report.misc_expenses;
@@ -141,7 +142,7 @@ function MiscExpenseRows({ report, columns }: { report: PnlReport; columns: Colu
   return (
     <>
       <tr className="border-b border-gray-100 text-gray-600">
-        <td className="sticky left-0 bg-white px-3 py-1.5">Misc. expenses (purchase orders)</td>
+        <td className="sticky left-0 bg-white px-3 py-1.5">Misc. expenses (purchase orders, incl. VAT)</td>
         {columns.map(c => cell(c, misc.total, 'cost', misc.total_share))}
       </tr>
       {misc.rows.map(row => (
@@ -153,6 +154,12 @@ function MiscExpenseRows({ report, columns }: { report: PnlReport; columns: Colu
           {columns.map(c => cell(c, row.amount, 'detail', row.share))}
         </tr>
       ))}
+      {misc.vat_recovered !== 0 && (
+        <tr className="border-b border-gray-100 text-gray-600">
+          <td className="sticky left-0 bg-white px-3 py-1.5">VAT recovered on misc. expenses</td>
+          {columns.map(c => cell(c, misc.vat_recovered, 'credit', misc.vat_recovered_share ?? null))}
+        </tr>
+      )}
       <tr className="bg-gray-50 text-sm font-medium text-gray-800">
         <td className="sticky left-0 bg-gray-50 px-3 py-1.5">PC4</td>
         {columns.map(c => cell(c, misc.pc4, 'result', misc.pc4_pct))}

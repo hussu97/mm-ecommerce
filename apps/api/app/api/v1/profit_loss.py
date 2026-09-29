@@ -107,12 +107,15 @@ async def profit_and_loss(
                     admin_only=row.admin_only,
                     amount=float(row.amount),
                     share=_float(total.share(row.amount)),
+                    vat_recovered=float(row.vat_recovered),
                     lines=row.lines,
                 )
                 for row in report.misc_expenses
             ],
             total=float(report.misc_expenses_total),
             total_share=_float(total.share(report.misc_expenses_total)),
+            vat_recovered=float(report.misc_vat_recovered),
+            vat_recovered_share=_float(total.share(report.misc_vat_recovered)),
             pc4=float(report.pc4),
             pc4_pct=_float(total.share(report.pc4)),
         ),

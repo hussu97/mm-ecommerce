@@ -19163,6 +19163,11 @@ export interface components {
             lines: number;
             /** Share */
             share: number | null;
+            /**
+             * Vat Recovered
+             * @default 0
+             */
+            vat_recovered: number;
         };
         /**
          * PnlMiscExpenses
@@ -19182,6 +19187,13 @@ export interface components {
             total: number;
             /** Total Share */
             total_share: number | null;
+            /**
+             * Vat Recovered
+             * @default 0
+             */
+            vat_recovered: number;
+            /** Vat Recovered Share */
+            vat_recovered_share?: number | null;
         };
         /**
          * PnlPeriodChargeRow

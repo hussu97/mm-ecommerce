@@ -57,9 +57,19 @@ class PnlReport:
         return money(sum((row.amount for row in self.misc_expenses), Decimal("0")))
 
     @property
+    def misc_vat_recovered(self) -> Decimal:
+        """The input VAT reclaimed on the misc spend, credited back below it."""
+        return money(
+            sum((row.vat_recovered for row in self.misc_expenses), Decimal("0"))
+        )
+
+    @property
     def pc4(self) -> Decimal:
-        """PC3 less the misc spend: what the period made after overheads."""
-        return money(self.total.pc3 - self.misc_expenses_total)
+        """PC3 less the misc spend net of the VAT recovered on it: what the
+        period made after overheads."""
+        return money(
+            self.total.pc3 - self.misc_expenses_total + self.misc_vat_recovered
+        )
 
 
 async def build(

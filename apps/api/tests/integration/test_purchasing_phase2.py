@@ -961,9 +961,11 @@ async def test_pnl_misc_expenses_spread_per_day_over_received_pos(engine, env):
         rows = await misc_expenses(
             db, "2026-09-21", "2026-09-30", branch_ids=[branch_id], include_gated=True
         )
-        assert [(r.category, r.amount, r.lines) for r in rows] == [
-            ("Cake Supplies", D("100.00"), 1),  # 10 of 30 days
-            ("Rent", D("328.77"), 1),  # 12,000 × 10 / 365
+        # Gross, VAT included; the reclaimed VAT is its own figure and the two
+        # net back to the cost: 105.00 − 5.00 = 100.00, 345.21 − 16.44 = 328.77.
+        assert [(r.category, r.amount, r.vat_recovered, r.lines) for r in rows] == [
+            ("Cake Supplies", D("105.00"), D("5.00"), 1),  # 10 of 30 days
+            ("Rent", D("345.21"), D("16.44"), 1),  # 12,600 × 10 / 365
         ]
         blind = await misc_expenses(
             db, "2026-09-21", "2026-09-30", branch_ids=[branch_id], include_gated=False
@@ -972,7 +974,9 @@ async def test_pnl_misc_expenses_spread_per_day_over_received_pos(engine, env):
         october = await misc_expenses(
             db, "2026-10-01", "2026-10-31", branch_ids=[branch_id], include_gated=True
         )
-        assert [(r.category, r.amount) for r in october] == [("Rent", D("1019.18"))]
+        assert [(r.category, r.amount - r.vat_recovered) for r in october] == [
+            ("Rent", D("1019.18"))
+        ]
         await db.rollback()
 
 
