@@ -495,6 +495,13 @@ services:
       -c synchronous_commit=off
       -c shared_preload_libraries=pg_stat_statements
       -c pg_stat_statements.track=top
+    # Loopback only, so an SSH tunnel (pgAdmin) can target the VM's
+    # 127.0.0.1:5432 instead of the container IP, which changes whenever the
+    # container is recreated. It is never reachable off the box: Docker binds
+    # 127.0.0.1 only, and the GCP firewall doesn't open 5432 either. Applying it
+    # needs the manual postgres force-recreate described above.
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
