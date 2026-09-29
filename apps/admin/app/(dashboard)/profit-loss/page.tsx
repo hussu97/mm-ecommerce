@@ -9,16 +9,23 @@
  * a view is shareable and survives a refresh. Orders are dated by the shop day
  * they were created in, the same window the dashboard and orders list use;
  * marketplace period charges (monthly platform fees…) by their statement date.
+ *
+ * A second tab, VAT, reads the VAT ledger over the same date range and entity
+ * filter (`?tab=vat`). Channel and branch do not apply to it — the ledger is
+ * kept per legal entity — so those two filters step aside on that tab. It used
+ * to be a Counter Reports tab; `/pos-reports/vat` now redirects here.
  */
 
 import { useEffect, useState } from 'react';
 import { profitLossApi, type PnlReport } from '@/lib/api';
 import { branchesApi, legalEntitiesApi } from '@/lib/pos-api';
 import type { Branch, LegalEntity } from '@/lib/pos-types';
-import { LoadError, MultiSelect, Spinner } from '@/components/ui';
+import { LoadError, MultiSelect, Spinner, TabBar } from '@/components/ui';
+import { useAuth } from '@/lib/auth-context';
 import { useUrlFilters, type FilterFieldSpec } from '@/lib/list-filters';
 import { DATE_PRESETS } from '@/lib/order-filters';
 import { cn, formatCurrency } from '@/lib/utils';
+import { VatReport } from './VatReport';
 
 const FIELDS: FilterFieldSpec[] = [
   { key: 'from', kind: 'single' },
@@ -26,6 +33,8 @@ const FIELDS: FilterFieldSpec[] = [
   { key: 'channels', param: 'channel', kind: 'multi' },
   { key: 'branches', param: 'branch', kind: 'multi' },
   { key: 'entities', param: 'legal_entity', kind: 'multi' },
+  // Which tab, in the URL with the filters so a link or a refresh keeps it.
+  { key: 'tab', kind: 'single' },
 ];
 
 type Filters = {
@@ -34,6 +43,7 @@ type Filters = {
   channels: string[];
   branches: string[];
   entities: string[];
+  tab: string;
 };
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -197,7 +207,22 @@ function Tile({ label, value, pct }: { label: string; value: number; pct?: numbe
 }
 
 export default function ProfitLossPage() {
-  const { filters, patch, hasAny, clearAll } = useUrlFilters<Filters>(FIELDS);
+  const { filters, patch } = useUrlFilters<Filters>(FIELDS);
+  const { user } = useAuth();
+  const can = (slug: string) => !!user && (user.is_superadmin || user.permissions.includes(slug));
+  // Each tab gates on the permission its API does: the P&L on `reports.cost`,
+  // the VAT ledger on `reports.vat`.
+  const canPnl = can('reports.cost');
+  const canVat = can('reports.vat');
+  const tab: 'pnl' | 'vat' = (filters.tab === 'vat' && canVat) || !canPnl ? 'vat' : 'pnl';
+  // The tab is not a filter: clearing keeps it.
+  const hasAny =
+    !!(filters.from || filters.to) ||
+    filters.channels.length > 0 ||
+    filters.branches.length > 0 ||
+    filters.entities.length > 0;
+  const clearAll = () =>
+    patch({ from: '', to: '', channels: [], branches: [], entities: [] });
   const [branches, setBranches] = useState<Branch[]>([]);
   const [entities, setEntities] = useState<LegalEntity[]>([]);
   const [report, setReport] = useState<PnlReport | null>(null);
@@ -220,8 +245,9 @@ export default function ProfitLossPage() {
       .catch(() => setEntities([]));
   }, []);
 
-  const key = JSON.stringify([from, to, filters.channels, filters.branches, filters.entities]);
+  const key = JSON.stringify([tab, from, to, filters.channels, filters.branches, filters.entities]);
   useEffect(() => {
+    if (tab !== 'pnl') return;
     let live = true;
     setLoading(true);
     setError('');
@@ -261,10 +287,23 @@ export default function ProfitLossPage() {
       <div className="mb-6">
         <h1 className="font-display text-2xl text-gray-800">Profit &amp; Loss</h1>
         <p className="mt-0.5 text-xs font-body text-gray-400">
-          {from === to ? from : `${from} → ${to}`} · revenue and fees as billed, VAT shown as its
-          own lines · delivered orders and charged cancellations · % is of GMV
+          {from === to ? from : `${from} → ${to}`} ·{' '}
+          {tab === 'vat'
+            ? 'VAT collected versus VAT recoverable, per legal entity, by trading day'
+            : 'revenue and fees as billed, VAT shown as its own lines · delivered orders and charged cancellations · % is of GMV'}
         </p>
       </div>
+
+      {canPnl && canVat && (
+        <TabBar
+          tabs={[
+            { key: 'pnl', label: 'Profit & Loss' },
+            { key: 'vat', label: 'VAT' },
+          ]}
+          active={tab}
+          onChange={key => patch({ tab: key === 'vat' ? 'vat' : '' })}
+        />
+      )}
 
       <div className="mb-6 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center">
         <div className="flex flex-wrap gap-1.5">
@@ -302,20 +341,24 @@ export default function ProfitLossPage() {
             aria-label="To"
           />
         </div>
-        <MultiSelect
-          options={CHANNEL_OPTIONS}
-          value={filters.channels}
-          onChange={channels => patch({ channels })}
-          placeholder="All channels"
-          className="md:w-48"
-        />
-        <MultiSelect
-          options={branches.map(b => ({ value: b.id, label: `${b.reference} · ${b.name}` }))}
-          value={filters.branches}
-          onChange={branches => patch({ branches })}
-          placeholder="All branches"
-          className="md:w-48"
-        />
+        {tab === 'pnl' && (
+          <>
+            <MultiSelect
+              options={CHANNEL_OPTIONS}
+              value={filters.channels}
+              onChange={channels => patch({ channels })}
+              placeholder="All channels"
+              className="md:w-48"
+            />
+            <MultiSelect
+              options={branches.map(b => ({ value: b.id, label: `${b.reference} · ${b.name}` }))}
+              value={filters.branches}
+              onChange={branches => patch({ branches })}
+              placeholder="All branches"
+              className="md:w-48"
+            />
+          </>
+        )}
         <MultiSelect
           options={entities.map(e => ({ value: e.id, label: e.brand_name }))}
           value={filters.entities}
@@ -332,9 +375,16 @@ export default function ProfitLossPage() {
             Clear
           </button>
         )}
+        {tab === 'vat' && (filters.channels.length > 0 || filters.branches.length > 0) && (
+          <p className="text-[11px] font-body text-gray-400">
+            Channel and branch filters don&apos;t apply to VAT — it is kept per legal entity.
+          </p>
+        )}
       </div>
 
-      {loading && !report ? (
+      {tab === 'vat' ? (
+        <VatReport dateFrom={from} dateTo={to} entityIds={filters.entities} />
+      ) : loading && !report ? (
         <div className="flex justify-center py-16">
           <Spinner />
         </div>

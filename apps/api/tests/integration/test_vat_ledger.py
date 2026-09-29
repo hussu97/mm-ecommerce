@@ -325,6 +325,24 @@ async def test_a_ledger_built_before_suppliers_rebuilds_its_history(seeded):
         await db.rollback()
 
 
+async def test_read_ledger_filters_to_the_entities_asked_for(seeded):
+    ids, Session = seeded
+    async with Session() as db:
+        await vat_ledger.compute_window(db, BDATE, BDATE)
+        await db.commit()
+        both = await vat_ledger.read_ledger(
+            db,
+            date_from=BDATE,
+            date_to=BDATE,
+            legal_entity_ids=[ids["fatema_id"], ids["najm_id"]],
+        )
+        fatema = await vat_ledger.read_ledger(
+            db, date_from=BDATE, date_to=BDATE, legal_entity_ids=[ids["fatema_id"]]
+        )
+    assert {r["legal_entity_id"] for r in both} == {ids["fatema_id"], ids["najm_id"]}
+    assert {r["legal_entity_id"] for r in fatema} == {ids["fatema_id"]}
+
+
 async def test_recompute_is_idempotent(seeded):
     ids, Session = seeded
     async with Session() as db:

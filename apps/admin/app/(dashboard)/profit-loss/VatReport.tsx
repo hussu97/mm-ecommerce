@@ -1,20 +1,20 @@
 'use client';
 
-// POS Reports → VAT. Output VAT collected (sales) versus input VAT recoverable
-// (costs), per legal entity, over the shared reporting window. Reads the derived
-// `vat_ledger_entries` cache through `/pos/reports/vat-ledger`; the money is
-// computed server-side, this only lays it out (rule 10).
+// Profit & Loss → VAT. Output VAT collected (sales) versus input VAT recoverable
+// (costs), per legal entity, over the page's date range and entity filter —
+// the same filters the P&L tab reads. Reads the derived `vat_ledger_entries`
+// cache through `/pos/reports/vat-ledger`; the money is computed server-side,
+// this only lays it out (rule 10). It used to be a Counter Reports tab.
 
 import Link from 'next/link';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment } from 'react';
 
-import { legalEntitiesApi, posReportsApi } from '@/lib/pos-api';
-import type { LegalEntity, VatLedgerResponse, VatLedgerRow } from '@/lib/pos-types';
-import { Badge, Select } from '@/components/ui';
+import { posReportsApi } from '@/lib/pos-api';
+import type { VatLedgerResponse, VatLedgerRow } from '@/lib/pos-types';
+import { Badge } from '@/components/ui';
 import { formatCurrency } from '@/lib/utils';
 
-import type { Window } from '../report-window';
-import { Panel, useReport, windowKey } from './_shared';
+import { Panel, useReport } from '../pos-reports/tabs/_shared';
 
 // The categories the ledger splits each direction into, in the order they read.
 const CATEGORY_LABELS: Record<string, string> = {
@@ -32,37 +32,27 @@ const CATEGORY_LABELS: Record<string, string> = {
 const categoryLabel = (category: string): string =>
   CATEGORY_LABELS[category] ?? category.replaceAll('_', ' ');
 
-export function VatTab({ window }: { window: Window }) {
-  const [entityId, setEntityId] = useState('');
-  const [entities, setEntities] = useState<LegalEntity[]>([]);
-
-  useEffect(() => {
-    void legalEntitiesApi.list().then(setEntities).catch(() => setEntities([]));
-  }, []);
-
+export function VatReport({
+  dateFrom,
+  dateTo,
+  entityIds,
+}: {
+  dateFrom: string;
+  dateTo: string;
+  entityIds: string[];
+}) {
   const report = useReport<VatLedgerResponse>(
     () =>
       posReportsApi.vatLedger({
-        date_from: window.date_from,
-        date_to: window.date_to,
-        legal_entity_id: entityId || undefined,
+        date_from: dateFrom,
+        date_to: dateTo,
+        legal_entity_ids: entityIds.length ? entityIds : undefined,
       }),
-    windowKey(window, entityId),
+    JSON.stringify([dateFrom, dateTo, entityIds]),
   );
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end gap-3">
-        <Select
-          label="Legal entity"
-          value={entityId}
-          onChange={(e) => setEntityId(e.target.value)}
-          options={entities.map((entity) => ({ value: entity.id, label: entity.brand_name || entity.legal_name }))}
-          placeholder="All legal entities"
-          className="w-64"
-        />
-      </div>
-
       <Panel
         loading={report.loading}
         error={report.error}

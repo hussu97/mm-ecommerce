@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
  * The Payments, Taxes, Inventory and Suppliers tabs were retired (the first two
  * unused, the latter two showed duplicated/incorrect figures — the live
  * Inventory section is the source of truth); Sales and the Email report remain.
+ * VAT moved to Profit & Loss (its VAT tab); `/pos-reports/vat` redirects there.
  *
  * The reporting window rides in the query string (`?from=&to=&branch=`), so the
  * tab links carry it along — switching tabs keeps the same window.
@@ -31,7 +32,6 @@ import { cn } from '@/lib/utils';
 const TABS: { href: string; label: string; requires?: string }[] = [
   { href: '/pos-reports/sales', label: 'Sales' },
   { href: '/pos-reports/email', label: 'Email Report' },
-  { href: '/pos-reports/vat', label: 'VAT', requires: 'reports.vat' },
 ];
 
 export function PosReportsTabs() {

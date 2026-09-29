@@ -358,7 +358,7 @@ async def read_ledger(
     *,
     date_from: str | None = None,
     date_to: str | None = None,
-    legal_entity_id: uuid.UUID | None = None,
+    legal_entity_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
     """Read the cache for a window, one aggregated row per (entity, category).
 
@@ -403,8 +403,8 @@ async def read_ledger(
         stmt = stmt.where(VatLedgerEntry.business_date >= date_from)
     if date_to:
         stmt = stmt.where(VatLedgerEntry.business_date <= date_to)
-    if legal_entity_id is not None:
-        stmt = stmt.where(VatLedgerEntry.legal_entity_id == legal_entity_id)
+    if legal_entity_ids:
+        stmt = stmt.where(VatLedgerEntry.legal_entity_id.in_(legal_entity_ids))
 
     rows = []
     for (

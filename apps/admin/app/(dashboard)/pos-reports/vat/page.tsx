@@ -1,27 +1,18 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { useSearchParams } from 'next/navigation';
-
-import { useAuth } from '@/lib/auth-context';
-
-import { windowFromParams } from '../report-window';
-import { VatTab } from '../tabs/VatTab';
-
-// The VAT report gates on its own `reports.vat` permission — a different slug from
-// the `reports.sales` that opens the rest of Counter Reports — so a manager who
-// can see sales but not VAT is stopped here rather than at the (403-ing) API.
-export default function VatReportPage() {
-  const { user } = useAuth();
-  const { window } = windowFromParams(useSearchParams());
-
-  const canView = !!user && (user.is_superadmin || user.permissions.includes('reports.vat'));
-  if (!canView) {
-    return (
-      <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-        You do not have the <code>reports.vat</code> permission needed to view the VAT report.
-      </p>
-    );
+// The VAT report moved to Profit & Loss (its VAT tab), where it shares that
+// page's date and entity filters. Kept as a redirect so bookmarks still land,
+// carrying the reporting window over.
+export default async function VatReportRedirect({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const query = new URLSearchParams({ tab: 'vat' });
+  for (const key of ['from', 'to'] as const) {
+    const value = params[key];
+    if (typeof value === 'string' && value) query.set(key, value);
   }
-
-  return <VatTab window={window} />;
+  redirect(`/profit-loss?${query.toString()}`);
 }

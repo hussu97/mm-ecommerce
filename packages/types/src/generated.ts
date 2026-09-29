@@ -40318,6 +40318,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 legal_entity_id?: string | null;
+                legal_entity_ids?: string[] | null;
             };
             header?: never;
             path?: never;

@@ -72118,6 +72118,26 @@
               ],
               "title": "Legal Entity Id"
             }
+          },
+          {
+            "in": "query",
+            "name": "legal_entity_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Legal Entity Ids"
+            }
           }
         ],
         "responses": {

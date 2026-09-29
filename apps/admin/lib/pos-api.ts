@@ -485,7 +485,12 @@ export const posReportsApi = {
     api.get<SalesBreakdownRow[]>(`/pos/reports/sales/by${buildQs({ dimension, limit, ...w })}`),
   sendDailyEmail: (body: { date_from: string; date_to: string; recipients: string[] }) =>
     api.post<DailySalesEmailResult>('/pos/reports/sales/daily-email', body),
-  vatLedger: (params: { date_from?: string; date_to?: string; legal_entity_id?: string }) =>
+  vatLedger: (params: {
+    date_from?: string;
+    date_to?: string;
+    legal_entity_id?: string;
+    legal_entity_ids?: string[];
+  }) =>
     api.get<VatLedgerResponse>(`/pos/reports/vat-ledger${buildQs(params)}`),
   voidsReturns: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/voids-returns${buildQs(w)}`),
   tills: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/tills${buildQs(w)}`),

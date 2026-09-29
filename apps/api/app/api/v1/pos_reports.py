@@ -55,6 +55,9 @@ async def vat_ledger_report(
     date_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     date_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     legal_entity_id: uuid.UUID | None = None,
+    #: Several entities at once — the Profit & Loss page's entity filter. Unioned
+    #: with `legal_entity_id` when both are sent.
+    legal_entity_ids: list[uuid.UUID] | None = Query(None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("reports.vat")),
 ):
@@ -66,8 +69,14 @@ async def vat_ledger_report(
     if date_from and date_to and date_from > date_to:
         raise BadRequestError("date_from must not be after date_to")
 
+    entity_ids = list(legal_entity_ids or [])
+    if legal_entity_id is not None and legal_entity_id not in entity_ids:
+        entity_ids.append(legal_entity_id)
     rows = await vat_ledger.read_ledger(
-        db, date_from=date_from, date_to=date_to, legal_entity_id=legal_entity_id
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        legal_entity_ids=entity_ids or None,
     )
 
     summary: dict[uuid.UUID, VatLedgerEntitySummary] = {}
