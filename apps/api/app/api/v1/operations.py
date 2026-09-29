@@ -1,6 +1,5 @@
 """
-Transfer orders, production, spot checks, reservations, notification rules,
-and the live branches dashboard.
+Transfer orders, production, and the live branches dashboard.
 
 These close the last verified gaps against the Foodics audit — see
 docs/integrators-and-aggregators.md.
@@ -34,8 +33,6 @@ from app.models import (
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
-    InventoryTransferTemplate,
-    NotificationRule,
     Order,
     PosOrderStatusEnum,
     PosTable,
@@ -58,12 +55,6 @@ from app.models import (
 from app.models.base import utcnow
 from app.models.user import User
 from app.schemas.custom_order import CustomCakeProductionCreate
-from app.schemas.inventory import (
-    TransferTemplateItemInput,
-    TransferTemplateItemResponse,
-    TransferTemplateResponse,
-    TransferTemplateUpsert,
-)
 from app.schemas.production import (
     CancelLineRequest,
     ProduceLineRequest,
@@ -89,11 +80,8 @@ from app.services.inventory import (
     access_service,
     inventory_service,
     transfer_service,
-    transfer_template_service,
 )
 from app.services.pos import business_day_service
-
-from .pos_config import build_crud_router
 
 
 class ORMModel(BaseModel):
@@ -477,7 +465,6 @@ async def create_transfer_order(
         kind=data.kind,
         notes=data.notes,
         required_date=data.required_date,
-        template_id=data.template_id,
         client_request_id=data.client_request_id,
         production_items=data.production_items,
     )
@@ -495,152 +482,6 @@ async def get_transfer_order_report(
     order = await transfer_service.load_transfer_order(db, order_id)
     await _assert_order_access(db, user, order)
     return await _build_report(db, order)
-
-
-# ─── Transfer templates (admin) ───────────────────────────────────────────────
-
-transfer_templates_router = APIRouter()
-
-
-async def _serialise_template(
-    db: AsyncSession, template: InventoryTransferTemplate
-) -> TransferTemplateResponse:
-    payload = TransferTemplateResponse.model_validate(template)
-    ids = {line.item_id for line in template.items}
-    if ids:
-        rows = (
-            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
-            .scalars()
-            .all()
-        )
-        lookup = {r.id: r for r in rows}
-        categories = await _category_map(db, [r.id for r in rows])
-        visible = []
-        for line in payload.items:
-            item = lookup.get(line.item_id)
-            # Drop lines whose item has since been deactivated or deleted — a
-            # stale template must not offer an item nobody can transfer.
-            if item is None or item.deleted_at is not None or not item.is_active:
-                continue
-            line.item_name = item.name
-            line.item_sku = item.sku
-            category = categories.get(item.category_id) if item.category_id else None
-            if category is not None:
-                line.category_name = category.name
-                line.category_order = int(category.display_order or 0)
-            visible.append(line)
-        payload.items = visible
-    return payload
-
-
-async def _load_template(
-    db: AsyncSession, template_id: uuid.UUID
-) -> InventoryTransferTemplate:
-    # Eager-load items: a plain db.get returns the just-flushed row from the
-    # identity map without its collection, and serialising it would then trigger
-    # an async lazy load during Pydantic's synchronous attribute access (a
-    # MissingGreenlet 500). Load it the way load_transfer_order does.
-    template = (
-        (
-            await db.execute(
-                select(InventoryTransferTemplate)
-                .where(InventoryTransferTemplate.id == template_id)
-                .options(selectinload(InventoryTransferTemplate.items))
-                # populate_existing so an update's reload overwrites the cached
-                # items collection with the fresh list rather than the stale one
-                # from before the delete/re-add.
-                .execution_options(populate_existing=True)
-            )
-        )
-        .scalars()
-        .unique()
-        .one_or_none()
-    )
-    if template is None:
-        raise NotFoundError("Transfer template not found")
-    return template
-
-
-@transfer_templates_router.get("", response_model=list[TransferTemplateResponse])
-async def list_transfer_templates(
-    source_branch_id: uuid.UUID | None = None,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    stmt = select(InventoryTransferTemplate)
-    if source_branch_id:
-        await access_service.assert_branch_access(db, user, source_branch_id)
-        stmt = stmt.where(
-            InventoryTransferTemplate.source_branch_id == source_branch_id
-        )
-    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        stmt = stmt.where(
-            InventoryTransferTemplate.source_branch_id.in_(
-                access_service.branch_ids_for(user)
-            )
-        )
-    # Newest revision of each lineage first, so the admin can render the version
-    # history and mark Current vs Superseded — mirrors the report-template list.
-    stmt = stmt.order_by(
-        InventoryTransferTemplate.source_branch_id,
-        InventoryTransferTemplate.name,
-        InventoryTransferTemplate.version_number.desc(),
-    )
-    templates = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_template(db, t) for t in templates]
-
-
-@transfer_templates_router.post(
-    "", response_model=TransferTemplateResponse, status_code=status.HTTP_201_CREATED
-)
-async def create_transfer_template(
-    data: TransferTemplateUpsert,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    await access_service.assert_branch_access(db, user, data.source_branch_id)
-    # Templates are append-only revisions: this inserts v1 (or the next version if
-    # the lineage already exists), never mutating an existing row.
-    template = await transfer_template_service.upsert_template(db, payload=data)
-    return await _serialise_template(db, template)
-
-
-@transfer_templates_router.put(
-    "/{template_id}", response_model=TransferTemplateResponse
-)
-async def update_transfer_template(
-    template_id: uuid.UUID,
-    data: TransferTemplateUpsert,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    # Load the target for its 404 and branch-access check, then append a new
-    # version for its (source_branch_id, name) lineage — the old revision stays as
-    # history. Editing is the next version, exactly like a report template.
-    template = await _load_template(db, template_id)
-    await access_service.assert_branch_access(db, user, template.source_branch_id)
-    await access_service.assert_branch_access(db, user, data.source_branch_id)
-    created = await transfer_template_service.upsert_template(db, payload=data)
-    return await _serialise_template(db, created)
-
-
-@transfer_templates_router.post(
-    "/{template_id}/deactivate", response_model=TransferTemplateResponse
-)
-async def deactivate_transfer_template(
-    template_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    """Retire a template without deleting it — only the latest revision of a
-    lineage may be deactivated, so an older active revision cannot resurface on the
-    register. Orders raised from it keep their snapshot regardless."""
-    template = await _load_template(db, template_id)
-    await access_service.assert_branch_access(db, user, template.source_branch_id)
-    template = await transfer_template_service.deactivate_template(
-        db, template=template
-    )
-    return await _serialise_template(db, template)
 
 
 # ─── Transfers on the till (POS) ──────────────────────────────────────────────
@@ -756,37 +597,6 @@ async def pos_on_hand(
             row.category_name = category.name
             row.category_order = int(category.display_order or 0)
     return list(agg.values())
-
-
-@pos_transfers_router.get(
-    "/transfer-templates", response_model=list[TransferTemplateResponse]
-)
-async def pos_transfer_templates(
-    source_branch_id: uuid.UUID,
-    destination_branch_id: uuid.UUID | None = None,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    """The active templates the current branch transfers from, to seed the create
-    screen. Only the *current* revision of each lineage is offered — the register
-    must never see a superseded version — so every revision is fetched and reduced
-    by ``latest_active_templates`` (newest-per-lineage, then active). A template
-    pinned to one destination is offered only for that one."""
-    await access_service.assert_branch_access(db, user, source_branch_id)
-    stmt = (
-        select(InventoryTransferTemplate)
-        .where(InventoryTransferTemplate.source_branch_id == source_branch_id)
-        .options(selectinload(InventoryTransferTemplate.items))
-    )
-    revisions = list((await db.execute(stmt)).scalars().unique().all())
-    templates = transfer_template_service.latest_active_templates(revisions)
-    if destination_branch_id:
-        templates = [
-            template
-            for template in templates
-            if template.destination_branch_id in (None, destination_branch_id)
-        ]
-    return [await _serialise_template(db, t) for t in templates]
 
 
 def _transfer_search_clause(q: str):
@@ -1653,57 +1463,6 @@ async def pos_produce_all(
     return await _serialise_production_order(db, order)
 
 
-# ─── Notification rules ───────────────────────────────────────────────────────
-
-
-class NotificationRuleCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=150)
-    event: str = Field(min_length=1, max_length=60)
-    threshold: Decimal | None = None
-    branch_ids: list[uuid.UUID] = Field(default_factory=list)
-    recipient_user_ids: list[uuid.UUID] = Field(default_factory=list)
-    recipient_emails: list[str] = Field(default_factory=list)
-    channels: list[Literal["email", "sms", "push"]] = Field(
-        default_factory=lambda: ["email"]
-    )
-    is_active: bool = True
-
-
-class NotificationRuleUpdate(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=150)
-    event: str | None = Field(None, min_length=1, max_length=60)
-    threshold: Decimal | None = None
-    branch_ids: list[uuid.UUID] | None = None
-    recipient_user_ids: list[uuid.UUID] | None = None
-    recipient_emails: list[str] | None = None
-    channels: list[Literal["email", "sms", "push"]] | None = None
-    is_active: bool | None = None
-
-
-class NotificationRuleResponse(ORMModel):
-    id: uuid.UUID
-    name: str
-    event: str
-    threshold: Decimal | None
-    branch_ids: list[uuid.UUID]
-    recipient_user_ids: list[uuid.UUID]
-    recipient_emails: list[str]
-    channels: list[str]
-    is_active: bool
-    deleted_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
-
-
-notification_rules_router = build_crud_router(
-    model=NotificationRule,
-    create_schema=NotificationRuleCreate,
-    update_schema=NotificationRuleUpdate,
-    response_schema=NotificationRuleResponse,
-    entity_type="notification_rule",
-)
-
-
 # ─── Live branches dashboard ──────────────────────────────────────────────────
 
 dashboard_router = APIRouter()
@@ -2096,12 +1855,7 @@ async def inventory_dashboard(
 
 
 __all__ = [
-    "TransferTemplateItemInput",
-    "TransferTemplateItemResponse",
-    "TransferTemplateResponse",
-    "TransferTemplateUpsert",
     "dashboard_router",
-    "notification_rules_router",
     "production_router",
     "transfer_orders_router",
 ]

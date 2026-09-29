@@ -212,38 +212,6 @@ class InventoryAvailabilityDirty(Base):
     )
 
 
-class InventoryLot(Base, UUIDMixin, TimestampMixin):
-    """Optional lot identity. Allocation/expiry workflows intentionally follow later."""
-
-    __tablename__ = "inventory_lots"
-    __table_args__ = (
-        UniqueConstraint(
-            "warehouse_id", "item_id", "lot_reference", name="uq_inventory_lot"
-        ),
-    )
-
-    warehouse_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("warehouses.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("inventory_items.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    lot_reference: Mapped[str] = mapped_column(String(120), nullable=False)
-    manufactured_at: Mapped[Any | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    expires_at: Mapped[Any | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-
-
 class Recipe(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "recipes"
     __table_args__ = (

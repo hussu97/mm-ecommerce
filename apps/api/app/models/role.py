@@ -126,7 +126,6 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         # report endpoints, and those are already gated per report by
         # `reports.*`. A second door in front of the same room is a door
         # somebody forgets to lock.
-        ("pos.discounts.predefined", "Apply predefined discounts"),
         ("pos.discounts.open", "Apply open discounts"),
         ("pos.promotions.apply", "Apply and remove a coupon promotion on a check"),
         ("pos.charges.open", "Add an open charge"),
@@ -273,6 +272,16 @@ PERMISSION_MIGRATION: dict[str, str | None] = {
     "pos.orders.ahead": None,  # scheduling is what the register is for
     "pos.waiter.act_as": None,  # counter service; there are no waiters
     "pos.tables.edit_layout": None,  # tables dropped in 080
+}
+
+#: Slugs retired *after* `105` ran. `PERMISSION_MIGRATION` is frozen to the copy
+#: that migration holds (`test_permissions.py` compares the two), so a later
+#: retirement is recorded here instead, beside the migration that strips it
+#: from `roles.permissions`. Same reading: `None` = the feature is gone.
+PERMISSIONS_RETIRED_AFTER_105: dict[str, str | None] = {
+    # Picking a discount from the `discounts` table, which was never populated
+    # in production and was dropped in `307_drop_dead_tables`.
+    "pos.discounts.predefined": None,
 }
 
 

@@ -38,7 +38,6 @@ from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
-    InventoryItemIngredient,
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
@@ -46,7 +45,6 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import BranchInventorySettings, RecipeBasisEnum
 from app.models.operations import (
-    InventoryTransferTemplate,
     ProductionLine,
     ProductionLineStatusEnum,
     ProductionOrder,
@@ -64,7 +62,6 @@ from app.services.inventory import (
     inventory_service,
     recipe_service,
     source_event_service,
-    transfer_template_service,
 )
 from app.services.pos import business_day_service
 
@@ -396,7 +393,6 @@ async def create_transfer_order(
     kind: str = TransferKindEnum.TRANSFER.value,
     notes: str | None = None,
     required_date=None,
-    template_id: uuid.UUID | None = None,
     client_request_id: str | None = None,
     production_items: list | None = None,
 ) -> TransferOrder:
@@ -438,28 +434,6 @@ async def create_transfer_order(
         ).scalar_one_or_none()
         if existing is not None:
             return await load_transfer_order(db, existing.id)
-
-    template_version: int | None = None
-    template_snapshot: dict | None = None
-    if template_id is not None:
-        template = (
-            (
-                await db.execute(
-                    select(InventoryTransferTemplate)
-                    .where(InventoryTransferTemplate.id == template_id)
-                    .options(selectinload(InventoryTransferTemplate.items))
-                )
-            )
-            .scalars()
-            .unique()
-            .one_or_none()
-        )
-        if template is None:
-            raise BadRequestError(f"Transfer template {template_id} not found")
-        template_version = template.version_number
-        template_snapshot = await transfer_template_service.snapshot_template(
-            db, template
-        )
 
     # Read on-hand and issue any override top-up under the source's inventory
     # lock — the same lock the sends will take — so the on-hand the override
@@ -515,9 +489,6 @@ async def create_transfer_order(
         notes=notes,
         client_request_id=client_request_id,
         creator_id=user.id,
-        template_id=template_id,
-        template_version=template_version,
-        template_snapshot=template_snapshot,
     )
     try:
         async with db.begin_nested():
@@ -1033,18 +1004,6 @@ async def produce(
         warehouse_id or (await inventory_service.default_warehouse(db, branch.id)).id
     )
 
-    legacy_recipe = list(
-        (
-            await db.execute(
-                select(InventoryItemIngredient).where(
-                    InventoryItemIngredient.parent_item_id == item_id
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-
     consumption: InventoryTransaction | None = None
     input_cost = Decimal("0")
 
@@ -1058,8 +1017,9 @@ async def produce(
             multiplier=output_quantity,
         )
     except NotFoundError:
-        # One compatibility release: a legacy mutable recipe remains usable,
-        # while every newly edited recipe goes through versioning.
+        # No versioned recipe: the batch consumes nothing and only the output
+        # posts. (The legacy `inventory_item_ingredients` BOM this used to fall
+        # back to was never populated and was dropped in 307_drop_dead_tables.)
         expanded = None
 
     recipe_lines: list[tuple[uuid.UUID, Decimal, Decimal, list, uuid.UUID | None]] = []
@@ -1079,20 +1039,6 @@ async def produce(
                     version_id,
                 )
             )
-    else:
-        # Legacy InventoryItemIngredient BOM — always per-unit. Batch basis is a
-        # versioned-recipe (v2) concept only, so this fallback multiplies straight
-        # by the output count with no yield divisor.
-        recipe_lines = [
-            (
-                line.item_id,
-                _q(Decimal(str(line.quantity)) * output_quantity),
-                Decimal("0"),
-                [],
-                None,
-            )
-            for line in legacy_recipe
-        ]
 
     def stock_cost(ingredient: InventoryItem | None, level) -> Decimal:
         """An ingredient's cost per ingredient unit off the shelf: the level's
@@ -1415,8 +1361,8 @@ async def _build_production_order(
 ) -> ProductionOrder:
     """Create a ProductionOrder + one pending line per makeable item. No movement.
 
-    Every item must genuinely produce something (have an active recipe or a legacy
-    BOM); a non-recipe item is refused, since the grid should never have offered
+    Every item must genuinely produce something (have an active recipe); a
+    non-recipe item is refused, since the grid should never have offered
     it. Idempotent on ``client_request_id``.
 
     An order raised at a register (`origin='pos'`) is printed there as it is

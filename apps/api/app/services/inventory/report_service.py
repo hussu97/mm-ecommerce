@@ -21,7 +21,6 @@ from app.models.branch import Branch
 from app.models.inventory import (
     InventoryCategory,
     InventoryItem,
-    InventoryItemIngredient,
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
@@ -1219,29 +1218,10 @@ async def _proposed_production_consumption(
                     through_intermediates=True,
                 )
             except NotFoundError:
-                expanded = None
-            if expanded is not None:
-                for ingredient_id, exp in expanded.items():
-                    add(ingredient_id, quantity(exp.quantity - exp.planned_waste))
-            else:
-                legacy = (
-                    (
-                        await db.execute(
-                            select(InventoryItemIngredient).where(
-                                InventoryItemIngredient.parent_item_id == line.item_id
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
-                # Legacy per-unit BOM; batch basis is a versioned-recipe concept,
-                # so this fallback scales straight by the produced delta.
-                for ingredient in legacy:
-                    add(
-                        ingredient.item_id,
-                        quantity(Decimal(str(ingredient.quantity)) * delta),
-                    )
+                # No versioned recipe: producing it draws nothing.
+                continue
+            for ingredient_id, exp in expanded.items():
+                add(ingredient_id, quantity(exp.quantity - exp.planned_waste))
     return proposed
 
 

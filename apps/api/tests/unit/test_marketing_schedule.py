@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from app.models.marketing import (
-    Discount,
-    Promotion,
-    TimedEvent,
-)
+from app.models.marketing import Promotion
 
 
-def event(from_time: int, to_time: int, **days) -> TimedEvent:
-    row = TimedEvent()
+def event(from_time: int, to_time: int, **days) -> Promotion:
+    row = Promotion()
     row.from_time = from_time
     row.to_time = to_time
     for index, name in enumerate(
@@ -67,22 +63,12 @@ def test_day_of_week_uses_python_monday_zero():
     assert weekend.runs_on(6)  # Sunday
 
 
-def test_promotion_shares_the_same_scheduling():
-    promo = Promotion()
-    promo.from_time = minutes(11)
-    promo.to_time = minutes(15)
-    for name in ["is_mon", "is_tue", "is_wed", "is_thu", "is_fri", "is_sat", "is_sun"]:
-        setattr(promo, name, True)
-
-    assert promo.runs_at(minutes(12))
-    assert not promo.runs_at(minutes(16))
+# ─── Promotion targeting ──────────────────────────────────────────────────────
 
 
-# ─── Discount targeting ───────────────────────────────────────────────────────
-
-
-def _discount(branch_ids=None, order_types=None) -> Discount:
-    row = Discount()
+def _promotion(sources=None, branch_ids=None, order_types=None) -> Promotion:
+    row = Promotion()
+    row.sources = sources or []
     row.branch_ids = branch_ids or []
     row.order_types = order_types or []
     row.is_active = True
@@ -90,35 +76,49 @@ def _discount(branch_ids=None, order_types=None) -> Discount:
     return row
 
 
+def _matches(promo: Promotion, branch_id, order_type, source="cashier") -> bool:
+    return promo.matches_order(
+        source=source, branch_id=branch_id, order_type=order_type
+    )
+
+
 def test_empty_targeting_means_everywhere():
     import uuid
 
-    discount = _discount()
-    assert discount.applies_to(uuid.uuid4(), "delivery")
-    assert discount.applies_to(None, None)
+    promo = _promotion()
+    assert _matches(promo, uuid.uuid4(), "delivery")
+    assert _matches(promo, None, None, source=None)
 
 
-def test_branch_scoped_discount():
+def test_branch_scoped_promotion():
     import uuid
 
     allowed = uuid.uuid4()
     other = uuid.uuid4()
-    discount = _discount(branch_ids=[allowed])
-    assert discount.applies_to(allowed, "pickup")
-    assert not discount.applies_to(other, "pickup")
+    promo = _promotion(branch_ids=[allowed])
+    assert _matches(promo, allowed, "pickup")
+    assert not _matches(promo, other, "pickup")
 
 
-def test_order_type_scoped_discount():
+def test_order_type_scoped_promotion():
     import uuid
 
-    discount = _discount(order_types=["delivery"])
-    assert discount.applies_to(uuid.uuid4(), "delivery")
-    assert not discount.applies_to(uuid.uuid4(), "dine_in")
+    promo = _promotion(order_types=["delivery"])
+    assert _matches(promo, uuid.uuid4(), "delivery")
+    assert not _matches(promo, uuid.uuid4(), "dine_in")
 
 
-def test_inactive_discount_never_applies():
+def test_source_scoped_promotion():
     import uuid
 
-    discount = _discount()
-    discount.is_active = False
-    assert not discount.applies_to(uuid.uuid4(), "pickup")
+    promo = _promotion(sources=["cashier"])
+    assert _matches(promo, uuid.uuid4(), "pickup", source="cashier")
+    assert not _matches(promo, uuid.uuid4(), "pickup", source="online")
+
+
+def test_inactive_promotion_never_applies():
+    import uuid
+
+    promo = _promotion()
+    promo.is_active = False
+    assert not _matches(promo, uuid.uuid4(), "pickup")

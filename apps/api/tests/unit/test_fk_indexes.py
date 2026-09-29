@@ -49,9 +49,8 @@ _COST_LAYER_NOT_QUERIED = (
     "a real index the day a report drives a query from one of these."
 )
 _RAW_MIGRATION_INDEX = (
-    "Indexed in the database by a bare op.create_index in a migration (041 "
-    "for order_items.course_id, 102 for order_items.product_id, 210 for the "
-    "rest) rather than a model-level Index/index=True — the deliberate "
+    "Indexed in the database by a bare op.create_index in a migration (102 "
+    "for order_items.product_id, 210 for the rest) rather than a model-level Index/index=True — the deliberate "
     "convention this codebase uses for reporting/operational indexes (see "
     "env.py's include_object docstring). Does not show up in SQLAlchemy's "
     "metadata; real index in the database, nothing to add."
@@ -110,7 +109,6 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("orders", "creator_id"): _RAW_MIGRATION_INDEX,
     ("orders", "closer_id"): _RAW_MIGRATION_INDEX,
     ("order_items", "kitchen_flow_id"): _RAW_MIGRATION_INDEX,
-    ("order_items", "course_id"): _RAW_MIGRATION_INDEX,
     ("order_items", "creator_id"): _RAW_MIGRATION_INDEX,
     ("order_items", "voided_by_id"): _RAW_MIGRATION_INDEX,
     ("order_taxes", "tax_id"): _RAW_MIGRATION_INDEX,
@@ -127,8 +125,6 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("business_settings", "custom_orders_product_id"): _SMALL_LOOKUP,
     ("cart_items", "product_id"): _SMALL_LOOKUP,
     ("charges", "tax_group_id"): _SMALL_LOOKUP,
-    ("combos", "category_id"): _SMALL_LOOKUP,
-    ("combos", "tax_group_id"): _SMALL_LOOKUP,
     ("device_push_tokens", "device_id"): _SMALL_LOOKUP,
     ("device_push_tokens", "user_id"): _SMALL_LOOKUP,
     ("drawer_operations", "order_id"): _AUDIT_ACTOR,
@@ -142,10 +138,8 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("inventory_cost_layer_consumptions", "warehouse_id"): _COST_LAYER_NOT_QUERIED,
     ("inventory_cost_layers", "purchase_order_id"): _COST_LAYER_NOT_QUERIED,
     ("inventory_transaction_items", "reverses_line_id"): _COST_LAYER_NOT_QUERIED,
-    ("inventory_lots", "item_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_report_template_items", "item_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_source_events", "transaction_id"): _INVENTORY_LOWER_TRAFFIC,
-    ("inventory_transaction_items", "lot_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transaction_items", "recipe_version_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transactions", "creator_id"): _AUDIT_ACTOR,
     ("inventory_transactions", "other_branch_id"): _INVENTORY_LOWER_TRAFFIC,
@@ -155,8 +149,6 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("inventory_transactions", "reason_id"): _SMALL_LOOKUP,
     ("inventory_transactions", "reverses_transaction_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_transactions", "supplier_id"): _INVENTORY_LOWER_TRAFFIC,
-    ("inventory_transfer_template_items", "item_id"): _INVENTORY_LOWER_TRAFFIC,
-    ("inventory_transfer_templates", "destination_branch_id"): _INVENTORY_LOWER_TRAFFIC,
     ("order_charges", "charge_id"): _SMALL_LOOKUP,
     ("order_discounts", "applied_by_id"): _AUDIT_ACTOR,
     ("order_items", "product_id"): _RAW_MIGRATION_INDEX,

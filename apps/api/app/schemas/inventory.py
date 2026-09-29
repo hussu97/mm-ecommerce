@@ -449,7 +449,6 @@ class TransactionLineResponse(ORMModel):
     #: shape — production used to write a flat list of dicts, which is why this was
     #: once a `list[Any]`; migration 200 rewrote those rows.
     recipe_path: list[list[dict[str, str]]] = []
-    lot_id: UUID | None = None
     expected_quantity: Decimal | None
     notes: str | None
     item_name: str | None = None
@@ -877,37 +876,6 @@ class VoidPurchaseOrderRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
-# ─── Recipes ──────────────────────────────────────────────────────────────────
-
-
-class RecipeLine(BaseModel):
-    item_id: UUID
-    quantity: Decimal = Field(gt=0)
-    inactive_in_order_types: list[str] = Field(default_factory=list)
-
-
-class RecipeUpsert(BaseModel):
-    ingredients: list[RecipeLine] = Field(default_factory=list)
-
-
-class RecipeLineResponse(ORMModel):
-    id: UUID
-    item_id: UUID
-    quantity: Decimal
-    inactive_in_order_types: list[str] = []
-    item_name: str | None = None
-    item_sku: str | None = None
-    ingredient_unit: str | None = None
-    unit_cost: Decimal | None = None
-    line_cost: Decimal | None = None
-
-
-class RecipeResponse(BaseModel):
-    product_id: UUID
-    ingredients: list[RecipeLineResponse] = []
-    total_cost: Decimal = Decimal("0")
-
-
 # ─── Adjustments & counts ─────────────────────────────────────────────────────
 
 
@@ -980,46 +948,3 @@ class QuantityAdjustmentRequest(BaseModel):
     quantity_delta: Decimal
     reason_id: UUID | None = None
     notes: str | None = None
-
-
-# ─── Transfer templates ───────────────────────────────────────────────────────
-
-
-class TransferTemplateItemInput(BaseModel):
-    item_id: UUID
-    display_order: int = 0
-
-
-class TransferTemplateUpsert(BaseModel):
-    source_branch_id: UUID
-    destination_branch_id: UUID | None = None
-    name: str = Field(min_length=1, max_length=150)
-    is_active: bool = True
-    display_order: int = 0
-    items: list[TransferTemplateItemInput] = Field(min_length=1)
-
-
-class TransferTemplateItemResponse(ORMModel):
-    id: UUID
-    item_id: UUID
-    display_order: int
-    item_name: str | None = None
-    item_sku: str | None = None
-    #: The item's inventory category, backfilled from the loaded item so the
-    #: create-transfer screen and template configurator can group by it. Both null
-    #: for an uncategorised item (sort last).
-    category_name: str | None = None
-    category_order: int | None = None
-
-
-class TransferTemplateResponse(ORMModel):
-    id: UUID
-    source_branch_id: UUID
-    destination_branch_id: UUID | None
-    name: str
-    is_active: bool
-    display_order: int
-    #: The revision number within the (source_branch_id, name) lineage. The admin
-    #: shows version history and marks the highest per lineage as Current.
-    version_number: int
-    items: list[TransferTemplateItemResponse] = []

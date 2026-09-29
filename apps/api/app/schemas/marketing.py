@@ -1,4 +1,4 @@
-"""Request and response models for discounts, promotions and timed events.
+"""Request and response models for promotions.
 
 Moved out of `app/api/v1/marketing.py` (CLAUDE.md rule 11); the router still
 re-exports them for older imports.
@@ -72,60 +72,6 @@ def check_branch_modes(
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
-
-class DiscountCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=150)
-    name_localized: str | None = Field(None, max_length=150)
-    translations: Translations = Field(default_factory=dict)
-    reference: str | None = Field(None, max_length=50)
-    qualification: Literal["product", "order", "both"] = "order"
-    amount: Decimal = Field(Decimal("0"), ge=0)
-    is_percentage: bool = True
-    is_taxable: bool = True
-    minimum_order_price: Decimal = Field(Decimal("0"), ge=0)
-    minimum_product_price: Decimal = Field(Decimal("0"), ge=0)
-    maximum_amount: Decimal | None = Field(None, ge=0)
-    branch_ids: list[uuid.UUID] = Field(default_factory=list)
-    order_types: list[OrderTypeLiteral] = Field(default_factory=list)
-    is_active: bool = True
-
-
-class DiscountUpdate(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=150)
-    name_localized: str | None = Field(None, max_length=150)
-    translations: Translations | None = None
-    reference: str | None = Field(None, max_length=50)
-    qualification: Literal["product", "order", "both"] | None = None
-    amount: Decimal | None = Field(None, ge=0)
-    is_percentage: bool | None = None
-    is_taxable: bool | None = None
-    minimum_order_price: Decimal | None = Field(None, ge=0)
-    minimum_product_price: Decimal | None = Field(None, ge=0)
-    maximum_amount: Decimal | None = Field(None, ge=0)
-    branch_ids: list[uuid.UUID] | None = None
-    order_types: list[OrderTypeLiteral] | None = None
-    is_active: bool | None = None
-
-
-class DiscountResponse(ORMModel):
-    id: uuid.UUID
-    name: str
-    name_localized: str | None
-    reference: str | None
-    qualification: str
-    amount: Decimal
-    is_percentage: bool
-    is_taxable: bool
-    minimum_order_price: Decimal
-    minimum_product_price: Decimal
-    maximum_amount: Decimal | None
-    branch_ids: list[uuid.UUID]
-    order_types: list[str]
-    is_active: bool
-    deleted_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
 
 
 class ScheduleFields(BaseModel):
@@ -337,70 +283,6 @@ class PromotionUsageResponse(BaseModel):
     usage_limit: int | None
     #: `used >= usage_limit`: it is no longer offered anywhere.
     exhausted: bool
-
-
-class TimedEventCreate(ScheduleFields):
-    name: str = Field(min_length=1, max_length=150)
-    name_localized: str | None = Field(None, max_length=150)
-    translations: Translations = Field(default_factory=dict)
-    type: Literal["percentage", "fixed", "fixed_price"]
-    value: Decimal = Field(Decimal("0"), ge=0)
-    product_ids: list[uuid.UUID] = Field(default_factory=list)
-    category_ids: list[uuid.UUID] = Field(default_factory=list)
-    branch_ids: list[uuid.UUID] = Field(default_factory=list)
-    order_types: list[OrderTypeLiteral] = Field(default_factory=list)
-    priority: int = Field(100, ge=0, le=10000)
-    is_active: bool = True
-
-
-class TimedEventUpdate(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=150)
-    type: Literal["percentage", "fixed", "fixed_price"] | None = None
-    value: Decimal | None = Field(None, ge=0)
-    product_ids: list[uuid.UUID] | None = None
-    category_ids: list[uuid.UUID] | None = None
-    branch_ids: list[uuid.UUID] | None = None
-    order_types: list[OrderTypeLiteral] | None = None
-    priority: int | None = Field(None, ge=0, le=10000)
-    from_date: date | None = None
-    to_date: date | None = None
-    from_time: int | None = Field(None, ge=0, le=1439)
-    to_time: int | None = Field(None, ge=0, le=1439)
-    is_mon: bool | None = None
-    is_tue: bool | None = None
-    is_wed: bool | None = None
-    is_thu: bool | None = None
-    is_fri: bool | None = None
-    is_sat: bool | None = None
-    is_sun: bool | None = None
-    is_active: bool | None = None
-
-
-class TimedEventResponse(ORMModel):
-    id: uuid.UUID
-    name: str
-    type: str
-    value: Decimal
-    product_ids: list[uuid.UUID]
-    category_ids: list[uuid.UUID]
-    branch_ids: list[uuid.UUID]
-    order_types: list[str]
-    priority: int
-    from_date: date | None
-    to_date: date | None
-    from_time: int
-    to_time: int
-    is_mon: bool
-    is_tue: bool
-    is_wed: bool
-    is_thu: bool
-    is_fri: bool
-    is_sat: bool
-    is_sun: bool
-    is_active: bool
-    deleted_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
 
 
 # ─── Counter promotions at the till ──────────────────────────────────────────

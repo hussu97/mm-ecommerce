@@ -53,7 +53,6 @@ from .courier import (  # noqa: F401
 )
 
 # ─── POS domain ───────────────────────────────────────────────────────────────
-from .course import Course  # noqa: F401
 from .custom_order import (  # noqa: F401
     CustomOrder,
     CustomOrderCardFeeModeEnum,
@@ -105,14 +104,11 @@ from .inventory import (  # noqa: F401
     InventoryCostLayer,
     InventoryCostLayerConsumption,
     InventoryItem,
-    InventoryItemIngredient,
     InventoryLevel,
     InventoryLineCost,
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
-    ModifierOptionIngredient,
-    ProductIngredient,
     PurchaseOrder,
     PurchaseOrderItem,
     PurchaseOrderMiscCategory,
@@ -130,7 +126,6 @@ from .inventory_v2 import (  # noqa: F401
     BranchInventorySettings,
     InventoryAvailabilityDirty,
     InventoryItemKindEnum,
-    InventoryLot,
     InventoryReportCadenceEnum,
     InventoryReportTemplate,
     InventoryReportTemplateItem,
@@ -152,34 +147,21 @@ from .kitchen_flow import KitchenFlow, KitchenFlowCategory  # noqa: F401
 from .language import Language, UiTranslation  # noqa: F401
 from .legal_entity import LegalEntity  # noqa: F401
 from .marketing import (  # noqa: F401
-    Discount,
-    DiscountQualificationEnum,
     Promotion,
     PromotionRewardEnum,
     PromotionTriggerEnum,
     PromotionTypeEnum,
-    TimedEvent,
-    TimedEventTypeEnum,
 )
 from .marketplace_return import MarketplaceReturn  # noqa: F401
 from .menu import (  # noqa: F401
-    Allergen,
     BranchModifierOption,
     BranchProduct,
-    Combo,
-    ComboItem,
-    ComboOption,
-    ComboSize,
     MenuGroup,
     MenuGroupProduct,
-    ProductAllergen,
     SellingMethodEnum,
 )
 from .modifier import Modifier, ModifierOption, ProductModifier  # noqa: F401
 from .operations import (  # noqa: F401
-    InventoryTransferTemplate,
-    InventoryTransferTemplateItem,
-    NotificationRule,
     ProductionLine,
     ProductionLineStatusEnum,
     ProductionOrder,
@@ -351,7 +333,6 @@ __all__ = [
     "PaymentMethod",
     "PaymentMethodTypeEnum",
     "Charge",
-    "Course",
     "ChargeTypeEnum",
     "Reason",
     "ReasonTypeEnum",
@@ -417,33 +398,18 @@ __all__ = [
     "PurchaseOrderMiscPeriod",
     "PurchaseOrderMiscPeriodUnitEnum",
     "PurchaseOrderStatusEnum",
-    "ProductIngredient",
-    "ModifierOptionIngredient",
-    "InventoryItemIngredient",
     # Menu
     "MenuGroup",
     "MenuGroupProduct",
-    "Allergen",
-    "ProductAllergen",
     "BranchProduct",
     "BranchModifierOption",
-    "Combo",
-    "ComboSize",
-    "ComboItem",
-    "ComboOption",
     "SellingMethodEnum",
     # Marketing
-    "Discount",
-    "DiscountQualificationEnum",
     "Promotion",
     "PromotionTypeEnum",
     "PromotionTriggerEnum",
     "PromotionRewardEnum",
-    "TimedEvent",
-    "TimedEventTypeEnum",
     # Operations
-    "InventoryTransferTemplate",
-    "InventoryTransferTemplateItem",
     "Transfer",
     "TransferKindEnum",
     "TransferLine",
@@ -459,7 +425,6 @@ __all__ = [
     "SpotCheckItem",
     "Reservation",
     "ReservationStatusEnum",
-    "NotificationRule",
     # Aggregator ingestion
     "AGGREGATOR_CHANNELS",
     "AggregatorAccount",

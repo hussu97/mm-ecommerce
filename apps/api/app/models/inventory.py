@@ -300,12 +300,6 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
     levels: Mapped[list[InventoryLevel]] = relationship(
         "InventoryLevel", back_populates="item", cascade="all, delete-orphan"
     )
-    ingredients: Mapped[list[InventoryItemIngredient]] = relationship(
-        "InventoryItemIngredient",
-        back_populates="parent",
-        cascade="all, delete-orphan",
-        foreign_keys="InventoryItemIngredient.parent_item_id",
-    )
 
     def to_ingredient_units(self, storage_quantity: Any) -> Any:
         """Convert a purchase quantity into consumption units."""
@@ -831,11 +825,6 @@ class InventoryTransactionItem(Base, UUIDMixin):
         nullable=True,
     )
     recipe_path: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="[]")
-    lot_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("inventory_lots.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     transaction: Mapped[InventoryTransaction] = relationship(
@@ -1500,105 +1489,3 @@ class InventoryCostingDirty(Base):
     dirty_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
-
-
-# ─── Recipes ──────────────────────────────────────────────────────────────────
-
-
-class ProductIngredient(Base, UUIDMixin, TimestampMixin):
-    """
-    Recipe line: how much of an inventory item one unit of a product consumes.
-    Selling the product depletes these.
-    """
-
-    __tablename__ = "product_ingredients"
-    __table_args__ = (
-        UniqueConstraint("product_id", "item_id", name="uq_product_ingredient"),
-    )
-
-    product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("products.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("inventory_items.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    #: In the item's ingredient unit.
-    quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
-    #: Order types this ingredient is *not* used for (e.g. no dine-in packaging).
-    inactive_in_order_types: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, server_default="[]"
-    )
-
-    def __repr__(self) -> str:
-        return f"<ProductIngredient product={self.product_id} item={self.item_id}>"
-
-
-class ModifierOptionIngredient(Base, UUIDMixin, TimestampMixin):
-    """Recipe line for a modifier option, e.g. an extra shot uses 9g of coffee."""
-
-    __tablename__ = "modifier_option_ingredients"
-    __table_args__ = (
-        UniqueConstraint(
-            "modifier_option_id", "item_id", name="uq_modifier_option_ingredient"
-        ),
-    )
-
-    modifier_option_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("modifier_options.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("inventory_items.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
-
-    def __repr__(self) -> str:
-        return f"<ModifierOptionIngredient option={self.modifier_option_id}>"
-
-
-class InventoryItemIngredient(Base, UUIDMixin, TimestampMixin):
-    """
-    Bill of materials for a produced item — brownie batter is made from flour,
-    butter, chocolate. Producing the parent consumes these children.
-    """
-
-    __tablename__ = "inventory_item_ingredients"
-    __table_args__ = (
-        UniqueConstraint(
-            "parent_item_id", "item_id", name="uq_inventory_item_ingredient"
-        ),
-    )
-
-    parent_item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("inventory_items.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("inventory_items.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
-
-    parent: Mapped[InventoryItem] = relationship(
-        "InventoryItem",
-        back_populates="ingredients",
-        foreign_keys=[parent_item_id],
-    )
-
-    def __repr__(self) -> str:
-        return f"<InventoryItemIngredient parent={self.parent_item_id}>"

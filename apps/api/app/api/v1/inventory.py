@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response
-from sqlalchemy import delete, exists, func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,11 +28,7 @@ from app.models import (
     InventoryLevel,
     InventoryTransaction,
     InventoryTransactionItem,
-    ModifierOption,
-    ModifierOptionIngredient,
     Order,
-    Product,
-    ProductIngredient,
     ProductionLine,
     ProductionOrder,
     PurchaseOrder,
@@ -79,9 +75,6 @@ from app.schemas.inventory import (
     PurchaseOrderUpdate,
     QuantityAdjustmentRequest,
     ReceivePurchaseOrderRequest,
-    RecipeLineResponse,
-    RecipeResponse,
-    RecipeUpsert,
     ResetCostFromRecipeRequest,
     ResetCostFromRecipeResponse,
     SupplierCreate,
@@ -2550,149 +2543,11 @@ async def pos_create_purchase_order(
     return await _serialise_po(db, reloaded)
 
 
-# ─── Recipes ──────────────────────────────────────────────────────────────────
-
-recipes_router = APIRouter()
-
-
-async def _recipe_response(db: AsyncSession, product_id: uuid.UUID) -> RecipeResponse:
-    stmt = select(ProductIngredient).where(ProductIngredient.product_id == product_id)
-    rows = list((await db.execute(stmt)).scalars().all())
-
-    payload = RecipeResponse(product_id=product_id)
-    total = Decimal("0")
-    for row in rows:
-        item = await db.get(InventoryItem, row.item_id)
-        # Cost is FIFO: the ingredient's current per-storage-unit cost, converted
-        # to the recipe (ingredient) unit. 0 until the ingredient is first costed.
-        ingredient_cost = (
-            inventory_service.canonical_cost_for_unit(
-                item,
-                await cost_layer_service.item_average_cost(db, item.id),
-                "ingredient",
-            )
-            if item
-            else Decimal("0")
-        )
-        line_cost = Decimal(str(row.quantity)) * ingredient_cost
-        total += line_cost
-        payload.ingredients.append(
-            RecipeLineResponse(
-                id=row.id,
-                item_id=row.item_id,
-                quantity=row.quantity,
-                inactive_in_order_types=row.inactive_in_order_types or [],
-                item_name=item.name if item else None,
-                item_sku=item.sku if item else None,
-                ingredient_unit=item.ingredient_unit if item else None,
-                unit_cost=ingredient_cost if item else None,
-                line_cost=line_cost,
-            )
-        )
-    payload.total_cost = total
-    return payload
-
-
-@recipes_router.get("/products/{product_id}", response_model=RecipeResponse)
-async def get_product_recipe(
-    product_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("catalogue.recipes.read")),
-):
-    await crud_service.get_or_404(db, Product, product_id)
-    return await _recipe_response(db, product_id)
-
-
-@recipes_router.put("/products/{product_id}", response_model=RecipeResponse)
-async def set_product_recipe(
-    product_id: uuid.UUID,
-    data: RecipeUpsert,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("catalogue.recipes.manage")),
-):
-    """Publish a new version and keep the legacy read model in sync."""
-    await crud_service.get_or_404(db, Product, product_id)
-    await db.execute(
-        delete(ProductIngredient).where(ProductIngredient.product_id == product_id)
-    )
-    for line in data.ingredients:
-        item = await db.get(InventoryItem, line.item_id)
-        if item is None:
-            raise BadRequestError(f"Inventory item {line.item_id} not found")
-        db.add(
-            ProductIngredient(
-                product_id=product_id,
-                item_id=line.item_id,
-                quantity=line.quantity,
-                inactive_in_order_types=line.inactive_in_order_types,
-            )
-        )
-    await recipe_service.draft_and_activate(
-        db,
-        kind="product",
-        owner_id=product_id,
-        lines=[
-            recipe_service.RecipeLineInput(
-                item_id=line.item_id,
-                quantity=line.quantity,
-                inactive_in_order_types=line.inactive_in_order_types,
-            )
-            for line in data.ingredients
-        ],
-        user_id=user.id,
-    )
-    await db.flush()
-    return await _recipe_response(db, product_id)
-
-
-@recipes_router.put("/modifier-options/{option_id}")
-async def set_modifier_option_recipe(
-    option_id: uuid.UUID,
-    data: RecipeUpsert,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("catalogue.recipes.manage")),
-):
-    await crud_service.get_or_404(db, ModifierOption, option_id)
-    await db.execute(
-        delete(ModifierOptionIngredient).where(
-            ModifierOptionIngredient.modifier_option_id == option_id
-        )
-    )
-    for line in data.ingredients:
-        item = await db.get(InventoryItem, line.item_id)
-        if item is None:
-            raise BadRequestError(f"Inventory item {line.item_id} not found")
-        db.add(
-            ModifierOptionIngredient(
-                modifier_option_id=option_id,
-                item_id=line.item_id,
-                quantity=line.quantity,
-            )
-        )
-    await recipe_service.draft_and_activate(
-        db,
-        kind="modifier_option",
-        owner_id=option_id,
-        lines=[
-            recipe_service.RecipeLineInput(
-                item_id=line.item_id,
-                quantity=line.quantity,
-                inactive_in_order_types=line.inactive_in_order_types,
-            )
-            for line in data.ingredients
-        ],
-        user_id=user.id,
-    )
-    await db.flush()
-    return {"modifier_option_id": str(option_id), "ingredients": len(data.ingredients)}
-
-
 __all__ = [
     "categories_router",
     "items_router",
     "levels_router",
     "purchase_orders_router",
-    "recipes_router",
     "router",
     "suppliers_router",
     "transactions_router",

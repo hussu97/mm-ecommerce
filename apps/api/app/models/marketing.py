@@ -1,5 +1,9 @@
 """
-Marketing: discounts, promotions and timed events.
+Marketing: promotions — the counter's auto discounts and coupons.
+
+Predefined discounts (`discounts`) and timed events (`timed_events`) were built
+against the Foodics parity matrix, never populated in production, and dropped
+in `307_drop_dead_tables`.
 
 Gift cards, loyalty and house accounts used to live here too. All three were
 fully built — models, ledgers, services, routers — and never wired into a single
@@ -31,78 +35,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base, TimestampMixin, UUIDMixin
 
 
-class DiscountQualificationEnum(str, enum.Enum):
-    PRODUCT = "product"
-    ORDER = "order"
-    BOTH = "both"
-
-
-class Discount(Base, UUIDMixin, TimestampMixin):
-    """
-    A pre-defined discount a cashier can apply with one tap, as opposed to an
-    open discount they type themselves.
-    """
-
-    __tablename__ = "discounts"
-
-    name: Mapped[str] = mapped_column(String(150), nullable=False)
-    name_localized: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    translations: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
-    reference: Mapped[str | None] = mapped_column(
-        String(50), unique=True, nullable=True, index=True
-    )
-    qualification: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        server_default=DiscountQualificationEnum.ORDER.value,
-    )
-    #: Fraction when `is_percentage`, otherwise an absolute amount.
-    amount: Mapped[Any] = mapped_column(
-        Numeric(10, 4), nullable=False, server_default="0"
-    )
-    is_percentage: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-    is_taxable: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-    minimum_order_price: Mapped[Any] = mapped_column(
-        Numeric(10, 2), nullable=False, server_default="0"
-    )
-    minimum_product_price: Mapped[Any] = mapped_column(
-        Numeric(10, 2), nullable=False, server_default="0"
-    )
-    #: Caps a percentage discount, e.g. "20% off, up to 50 AED".
-    maximum_amount: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
-    #: Empty means every branch / every order type.
-    branch_ids: Mapped[list[uuid.UUID]] = mapped_column(
-        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
-    )
-    order_types: Mapped[Any] = mapped_column(
-        ARRAY(String), nullable=False, default=list, server_default="{}"
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    def applies_to(self, branch_id: uuid.UUID | None, order_type: str | None) -> bool:
-        if self.branch_ids and branch_id not in self.branch_ids:
-            return False
-        if self.order_types and order_type not in self.order_types:
-            return False
-        return self.is_active and self.deleted_at is None
-
-    def __repr__(self) -> str:
-        return f"<Discount {self.name}>"
-
-
 class ScheduleMixin:
-    """Shared day/time/date windowing for promotions and timed events."""
+    """Day/time/date windowing for a promotion."""
 
     from_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     to_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -290,8 +224,7 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
 
         Scope only — the caller still checks `is_active`, `deleted_at`, the
         schedule (`runs_on`/`runs_at`) and the spend trigger. Kept here so the
-        "empty array means everything" rule lives with the columns it reads,
-        the same way `Discount.applies_to` does.
+        "empty array means everything" rule lives with the columns it reads.
         """
         if self.deleted_at is not None or not self.is_active:
             return False
@@ -317,50 +250,3 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
 
     def __repr__(self) -> str:
         return f"<Promotion {self.name}>"
-
-
-class TimedEventTypeEnum(str, enum.Enum):
-    PERCENTAGE = "percentage"
-    FIXED = "fixed"
-    FIXED_PRICE = "fixed_price"
-
-
-class TimedEvent(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
-    """
-    A scheduled price change — happy hour, a lunch offer. Applies to the listed
-    products whenever the schedule is live.
-    """
-
-    __tablename__ = "timed_events"
-
-    name: Mapped[str] = mapped_column(String(150), nullable=False)
-    name_localized: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    translations: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
-    type: Mapped[str] = mapped_column(String(20), nullable=False)
-    value: Mapped[Any] = mapped_column(
-        Numeric(12, 4), nullable=False, server_default="0"
-    )
-    product_ids: Mapped[list[uuid.UUID]] = mapped_column(
-        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
-    )
-    category_ids: Mapped[list[uuid.UUID]] = mapped_column(
-        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
-    )
-    branch_ids: Mapped[list[uuid.UUID]] = mapped_column(
-        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
-    )
-    order_types: Mapped[Any] = mapped_column(
-        ARRAY(String), nullable=False, default=list, server_default="{}"
-    )
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    def __repr__(self) -> str:
-        return f"<TimedEvent {self.name}>"

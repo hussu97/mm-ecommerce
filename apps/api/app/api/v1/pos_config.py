@@ -27,7 +27,6 @@ from app.core.exceptions import BadRequestError, ConflictError
 from app.core.permissions import require, require_any
 from app.models import (
     Charge,
-    Course,
     KitchenFlow,
     KitchenFlowCategory,
     LegalEntity,
@@ -43,9 +42,6 @@ from app.schemas.pos import (
     ChargeCreate,
     ChargeResponse,
     ChargeUpdate,
-    CourseCreate,
-    CourseResponse,
-    CourseUpdate,
     KitchenFlowCreate,
     KitchenFlowResponse,
     KitchenFlowUpdate,
@@ -270,14 +266,6 @@ legal_entities_router = build_crud_router(
     response_schema=LegalEntityResponse,
     entity_type="legal_entity",
     label_field="legal_name",
-)
-
-courses_router = build_crud_router(
-    model=Course,
-    create_schema=CourseCreate,
-    update_schema=CourseUpdate,
-    response_schema=CourseResponse,
-    entity_type="course",
 )
 
 # ─── Tax groups (membership needs bespoke handling) ───────────────────────────

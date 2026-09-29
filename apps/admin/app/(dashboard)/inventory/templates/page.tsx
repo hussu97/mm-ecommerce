@@ -1,8 +1,7 @@
 'use client';
 
 // The report-TEMPLATE configurator: one template per report type per branch,
-// which the register turns into the count sheet at close. Laid out like the
-// transfer-template configurator (transfers/page.tsx) — a form above, the
+// which the register turns into the count sheet at close. A form above, the
 // branch's templates below, Edit on a row loads it into the form — and a save
 // on an edit changes that template in place (PUT); only "Create template" adds
 // a new version, which replaces the type's current one.

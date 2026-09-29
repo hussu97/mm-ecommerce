@@ -98,7 +98,6 @@ class DeliveryStatusEnum(str, enum.Enum):
 
 class DiscountSourceEnum(str, enum.Enum):
     OPEN = "open"
-    PREDEFINED = "predefined"
     COUPON = "coupon"
     PROMOTION = "promotion"
 
@@ -220,8 +219,11 @@ class OrderDiscount(Base, UUIDMixin, TimestampMixin):
     """
     A discount applied to an order or to one of its lines.
 
-    `source` records where it came from (open, predefined, coupon, promotion)
-    which is exactly the breakdown the discount report needs.
+    `source` records where it came from — `open` (typed at the till) or
+    `promotion` (the engine: an auto discount or a selected coupon) — which is
+    exactly the breakdown the discount report needs. `coupon` is still a
+    member of the enum for the refusal in `apply_discount`; `predefined` rows
+    (picked from the retired `discounts` table) never existed in production.
     """
 
     __tablename__ = "order_discounts"
