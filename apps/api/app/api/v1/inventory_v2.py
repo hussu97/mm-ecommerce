@@ -41,6 +41,7 @@ from app.schemas.inventory_v2 import (
     OrderInventoryReturnRequest,
     PaginatedRecipeOwners,
     PosRecipeCard,
+    PosShiftReportResponse,
     ProjectionDriftResponse,
     RecipeDraftRequest,
     RecipeExpansionRequest,
@@ -700,7 +701,6 @@ async def _enrich_report_names(
 
 
 @control_router.get("/shift-reports", response_model=list[ShiftReportResponse])
-@pos_manager_read_router.get("/shift-reports", response_model=list[ShiftReportResponse])
 async def list_shift_reports(
     branch_id: uuid.UUID | None = None,
     report_status: str | None = Query(None, alias="status"),
@@ -749,9 +749,6 @@ async def list_shift_reports(
 
 
 @control_router.get("/shift-reports/{report_id}", response_model=ShiftReportResponse)
-@pos_manager_read_router.get(
-    "/shift-reports/{report_id}", response_model=ShiftReportResponse
-)
 async def get_shift_report(
     report_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -761,6 +758,18 @@ async def get_shift_report(
     await _assert_branch_access(db, user, report.branch_id)
     await _enrich_report_names(db, [report])
     return report
+
+
+# The manager companion (iPhone) reads the same reports as the console, drawn as
+# the POS app draws them — empty read-only columns left out (see
+# `PosShiftReportResponse`). Separate registrations only because the response
+# model differs; the work is the console's.
+pos_manager_read_router.get(
+    "/shift-reports", response_model=list[PosShiftReportResponse]
+)(list_shift_reports)
+pos_manager_read_router.get(
+    "/shift-reports/{report_id}", response_model=PosShiftReportResponse
+)(get_shift_report)
 
 
 @control_router.put("/reports/{report_id}", response_model=ShiftReportResponse)
@@ -850,7 +859,7 @@ async def inventory_tasks_for_till(
     )
 
 
-@pos_inventory_router.post("/tasks/adhoc", response_model=list[ShiftReportResponse])
+@pos_inventory_router.post("/tasks/adhoc", response_model=list[PosShiftReportResponse])
 async def inventory_adhoc_tasks_for_till(
     till_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -866,7 +875,7 @@ async def inventory_adhoc_tasks_for_till(
 
 
 @pos_inventory_router.post(
-    "/reports/{report_id}/refresh", response_model=ShiftReportResponse
+    "/reports/{report_id}/refresh", response_model=PosShiftReportResponse
 )
 async def refresh_shift_report(
     report_id: uuid.UUID,
@@ -878,7 +887,7 @@ async def refresh_shift_report(
     return await report_service.refresh_report(db, report)
 
 
-@pos_inventory_router.put("/reports/{report_id}", response_model=ShiftReportResponse)
+@pos_inventory_router.put("/reports/{report_id}", response_model=PosShiftReportResponse)
 async def save_shift_report(
     report_id: uuid.UUID,
     data: ReportSaveRequest,
@@ -891,7 +900,7 @@ async def save_shift_report(
 
 
 @pos_inventory_router.post(
-    "/reports/{report_id}/submit", response_model=ShiftReportResponse
+    "/reports/{report_id}/submit", response_model=PosShiftReportResponse
 )
 async def submit_shift_report(
     report_id: uuid.UUID,
@@ -904,7 +913,7 @@ async def submit_shift_report(
 
 
 @pos_inventory_router.post(
-    "/reports/{report_id}/approve", response_model=ShiftReportResponse
+    "/reports/{report_id}/approve", response_model=PosShiftReportResponse
 )
 async def approve_shift_report(
     report_id: uuid.UUID,
@@ -917,7 +926,7 @@ async def approve_shift_report(
 
 
 @pos_inventory_router.post(
-    "/reports/{report_id}/reject", response_model=ShiftReportResponse
+    "/reports/{report_id}/reject", response_model=PosShiftReportResponse
 )
 async def reject_shift_report(
     report_id: uuid.UUID,
@@ -931,7 +940,7 @@ async def reject_shift_report(
 
 
 @pos_inventory_router.post(
-    "/reports/{report_id}/defer", response_model=ShiftReportResponse
+    "/reports/{report_id}/defer", response_model=PosShiftReportResponse
 )
 async def defer_shift_report(
     report_id: uuid.UUID,
@@ -945,7 +954,7 @@ async def defer_shift_report(
 
 
 @pos_inventory_router.post(
-    "/reports/{report_id}/skip", response_model=ShiftReportResponse
+    "/reports/{report_id}/skip", response_model=PosShiftReportResponse
 )
 async def skip_shift_report(
     report_id: uuid.UUID,
@@ -959,7 +968,7 @@ async def skip_shift_report(
 
 
 @pos_inventory_router.post(
-    "/reports/{report_id}/waive", response_model=ShiftReportResponse
+    "/reports/{report_id}/waive", response_model=PosShiftReportResponse
 )
 async def waive_shift_report(
     report_id: uuid.UUID,

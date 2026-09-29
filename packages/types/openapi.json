@@ -28936,6 +28936,238 @@
         "title": "PosRecipeLine",
         "type": "object"
       },
+      "PosShiftReportResponse": {
+        "description": "The same report as the POS app draws it: a read-only movement column that\nis zero on every line is left out (`visible_columns`). Barsha does not\nproduce, so \"Used in production\" is a column of zeros there on most days \u2014\nnoise on the sheet a person counts against at the till. The console keeps\nevery column (`ShiftReportResponse`).",
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "approved_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By Name"
+          },
+          "base_posting_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Posting Sequence"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "columns": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "readOnly": true,
+            "title": "Columns",
+            "type": "array"
+          },
+          "comments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ShiftReportCommentResponse"
+            },
+            "title": "Comments",
+            "type": "array"
+          },
+          "deferred_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deferred Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ShiftReportLineResponse"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "posting_cutoff_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posting Cutoff Sequence"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "submitted_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted By"
+          },
+          "submitted_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted By Name"
+          },
+          "template_id": {
+            "format": "uuid",
+            "title": "Template Id",
+            "type": "string"
+          },
+          "template_snapshot": {
+            "additionalProperties": true,
+            "title": "Template Snapshot",
+            "type": "object"
+          },
+          "till_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Till Id"
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id"
+          }
+        },
+        "required": [
+          "id",
+          "template_id",
+          "branch_id",
+          "till_id",
+          "business_date",
+          "status",
+          "idempotency_key",
+          "template_snapshot",
+          "base_posting_sequence",
+          "notes",
+          "deferred_reason",
+          "submitted_by",
+          "approved_by",
+          "submitted_at",
+          "approved_at",
+          "transaction_id",
+          "columns"
+        ],
+        "title": "PosShiftReportResponse",
+        "type": "object"
+      },
       "PreviousDriver": {
         "description": "A driver who used to be on this order, and when they stopped being.",
         "properties": {
@@ -37770,7 +38002,7 @@
             "type": "string"
           },
           "columns": {
-            "description": "The grid the register draws for this report kind \u2014 the single BE-owned\ncontract for which movement columns are entered, inferred or derived.\nA read-only movement column that is zero on every line is left out\n(`visible_columns`), for every report kind and both the register and the\nconsole.",
+            "description": "The grid for this report kind \u2014 the single BE-owned contract for which\nmovement columns are entered, inferred or derived. Every column: this is\nwhat the admin console reads. The register reads `PosShiftReportResponse`.",
             "items": {
               "additionalProperties": true,
               "type": "object"
@@ -40680,7 +40912,7 @@
           "reports": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/ShiftReportResponse"
+              "$ref": "#/components/schemas/PosShiftReportResponse"
             },
             "title": "Reports",
             "type": "array"
@@ -69033,7 +69265,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69081,7 +69313,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69139,7 +69371,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69187,7 +69419,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69245,7 +69477,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69303,7 +69535,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69351,7 +69583,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69409,7 +69641,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShiftReportResponse"
+                  "$ref": "#/components/schemas/PosShiftReportResponse"
                 }
               }
             },
@@ -69507,7 +69739,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/ShiftReportResponse"
+                    "$ref": "#/components/schemas/PosShiftReportResponse"
                   },
                   "title": "Response Inventory Adhoc Tasks For Till Api V1 Pos Inventory Tasks Adhoc Post",
                   "type": "array"

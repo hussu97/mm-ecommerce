@@ -19682,6 +19682,81 @@ export interface components {
             yield_percentage: string;
         };
         /**
+         * PosShiftReportResponse
+         * @description The same report as the POS app draws it: a read-only movement column that
+         *     is zero on every line is left out (`visible_columns`). Barsha does not
+         *     produce, so "Used in production" is a column of zeros there on most days —
+         *     noise on the sheet a person counts against at the till. The console keeps
+         *     every column (`ShiftReportResponse`).
+         */
+        PosShiftReportResponse: {
+            /** Approved At */
+            approved_at: string | null;
+            /** Approved By */
+            approved_by: string | null;
+            /** Approved By Name */
+            approved_by_name?: string | null;
+            /** Base Posting Sequence */
+            base_posting_sequence: number | null;
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Business Date */
+            business_date: string;
+            /** Columns */
+            readonly columns: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Comments
+             * @default []
+             */
+            comments: components["schemas"]["ShiftReportCommentResponse"][];
+            /** Deferred Reason */
+            deferred_reason: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["ShiftReportLineResponse"][];
+            /** Notes */
+            notes: string | null;
+            /** Posting Cutoff Sequence */
+            posting_cutoff_sequence?: number | null;
+            /** Status */
+            status: string;
+            /** Submitted At */
+            submitted_at: string | null;
+            /** Submitted By */
+            submitted_by: string | null;
+            /** Submitted By Name */
+            submitted_by_name?: string | null;
+            /**
+             * Template Id
+             * Format: uuid
+             */
+            template_id: string;
+            /** Template Snapshot */
+            template_snapshot: {
+                [key: string]: unknown;
+            };
+            /** Till Id */
+            till_id: string | null;
+            /** Transaction Id */
+            transaction_id: string | null;
+        };
+        /**
          * PreviousDriver
          * @description A driver who used to be on this order, and when they stopped being.
          */
@@ -22789,11 +22864,9 @@ export interface components {
             business_date: string;
             /**
              * Columns
-             * @description The grid the register draws for this report kind — the single BE-owned
-             *     contract for which movement columns are entered, inferred or derived.
-             *     A read-only movement column that is zero on every line is left out
-             *     (`visible_columns`), for every report kind and both the register and the
-             *     console.
+             * @description The grid for this report kind — the single BE-owned contract for which
+             *     movement columns are entered, inferred or derived. Every column: this is
+             *     what the admin console reads. The register reads `PosShiftReportResponse`.
              */
             readonly columns: {
                 [key: string]: unknown;
@@ -23715,7 +23788,7 @@ export interface components {
              * Reports
              * @default []
              */
-            reports: components["schemas"]["ShiftReportResponse"][];
+            reports: components["schemas"]["PosShiftReportResponse"][];
         };
         /** TillOpenRequest */
         TillOpenRequest: {
@@ -38740,7 +38813,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38771,7 +38844,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38806,7 +38879,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38837,7 +38910,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38872,7 +38945,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38907,7 +38980,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38938,7 +39011,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38973,7 +39046,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"];
+                    "application/json": components["schemas"]["PosShiftReportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -39035,7 +39108,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShiftReportResponse"][];
+                    "application/json": components["schemas"]["PosShiftReportResponse"][];
                 };
             };
             /** @description Validation Error */

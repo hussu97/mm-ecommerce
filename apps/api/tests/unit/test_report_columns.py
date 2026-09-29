@@ -212,3 +212,48 @@ def test_a_read_only_column_shows_when_one_row_has_a_value() -> None:
 
 def test_no_lines_hides_nothing() -> None:
     assert rc.visible_columns("finished_goods", []) == rc.columns_for("finished_goods")
+
+
+def test_the_console_keeps_every_column_and_the_pos_hides_empty_ones() -> None:
+    import uuid
+    from datetime import datetime, timezone
+
+    from app.schemas.inventory_v2 import PosShiftReportResponse, ShiftReportResponse
+
+    line = {
+        "id": uuid.uuid4(),
+        "item_id": uuid.uuid4(),
+        "unit": "unit",
+        "source_summary": {},
+        "confirmed": True,
+        "extra_production_consumption_quantity": 0,
+        "variance_cost": None,
+        "override_reason": None,
+        **{c.key: 0 for c in rc.columns_for("finished_goods")},
+        "sales_consumption_quantity": 3,
+    }
+    report = {
+        "id": uuid.uuid4(),
+        "template_id": uuid.uuid4(),
+        "branch_id": uuid.uuid4(),
+        "till_id": None,
+        "business_date": "2026-09-29",
+        "status": "outstanding",
+        "idempotency_key": "k",
+        "template_snapshot": {"report_type": "finished_goods"},
+        "base_posting_sequence": 1,
+        "notes": None,
+        "deferred_reason": None,
+        "submitted_by": None,
+        "approved_by": None,
+        "submitted_at": None,
+        "approved_at": datetime.now(timezone.utc),
+        "transaction_id": None,
+        "lines": [line],
+    }
+    console = [c["key"] for c in ShiftReportResponse.model_validate(report).columns]
+    pos = [c["key"] for c in PosShiftReportResponse.model_validate(report).columns]
+    assert console == [c.key for c in rc.columns_for("finished_goods")]
+    assert "production_consumption_quantity" in console
+    assert "production_consumption_quantity" not in pos
+    assert "sales_consumption_quantity" in pos

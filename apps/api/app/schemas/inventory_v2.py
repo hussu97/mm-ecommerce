@@ -16,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.services.inventory.report_columns import visible_columns
+from app.services.inventory.report_columns import columns_for, visible_columns
 
 
 class ORMModel(BaseModel):
@@ -447,11 +447,23 @@ class ShiftReportResponse(ORMModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def columns(self) -> list[dict[str, Any]]:
-        """The grid the register draws for this report kind — the single BE-owned
-        contract for which movement columns are entered, inferred or derived.
-        A read-only movement column that is zero on every line is left out
-        (`visible_columns`), for every report kind and both the register and the
-        console."""
+        """The grid for this report kind — the single BE-owned contract for which
+        movement columns are entered, inferred or derived. Every column: this is
+        what the admin console reads. The register reads `PosShiftReportResponse`."""
+        report_type = (self.template_snapshot or {}).get("report_type", "")
+        return [column.to_dict() for column in columns_for(report_type)]
+
+
+class PosShiftReportResponse(ShiftReportResponse):
+    """The same report as the POS app draws it: a read-only movement column that
+    is zero on every line is left out (`visible_columns`). Barsha does not
+    produce, so "Used in production" is a column of zeros there on most days —
+    noise on the sheet a person counts against at the till. The console keeps
+    every column (`ShiftReportResponse`)."""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def columns(self) -> list[dict[str, Any]]:
         report_type = (self.template_snapshot or {}).get("report_type", "")
         return [column.to_dict() for column in visible_columns(report_type, self.lines)]
 
@@ -466,7 +478,7 @@ class TillCloseTasksResponse(BaseModel):
     close directly or fill fresh reports first (see ``/pos/inventory/tasks/adhoc``).
     """
 
-    reports: list[ShiftReportResponse] = []
+    reports: list[PosShiftReportResponse] = []
     first_close: bool = True
     optional_reports_available: bool = False
 
