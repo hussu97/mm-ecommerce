@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { inventoryApi } from '@/lib/pos-api';
 import type {
   InventoryItem,
@@ -46,7 +47,16 @@ interface MappingDraft {
   supplier_sku: string;
 }
 
+// `useSearchParams` needs a Suspense boundary above it.
 export default function SuppliersPage() {
+  return (
+    <Suspense>
+      <SuppliersList />
+    </Suspense>
+  );
+}
+
+function SuppliersList() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [authorities, setAuthorities] = useState<TradeLicenseAuthorityOption[]>([]);
@@ -87,6 +97,37 @@ export default function SuppliersPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // `?supplier=<id>` opens that supplier — the link the VAT report puts beside
+  // each supplier's purchases. Once, when the list first arrives; the tab
+  // follows the supplier so an inactive one is not hidden behind "Active".
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const linkedId = searchParams.get('supplier');
+  const linkHandled = useRef(false);
+  useEffect(() => {
+    if (!linkedId || linkHandled.current || suppliers.length === 0) return;
+    linkHandled.current = true;
+    const linked = suppliers.find((s) => s.id === linkedId);
+    if (!linked) return;
+    setActiveTab(linked.is_active ? 'active' : 'inactive');
+    const index = suppliers
+      .filter((s) => s.is_active === linked.is_active)
+      .findIndex((s) => s.id === linked.id);
+    setPage(Math.floor(index / perPage) + 1);
+    // The supplier's form is also its only detail view, and every write needs
+    // `inventory.manage`: a viewer without it lands on the list, on that
+    // supplier's page, rather than in a form that would 403 on save.
+    if (canManage) setEditing(linked);
+  }, [linkedId, suppliers, perPage, canManage]);
+
+  // Closing the linked supplier drops the parameter, so a reload shows the list.
+  const closeModal = () => {
+    setCreating(false);
+    setEditing(null);
+    if (linkedId) router.replace(pathname);
+  };
 
   // The API never returns a deleted supplier; the two tabs split the rest by
   // the is_active flag (deactivation only flips that).
@@ -227,8 +268,8 @@ export default function SuppliersPage() {
           supplier={editing}
           items={items}
           authorities={authorities}
-          onClose={() => { setCreating(false); setEditing(null); }}
-          onSaved={() => { setCreating(false); setEditing(null); void load(); }}
+          onClose={closeModal}
+          onSaved={() => { closeModal(); void load(); }}
         />
       )}
     </div>

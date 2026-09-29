@@ -5,6 +5,7 @@
 // `vat_ledger_entries` cache through `/pos/reports/vat-ledger`; the money is
 // computed server-side, this only lays it out (rule 10).
 
+import Link from 'next/link';
 import { Fragment, useEffect, useState } from 'react';
 
 import { legalEntitiesApi, posReportsApi } from '@/lib/pos-api';
@@ -184,7 +185,19 @@ function VatBlock({
                       key={`${category}-${row.supplier_id}`}
                       className="border-b border-gray-100 last:border-0 text-xs text-gray-500"
                     >
-                      <td className="px-3 py-1.5 pl-8">{row.supplier_name ?? 'Unknown supplier'}</td>
+                      <td className="px-3 py-1.5 pl-8">
+                        <span className="inline-flex items-center gap-2">
+                          {row.supplier_name ?? 'Unknown supplier'}
+                          <Link
+                            href={`/purchase-orders/suppliers?supplier=${row.supplier_id}`}
+                            className="inline-flex items-center gap-0.5 text-[11px] text-primary hover:underline"
+                            aria-label={`View supplier ${row.supplier_name ?? ''}`}
+                          >
+                            View supplier
+                            <span aria-hidden>→</span>
+                          </Link>
+                        </span>
+                      </td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(row.net_value)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(row.vat_amount)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(row.gross_value)}</td>
