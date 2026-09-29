@@ -19,6 +19,7 @@ paper.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -151,12 +152,21 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
     # not production). Without Received / Transfer in those inflows land in no
     # column at all — not even Adjustments, since purchasing and transfer-receive
     # are columned types — so the sheet silently fails to reconcile.
+    #
+    # "Used in production" is here too: a finished good can be an ingredient of
+    # another (Fudge Brownie goes into the Brookie Cookie Melt), and produce()
+    # draws it down from the recipe. The closing always subtracted that
+    # drawdown; without a column for it the row did not add up on screen, so
+    # staff re-entered the same brownies as Internal use and double-counted
+    # them (Sharjah, every day from 2026-09-11 to 2026-09-29). Ledger-filled and
+    # read-only, like Sold.
     "finished_goods": [
         _OPENING,
         _PRODUCED,
         _RECEIVED,
         _TRANSFER_IN,
         _SOLD,
+        _PRODUCTION_USE,
         _INTERNAL,
         _TRANSFER_OUT,
         _WASTE,
@@ -173,6 +183,7 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _RECEIVED,
         _TRANSFER_IN,
         _SOLD,
+        _PRODUCTION_USE,
         _INTERNAL,
         _TRANSFER_OUT,
         _WASTE,
@@ -226,6 +237,38 @@ ROLE_SIGN: dict[str, int] = {ROLE_IN: 1, ROLE_OUT: -1}
 def columns_for(report_type: str) -> list[ColumnSpec]:
     """The ordered columns for a report kind, defaulting to a plain count."""
     return _COLUMNS.get(report_type, _COLUMNS["spot_check"])
+
+
+def visible_columns(report_type: str, lines: Iterable[Any]) -> list[ColumnSpec]:
+    """The columns to *show* for a report, given its lines.
+
+    A read-only movement column (ledger-filled: Sold, Used in production,
+    Transfer in/out, Adjustments) is shown only when at least one line has a
+    non-zero value in it. Barsha does not produce, so "Used in production" is a
+    column of zeros there on most days — noise on the sheet a person counts
+    against. Everything a person types, and the derived ends (Opening, Closing,
+    Physical, Difference), always shows: a typed column must be there to type
+    into, and the ends are the reconciliation itself.
+
+    Display only. Save and posting read `columns_for`/`editable_columns`, and a
+    hidden column is zero by construction, so the row still adds up on screen.
+    With no lines at all (not loaded) nothing is hidden.
+    """
+    columns = columns_for(report_type)
+    rows = list(lines)
+    if not rows:
+        return columns
+
+    def has_value(key: str) -> bool:
+        return any(getattr(row, key, None) not in (None, 0) for row in rows)
+
+    return [
+        column
+        for column in columns
+        if column.editable
+        or column.role not in (ROLE_IN, ROLE_OUT)
+        or has_value(column.key)
+    ]
 
 
 def editable_columns(report_type: str) -> list[ColumnSpec]:

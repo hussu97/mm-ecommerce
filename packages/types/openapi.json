@@ -37770,7 +37770,7 @@
             "type": "string"
           },
           "columns": {
-            "description": "The grid the register draws for this report kind \u2014 the single BE-owned\ncontract for which movement columns are entered, inferred or derived.",
+            "description": "The grid the register draws for this report kind \u2014 the single BE-owned\ncontract for which movement columns are entered, inferred or derived.\nA read-only movement column that is zero on every line is left out\n(`visible_columns`), for every report kind and both the register and the\nconsole.",
             "items": {
               "additionalProperties": true,
               "type": "object"

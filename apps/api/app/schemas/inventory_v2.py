@@ -16,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.services.inventory.report_columns import columns_for
+from app.services.inventory.report_columns import visible_columns
 
 
 class ORMModel(BaseModel):
@@ -448,9 +448,12 @@ class ShiftReportResponse(ORMModel):
     @property
     def columns(self) -> list[dict[str, Any]]:
         """The grid the register draws for this report kind — the single BE-owned
-        contract for which movement columns are entered, inferred or derived."""
+        contract for which movement columns are entered, inferred or derived.
+        A read-only movement column that is zero on every line is left out
+        (`visible_columns`), for every report kind and both the register and the
+        console."""
         report_type = (self.template_snapshot or {}).get("report_type", "")
-        return [column.to_dict() for column in columns_for(report_type)]
+        return [column.to_dict() for column in visible_columns(report_type, self.lines)]
 
 
 class TillCloseTasksResponse(BaseModel):

@@ -145,3 +145,70 @@ def test_extra_production_use_is_an_editable_deduction_beside_the_recipe_figure(
 def test_serialisation_exposes_editable_flag_for_the_grid() -> None:
     payload = rc.columns_for("packaging")[0].to_dict()
     assert set(payload) >= {"key", "label", "role", "source", "posts", "editable"}
+
+
+def test_finished_goods_show_the_recipe_drawdown_they_subtract() -> None:
+    # A finished good can be another's ingredient (Fudge Brownie → Brookie Cookie
+    # Melt). The closing subtracts that drawdown, so the sheet must show it, or
+    # the row does not add up and staff re-enter it as Internal use (Sharjah,
+    # 2026-09-29: 47 − 1 sold − 11 hidden − 11 re-entered = 24 vs 35 counted).
+    for report_type in ("finished_goods", "production"):
+        cols = _by_key(report_type)
+        use = cols["production_consumption_quantity"]
+        assert use.role == rc.ROLE_OUT
+        assert use.source == rc.SOURCE_LEDGER
+        assert use.editable is False
+        assert use.label == "Used in production"
+
+
+def _line(**values):
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    fields = {c.key: Decimal("0") for c in rc.columns_for("finished_goods")}
+    fields.update({k: Decimal(str(v)) for k, v in values.items()})
+    return SimpleNamespace(**fields)
+
+
+def test_an_all_zero_read_only_movement_column_is_hidden() -> None:
+    # Barsha does not produce: "Used in production" (and Transfer out, and
+    # Adjustments) is zero on every row, so it is left off the sheet.
+    keys = [
+        c.key
+        for c in rc.visible_columns(
+            "finished_goods", [_line(sales_consumption_quantity=3), _line()]
+        )
+    ]
+    assert "production_consumption_quantity" not in keys
+    assert "transfer_out_quantity" not in keys
+    assert "adjustment_quantity" not in keys
+    # A ledger column with a value on any one row stays.
+    assert "sales_consumption_quantity" in keys
+    # Typed columns and the derived ends always show, zero or not.
+    for always in (
+        "opening_quantity",
+        "production_quantity",
+        "purchasing_quantity",
+        "internal_use_quantity",
+        "waste_quantity",
+        "expected_quantity",
+        "entered_quantity",
+        "variance_quantity",
+    ):
+        assert always in keys, always
+
+
+def test_a_read_only_column_shows_when_one_row_has_a_value() -> None:
+    # Sharjah, 2026-09-29: Fudge Brownie's 11 used in production must show.
+    keys = [
+        c.key
+        for c in rc.visible_columns(
+            "finished_goods",
+            [_line(), _line(production_consumption_quantity=11)],
+        )
+    ]
+    assert "production_consumption_quantity" in keys
+
+
+def test_no_lines_hides_nothing() -> None:
+    assert rc.visible_columns("finished_goods", []) == rc.columns_for("finished_goods")

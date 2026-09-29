@@ -22791,6 +22791,9 @@ export interface components {
              * Columns
              * @description The grid the register draws for this report kind — the single BE-owned
              *     contract for which movement columns are entered, inferred or derived.
+             *     A read-only movement column that is zero on every line is left out
+             *     (`visible_columns`), for every report kind and both the register and the
+             *     console.
              */
             readonly columns: {
                 [key: string]: unknown;
