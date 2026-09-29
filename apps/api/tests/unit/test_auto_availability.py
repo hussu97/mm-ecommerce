@@ -596,6 +596,7 @@ async def test_one_email_carries_every_change_with_its_trigger(monkeypatch):
                             {
                                 "name": "Kunafa Tray",
                                 "on_hand": Decimal("0"),
+                                "per_sale": Decimal("3.00000000"),
                                 "movement": movement,
                             }
                         ],
@@ -650,6 +651,10 @@ async def test_one_email_carries_every_change_with_its_trigger(monkeypatch):
         "-1.00",
         "Aisha",
         "No movement at this branch",
+        # What one sale draws, beside the stock — a recipe line that does not
+        # belong (Pistachio Kunafa "6 Pieces" drawing Fudge Brownie ×3) shows.
+        "Per sale",
+        ">3<",
     ):
         assert fragment in html, fragment
 

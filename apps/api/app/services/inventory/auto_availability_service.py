@@ -404,6 +404,11 @@ class Change:
     in_stock: bool
     reason: str
     trigger_item_ids: tuple[uuid.UUID, ...]
+    #: What one sale of the owner draws of each trigger item, from its recipe.
+    #: Shown beside the stock so a recipe line that does not belong (a "6
+    #: Pieces" option of Pistachio Kunafa that drew Fudge Brownie ×3) is plain
+    #: in the email rather than only in the recipe.
+    required: Mapping[uuid.UUID, Decimal] = field(default_factory=dict)
 
 
 @dataclass
@@ -721,6 +726,7 @@ async def _apply(
     item_names: Mapping[uuid.UUID, str],
     on_hand: Mapping[uuid.UUID, Decimal],
     now: datetime,
+    required: Mapping[uuid.UUID, Decimal] | None = None,
 ) -> None:
     if decision.action == "clear_override":
         await availability.clear_restock_override(db, row)
@@ -759,6 +765,9 @@ async def _apply(
             in_stock=in_stock,
             reason=decision.reason or "",
             trigger_item_ids=decision.triggers,
+            required={
+                i: (required or {}).get(i, Decimal(0)) for i in decision.triggers
+            },
         )
     )
 
@@ -781,6 +790,7 @@ async def _email_rows(
                 {
                     "name": names.get(item_id) or str(item_id),
                     "on_hand": stock.get(item_id, Decimal(0)),
+                    "per_sale": change.required.get(item_id, Decimal(0)),
                     "movement": movements.get(item_id),
                 }
                 for item_id in change.trigger_item_ids
@@ -954,6 +964,7 @@ async def evaluate_branch(
             item_names=item_names,
             on_hand=on_hand,
             now=now,
+            required=(requirements or {}).get((kind, owner_id)),
         )
     if report.changes:
         report.email_rows = await _email_rows(db, branch.id, report.changes)

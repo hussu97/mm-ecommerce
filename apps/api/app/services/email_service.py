@@ -1478,6 +1478,12 @@ async def send_auto_availability_change(*, branches: list[dict[str, Any]]) -> No
                 {
                     "name": item.get("name"),
                     "on_hand": f"{Decimal(str(item.get('on_hand') or 0)):.2f}",
+                    # Blank when unknown (an ON change, or no recipe quantity).
+                    "per_sale": (
+                        f"{Decimal(str(item['per_sale'])).normalize():f}"
+                        if item.get("per_sale")
+                        else ""
+                    ),
                     "movement": _movement_row(item.get("movement")),
                 }
                 for item in change.get("items") or []
