@@ -22,6 +22,7 @@ their own beside the counter: channels the shop tracks apart, not carriers.
 from __future__ import annotations
 
 from sqlalchemy import and_, exists, or_
+from sqlalchemy.orm import aliased
 
 from app.core import search as search_text
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
@@ -145,11 +146,18 @@ def courier_predicate(code: str):
     # A dispatched website courier, matched on the order's delivery record. A
     # custom order it carried is left out: `courier_code_for` counts that order
     # under `custom`, and a scorecard click must land on the rows it counted.
+    #
+    # The subquery reads an ALIAS of `order_deliveries`: the dashboard's fee
+    # queries already join `order_deliveries`, and SQLAlchemy auto-correlates
+    # every table the enclosing query has in FROM — the bare table would be
+    # correlated away, leaving the EXISTS with no FROM and failing the whole
+    # dashboard read ("returned no FROM clauses due to auto-correlation").
+    delivery = aliased(OrderDelivery)
     return and_(
         Order.source != OrderSourceEnum.CUSTOM.value,
         exists().where(
-            OrderDelivery.order_id == Order.id,
-            OrderDelivery.provider == code,
+            delivery.order_id == Order.id,
+            delivery.provider == code,
         ),
     )
 
@@ -169,15 +177,19 @@ def category_clause(category_ids: list | None):
     category. Voided counter lines (`status = 'void'`) do not make an order
     belong to a category; an off-counter line has a NULL status, so the match is
     `is_distinct_from('void')`, never `!= 'void'` (which NULL would fail).
+    Aliased, like the courier EXISTS, so it survives an enclosing query that
+    already joins `order_items`/`products` (the by-category breakdown).
     """
     ids = [c for c in (category_ids or []) if c]
     if not ids:
         return None
+    line = aliased(OrderItem)
+    product = aliased(Product)
     return exists().where(
-        OrderItem.order_id == Order.id,
-        OrderItem.product_id == Product.id,
-        Product.category_id.in_(ids),
-        OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
+        line.order_id == Order.id,
+        line.product_id == product.id,
+        product.category_id.in_(ids),
+        line.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
     )
 
 
@@ -196,13 +208,14 @@ def item_search_clause(term: str | None):
     """
     if not term:
         return None
+    line = aliased(OrderItem)
     return exists().where(
-        OrderItem.order_id == Order.id,
+        line.order_id == Order.id,
         or_(
-            search_text.contains(OrderItem.product_name, term),
-            search_text.contains(OrderItem.product_sku, term),
+            search_text.contains(line.product_name, term),
+            search_text.contains(line.product_sku, term),
         ),
-        OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
+        line.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
     )
 
 
