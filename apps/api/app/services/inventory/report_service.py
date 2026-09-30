@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy import DateTime, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.money import money, quantity, unit_cost
@@ -526,15 +526,97 @@ async def deactivate_template(
     return template
 
 
-# Reports still awaiting the shop's action — an open task, a saved draft, one
-# deferred to later, or one bounced back for a redo. A report in any of these
-# keeps surfacing at close until it is submitted or skipped.
+# Reports still awaiting the shop's action — an open task, a saved draft, or one
+# bounced back for a redo. A report in any of these keeps surfacing at close
+# until it is submitted or skipped.
+#
+# DEFERRED is deliberately not here. "Defer" now closes a report exactly like
+# "Skip" (`defer_report`); the status survives only on historical rows, and
+# those must not come back either — a deferred report carried into the next
+# close displaced that close's own reports (Sharjah 2026-09-30: the evening
+# Production report was never offered because the afternoon's two deferred
+# reports filled the list).
 _OPEN_REPORT_STATUSES = {
     ShiftInventoryReportStatusEnum.OUTSTANDING.value,
     ShiftInventoryReportStatusEnum.DRAFT.value,
-    ShiftInventoryReportStatusEnum.DEFERRED.value,
     ShiftInventoryReportStatusEnum.REJECTED.value,
 }
+
+# What a later close sweeps shut when it finds it left over from an earlier
+# shift or day. REJECTED is left out on purpose: a reviewer asked for that one
+# to be redone, and quietly closing it would undo their decision.
+_CARRIED_OVER_STATUSES = (
+    ShiftInventoryReportStatusEnum.OUTSTANDING.value,
+    ShiftInventoryReportStatusEnum.DRAFT.value,
+    ShiftInventoryReportStatusEnum.DEFERRED.value,
+)
+
+CARRIED_OVER_REASON = "Closed automatically: not filled before a later till close"
+
+
+async def close_carried_over_reports(
+    db: AsyncSession, *, till: Till
+) -> list[ShiftInventoryReport]:
+    """Close the reports an earlier shift left open, before this till's close.
+
+    A report the shop walked away from — "Not now", a draft never submitted, a
+    legacy deferral — used to ride into the next close and be handed over *in
+    place of* that close's own reports: the register only offers the optional
+    fresh set when nothing is outstanding, so a leftover Raw Materials count
+    hid the evening's Production report. The counts it held are superseded by
+    whatever this close records, so it is closed (skipped, with a reason) and
+    this till starts clean.
+
+    Leftover means: raised for an **earlier business date**, or for a till that
+    **closed before this one opened**. Never this till's own reports, and never
+    one belonging to a till still open or overlapping this one — two terminals
+    closing a minute apart must not shut each other's reports mid-count.
+    """
+    ReportTill = aliased(Till)
+    rows = list(
+        (
+            await db.execute(
+                select(ShiftInventoryReport)
+                .outerjoin(ReportTill, ReportTill.id == ShiftInventoryReport.till_id)
+                .where(
+                    ShiftInventoryReport.branch_id == till.branch_id,
+                    ShiftInventoryReport.status.in_(_CARRIED_OVER_STATUSES),
+                    or_(
+                        ShiftInventoryReport.till_id.is_(None),
+                        ShiftInventoryReport.till_id != till.id,
+                    ),
+                    or_(
+                        ReportTill.id.is_(None),
+                        ReportTill.status != TillStatusEnum.OPEN.value,
+                    ),
+                    or_(
+                        ShiftInventoryReport.business_date < till.business_date,
+                        and_(
+                            ReportTill.closed_at.is_not(None),
+                            ReportTill.closed_at <= till.opened_at,
+                        ),
+                    ),
+                )
+                .with_for_update(of=ShiftInventoryReport)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for report in rows:
+        logger.info(
+            "Closing carried-over %s report %s (%s, %s) at close of till %s",
+            report.status,
+            report.id,
+            report.business_date,
+            report.template_snapshot.get("report_type"),
+            till.id,
+        )
+        report.status = ShiftInventoryReportStatusEnum.SKIPPED.value
+        report.deferred_reason = report.deferred_reason or CARRIED_OVER_REASON
+    if rows:
+        await db.flush()
+    return rows
 
 
 async def _is_first_close(db: AsyncSession, till: Till) -> bool:
@@ -674,6 +756,9 @@ async def till_close_tasks(
     nothing mandatory (unless an earlier report was left unresolved), but the
     register offers the optional step when the branch runs at-till-close reports.
     """
+    # Before anything is handed over: a leftover from an earlier shift would
+    # otherwise be returned here and suppress this close's own reports.
+    await close_carried_over_reports(db, till=till)
     reports = await ensure_tasks_for_till(db, till=till)
     first_close = await _is_first_close(db, till)
     optional_reports_available = (
@@ -1990,6 +2075,13 @@ async def defer_report(
     report: ShiftInventoryReport,
     reason: str,
 ) -> ShiftInventoryReport:
+    """ "Defer" on the till: close the report, the same as a skip.
+
+    It used to park the report as DEFERRED, which kept it open — it came back
+    at the next close and displaced that close's own reports. Deferring is the
+    shop saying "not this one", so it ends the report; the reason is kept so
+    the history still reads as a deferral. No manager is needed, as before.
+    """
     report = await _lock_report(db, report.id)
     if report.status in {
         ShiftInventoryReportStatusEnum.POSTED.value,
@@ -1998,7 +2090,7 @@ async def defer_report(
         ShiftInventoryReportStatusEnum.SKIPPED.value,
     }:
         raise ConflictError("This report can no longer be deferred")
-    report.status = ShiftInventoryReportStatusEnum.DEFERRED.value
+    report.status = ShiftInventoryReportStatusEnum.SKIPPED.value
     report.deferred_reason = reason
     await db.flush()
     return report
