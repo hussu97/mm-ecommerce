@@ -141,3 +141,53 @@ def test_active_or_fulfilled_excludes_only_the_terminal_set():
     # delivered or still-in-flight order counts against its carrier.
     assert "delivered" not in sql
     assert "out_for_delivery" not in sql
+
+
+def _compile(stmt) -> str:
+    from sqlalchemy.dialects import postgresql
+
+    return str(stmt.compile(dialect=postgresql.dialect()))
+
+
+def test_every_courier_filter_compiles_inside_a_delivery_join():
+    """The dashboard's fee queries join `order_deliveries` before applying the
+    courier filter. A website courier's EXISTS over the bare table was
+    auto-correlated away ("returned no FROM clauses") and 500'd the dashboard
+    whenever lalamove / noon_send / slider_* was selected."""
+    from sqlalchemy import func, select
+
+    from app.models.order import Order
+    from app.models.order_delivery import OrderDelivery
+
+    for code in order_query.ALL_COURIER_CODES:
+        for join in ("join", "outerjoin"):
+            stmt = select(func.count()).select_from(Order)
+            stmt = getattr(stmt, join)(
+                OrderDelivery, OrderDelivery.order_id == Order.id
+            )
+            sql = _compile(stmt.where(order_query.courier_clause([code])))
+            if code in ("lalamove", "noon_send", "slider_bike", "slider_car"):
+                assert "EXISTS (SELECT" in sql and "FROM order_deliveries AS" in sql
+
+
+def test_line_filters_compile_inside_an_item_join():
+    """Same trap for the line-level EXISTS clauses under a query that already
+    joins `order_items`/`products` (the by-category breakdown)."""
+    import uuid
+
+    from sqlalchemy import func, select
+
+    from app.models.order import Order, OrderItem
+    from app.models.product import Product
+
+    stmt = (
+        select(func.count())
+        .select_from(OrderItem)
+        .join(Order, Order.id == OrderItem.order_id)
+        .outerjoin(Product, Product.id == OrderItem.product_id)
+        .where(
+            order_query.category_clause([uuid.uuid4()]),
+            order_query.item_search_clause("cookie"),
+        )
+    )
+    assert _compile(stmt).count("EXISTS (SELECT") == 2
