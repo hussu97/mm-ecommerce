@@ -417,3 +417,74 @@ def _pending_events(order):
     from sqlalchemy import inspect as sa_inspect
 
     return sa_inspect(order).info.get("pending_status_events", [])
+
+
+# ─── Confirmed just after the close ───────────────────────────────────────────
+
+_DXB = timezone(timedelta(hours=4))
+
+
+@pytest.fixture
+def sharjah_hours(monkeypatch):
+    """A branch trading 08:00–23:30 every day, no holidays."""
+    from app.services import branch_holiday_service, branch_hours_service
+
+    async def schedule(db, branch_id):
+        return {day: ("08:00", "23:30") for day in range(7)}
+
+    async def closed_dates_for(db, branch_id):
+        return set()
+
+    monkeypatch.setattr(branch_hours_service, "schedule", schedule)
+    monkeypatch.setattr(branch_holiday_service, "closed_dates_for", closed_dates_for)
+
+
+@pytest.mark.asyncio
+async def test_an_order_paid_just_after_the_close_still_reaches_tonights_shift(
+    sharjah_hours,
+):
+    """
+    MM-20260930-002: placed 23:29 against a 23:30 close and promised an hour
+    out, the card settled at 23:31 — and the arrival was held to 08:00 the next
+    morning, so the register never heard about it. Two minutes on the payment
+    page is not a reason to bake it tomorrow.
+    """
+    placed = datetime(2026, 9, 30, 23, 29, 21, tzinfo=_DXB)
+    now = datetime(2026, 9, 30, 23, 31, 34, tzinfo=_DXB)
+    order = _order(created_at=placed)
+
+    assert await arrival_service._next_working_moment(None, order, now=now) == now
+
+
+@pytest.mark.asyncio
+async def test_the_grace_runs_out(sharjah_hours):
+    """Paid an hour after placing it is no longer tonight's work."""
+    placed = datetime(2026, 9, 30, 23, 20, tzinfo=_DXB)
+    now = placed + arrival_service._LATE_CONFIRMATION_GRACE + timedelta(minutes=1)
+    order = _order(created_at=placed)
+
+    arrives = await arrival_service._next_working_moment(None, order, now=now)
+
+    assert arrives == datetime(2026, 10, 1, 8, 0, tzinfo=_DXB)
+
+
+@pytest.mark.asyncio
+async def test_an_order_placed_after_the_close_still_waits_for_the_morning(
+    sharjah_hours,
+):
+    """The grace covers a payment that lagged, not an order placed on a shut shop."""
+    placed = datetime(2026, 9, 30, 23, 35, tzinfo=_DXB)
+    now = datetime(2026, 9, 30, 23, 36, tzinfo=_DXB)
+    order = _order(created_at=placed)
+
+    arrives = await arrival_service._next_working_moment(None, order, now=now)
+
+    assert arrives == datetime(2026, 10, 1, 8, 0, tzinfo=_DXB)
+
+
+@pytest.mark.asyncio
+async def test_an_open_shop_is_now(sharjah_hours):
+    now = datetime(2026, 9, 30, 20, 0, tzinfo=_DXB)
+    order = _order(created_at=now - timedelta(minutes=2))
+
+    assert await arrival_service._next_working_moment(None, order, now=now) == now
