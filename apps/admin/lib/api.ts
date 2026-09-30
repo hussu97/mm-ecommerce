@@ -26,6 +26,7 @@ import { loginPathFor } from './auth-redirect';
 // Aggregator reconciliation + branch-map shapes come straight from the generated
 // contract (rule 8); these aliases keep the friendly names the code below uses.
 type ReconList = Schemas['AggregatorReconciliationList'];
+export type EmailTemplateOption = Schemas['EmailTemplateOption'];
 type ReconSummary = Schemas['ReconSummaryOut'];
 type PeriodCharges = Schemas['AggregatorPeriodChargesOut'];
 export type OrderPnl = Schemas['OrderPnlResponse'];
@@ -1209,6 +1210,10 @@ export const emailLogsApi = {
     page?: number;
     per_page?: number;
   }) => api.get<PaginatedEmailLogs>(`/email-logs/admin/all${buildQs(params)}`),
+  /** Every template the backend registers (plus retired keys still in the
+   *  table), each with the name to show — the filter's options and the
+   *  Template column's labels. */
+  templates: () => api.get<EmailTemplateOption[]>('/email-logs/admin/templates'),
 };
 
 // ─── Webhook Logs ─────────────────────────────────────────────────────────────

@@ -14611,6 +14611,25 @@
         "title": "EmailLogItem",
         "type": "object"
       },
+      "EmailTemplateOption": {
+        "description": "One entry in the admin's Email Log template filter.\n\n`value` is the `email_logs.template` key the list endpoint filters on;\n`label` is what the admin shows for it, in the filter and in the table.",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "EmailTemplateOption",
+        "type": "object"
+      },
       "EventCount": {
         "description": "One custom event from `apps/web/lib/analytics.ts`, and how often it fired.",
         "properties": {
@@ -53990,6 +54009,37 @@
           }
         ],
         "summary": "List Email Logs",
+        "tags": [
+          "Email Logs"
+        ]
+      }
+    },
+    "/api/v1/email-logs/admin/templates": {
+      "get": {
+        "description": "Every template the filter can offer, with the name the admin shows for it.\n\nThe `EmailTemplate` registry first, in its own order, so an email that has\nnot been sent yet can still be looked for. Then any key actually in the\ntable that the registry no longer carries \u2014 a retired or renamed email \u2014\nso its rows stay filterable and are named rather than shown raw.",
+        "operationId": "list_email_templates_api_v1_email_logs_admin_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EmailTemplateOption"
+                  },
+                  "title": "Response List Email Templates Api V1 Email Logs Admin Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Email Templates",
         "tags": [
           "Email Logs"
         ]

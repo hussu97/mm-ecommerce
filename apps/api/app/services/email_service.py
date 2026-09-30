@@ -46,7 +46,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.branch import Branch
-from app.models.email_log import EmailLog
+from app.models.email_log import EmailLog, EmailTemplate
 from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
 from app.schemas.order import OrderResponse
@@ -164,25 +164,10 @@ def _inline(html: str) -> str:
 #: UTM parameters so a visit that starts in an inbox is attributed to the email
 #: that sent it (the storefront's analytics proxy forwards `utm_*` to Umami).
 #: Staff emails are deliberately absent — their readers are not traffic, and
-#: tagging them would count the shop's own clicks as a campaign. A new customer
-#: template must be added here or its links go out untagged.
-CUSTOMER_TEMPLATES = frozenset(
-    {
-        "abandoned_basket.html",
-        "abandoned_cart.html",
-        "custom_order_invoice.html",
-        "order_cancelled.html",
-        "order_confirmation.html",
-        "order_delivered.html",
-        "order_out_for_delivery.html",
-        "order_packed.html",
-        "order_refunded.html",
-        "order_undelivered.html",
-        "password_reset.html",
-        "payment_failed.html",
-        "welcome.html",
-    }
-)
+#: tagging them would count the shop's own clicks as a campaign. Read off the
+#: `EmailTemplate` registry (its `customer` flag) rather than listed here, so a
+#: new customer email is tagged by being registered at all.
+CUSTOMER_TEMPLATES = frozenset(f"{t.value}.html" for t in EmailTemplate if t.customer)
 
 _HREF = re.compile(r"""href=(["'])(.*?)\1""", re.IGNORECASE | re.DOTALL)
 
@@ -863,7 +848,20 @@ async def _log(
 
     `order_number` is for an order's emails only — the admin links it to the
     order. Anything else an email is about (an inventory report, a transfer, a
-    purchase order) goes in `reference`."""
+    purchase order) goes in `reference`.
+
+    *template* must be an `EmailTemplate` key. An unregistered one is still
+    journalled — the send happened, and losing its row would be worse — but it
+    is named in the error log, because the admin would show it without a name.
+    `test_email_template_registry` stops one reaching main in the first place."""
+    try:
+        template = EmailTemplate(template).value
+    except ValueError:
+        logger.error(
+            "Email template %r is not in EmailTemplate — register it in "
+            "app/models/email_log.py so the admin can name and filter it",
+            template,
+        )
     try:
         async with AsyncSessionFactory() as db:
             db.add(
@@ -1948,7 +1946,7 @@ async def send_with_attachment(
     *,
     filename: str,
     content: bytes,
-    template: str = "report",
+    template: EmailTemplate,
     cc: list[str] | None = None,
     order_number: str | None = None,
 ) -> dict:

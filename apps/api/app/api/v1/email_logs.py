@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.permissions import require
-from app.models.email_log import EmailLog
+from app.models.email_log import EmailLog, EmailTemplate
 from app.models.user import User
+from app.schemas.email_log import EmailTemplateOption
 
 router = APIRouter()
 
@@ -105,3 +106,32 @@ async def list_email_logs(
     return PaginatedEmailLogs(
         items=items, total=total, page=page, per_page=per_page, pages=pages
     )
+
+
+@router.get("/admin/templates", response_model=list[EmailTemplateOption])
+async def list_email_templates(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("admin.logs.read")),
+) -> list[EmailTemplateOption]:
+    """
+    Every template the filter can offer, with the name the admin shows for it.
+
+    The `EmailTemplate` registry first, in its own order, so an email that has
+    not been sent yet can still be looked for. Then any key actually in the
+    table that the registry no longer carries — a retired or renamed email —
+    so its rows stay filterable and are named rather than shown raw.
+    """
+    registered = [
+        EmailTemplateOption(value=t.value, label=t.label) for t in EmailTemplate
+    ]
+    known = {option.value for option in registered}
+    journalled = (
+        (await db.execute(select(EmailLog.template).distinct().limit(500)))
+        .scalars()
+        .all()
+    )
+    legacy = [
+        EmailTemplateOption(value=key, label=EmailTemplate.label_for(key))
+        for key in sorted(k for k in journalled if k and k not in known)
+    ]
+    return registered + legacy
