@@ -16,7 +16,11 @@ confirmation and the arrival are one act.
 
 **A shut shop is not told anything.** An order placed at 03:00 used to land on a
 dark counter and ring at nobody until morning; its arrival is now held to the
-branch's next opening. Which means the hours are enforced on the arrival rather
+branch's next opening. **Except one placed before the close whose money lands
+just after it** (`_LATE_CONFIRMATION_GRACE`): the customer was quoted a
+delivery an hour out while the shop was trading, and the minutes they spent on
+the payment page are not a reason to bake it tomorrow (MM-20260930-002, placed
+23:29 against a 23:30 close, paid 23:31, held to 08:00). Which means the hours are enforced on the arrival rather
 than on the acceptance, and the register's own out-of-hours refusal
 (`pos_order_service.may_auto_accept`) becomes a second line rather than the
 only one. That refusal is deliberately left alone: it keys off *placement* time,
@@ -55,6 +59,15 @@ __all__ = ["due", "land", "schedule", "sweep"]
 #: waiting to make. Past this it is abandoned — and announcing it as new work
 #: is worse than leaving it, because somebody has to work out what it is.
 _STALE_AFTER = timedelta(days=2)
+
+#: How long after placement a confirmation can land and still reach the register
+#: now, provided the order was placed while the branch was trading. Checkout
+#: accepts an order against the hours at placement and promises it an hour out;
+#: a card payment that settles a few minutes later, after the close, is still an
+#: order the shop agreed to make tonight. Bounded, because an order placed before
+#: the close and paid for an hour later is no longer one the closing shift can
+#: be expected to be standing there for.
+_LATE_CONFIRMATION_GRACE = timedelta(minutes=30)
 
 #: How many orders one tick will land. Generous — a window closing on a busy
 #: evening empties into the kitchen all at once, and holding some of it back to
@@ -111,9 +124,18 @@ async def schedule(db: AsyncSession, order: Order) -> datetime | None:
     return order.arrives_at
 
 
-async def _next_working_moment(db: AsyncSession, order: Order) -> datetime:
-    """Now, or the branch's next opening if the shop is shut."""
-    now = datetime.now(timezone.utc)
+async def _next_working_moment(
+    db: AsyncSession, order: Order, *, now: datetime | None = None
+) -> datetime:
+    """
+    Now, or the branch's next opening if the shop is shut.
+
+    Now also when the shop has only just shut on an order placed while it was
+    trading — see `_LATE_CONFIRMATION_GRACE`. The placement check is the same
+    reading `pos_order_service.may_auto_accept` makes, so an order let through
+    here is one the register will also accept by itself.
+    """
+    now = now or datetime.now(timezone.utc)
     if order.branch_id is None:  # pragma: no cover — column is NOT NULL
         return now
 
@@ -121,11 +143,30 @@ async def _next_working_moment(db: AsyncSession, order: Order) -> datetime:
 
     closed = await branch_holiday_service.closed_dates_for(db, order.branch_id)
     sched = await branch_hours_service.schedule(db, order.branch_id)
-    window = branch_hours_service.effective_window(
-        sched, trading_hours.local(now).date()
-    )
-    opens_at, closes_at = window if window else (None, None)
+
+    def window_at(moment: datetime) -> tuple[str | None, str | None]:
+        window = branch_hours_service.effective_window(
+            sched, trading_hours.local(moment).date()
+        )
+        return window if window else (None, None)
+
+    opens_at, closes_at = window_at(now)
     if trading_hours.is_open(now, opens_at, closes_at, closed):
+        return now
+
+    placed_at = order.created_at
+    if (
+        placed_at is not None
+        and timedelta(0) <= now - placed_at <= _LATE_CONFIRMATION_GRACE
+        and trading_hours.is_open(placed_at, *window_at(placed_at), closed)
+    ):
+        logger.info(
+            "Order %s was placed at %s while %s was trading and confirmed "
+            "just after the close; landing it now",
+            order.order_number,
+            placed_at.isoformat(),
+            order.branch_id,
+        )
         return now
     return trading_hours.next_opening(now, opens_at, closed)
 
