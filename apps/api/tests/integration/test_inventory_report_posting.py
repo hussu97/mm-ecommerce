@@ -531,6 +531,192 @@ async def test_a_sale_does_not_block_submit_but_an_adjustment_does(engine, env):
             await report_service.submit_report(db, report=report2, user=user)
 
 
+async def test_only_a_movement_of_the_reports_own_items_blocks_submit(engine, env):
+    """A movement of an item the report does not carry changes nothing it posts.
+
+    Gating on any branch movement made the Packaging report unsubmittable once the
+    Production report posted its finished-goods count, or the office received a
+    butter PO (Sharjah, 2026-09-29/30). A movement of an item ON the report still
+    blocks — and names it, so the shop knows what to recount.
+    """
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        other = InventoryItem(
+            sku=f"{MARKER}-{uuid.uuid4().hex[:10]}",
+            name="Gift Box",
+            kind="packaging",
+            tracking_mode="stocked",
+            storage_unit="unit",
+            ingredient_unit="unit",
+            storage_to_ingredient_factor=Decimal("1"),
+        )
+        db.add(other)
+        await db.commit()
+        other_id = other.id
+    try:
+        async with Session() as db:
+            for target in (item_id, other_id):
+                await _post_txn(
+                    db,
+                    branch_id=branch_id,
+                    warehouse_id=warehouse_id,
+                    user_id=user_id,
+                    item_id=target,
+                    ttype=InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+                    qty=100,
+                )
+            report = _report(branch_id, template_id, report_type="finished_goods")
+            report.status = ShiftInventoryReportStatusEnum.DRAFT.value
+            report.base_posting_sequence = await report_service.current_sequence(
+                db, branch_id
+            )
+            report.lines = [
+                _line(
+                    item_id,
+                    entered_quantity=100,
+                    expected_quantity=100,
+                    source_summary={"entered_columns": [], "prefilled": {}},
+                )
+            ]
+            db.add(report)
+            await db.flush()
+            report_id = report.id
+            # Another report's item moves after this one was refreshed.
+            await _post_txn(
+                db,
+                branch_id=branch_id,
+                warehouse_id=warehouse_id,
+                user_id=user_id,
+                item_id=other_id,
+                ttype=InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+                qty=-4,
+            )
+            await db.commit()
+
+        async with Session() as db:
+            report = await report_service.load_report(db, report_id)
+            user = await db.get(User, user_id)
+            submitted = await report_service.submit_report(db, report=report, user=user)
+            assert submitted.status == ShiftInventoryReportStatusEnum.POSTED.value
+            await db.commit()
+
+        async with Session() as db:
+            report2 = _report(branch_id, template_id, report_type="finished_goods")
+            report2.status = ShiftInventoryReportStatusEnum.DRAFT.value
+            report2.base_posting_sequence = await report_service.current_sequence(
+                db, branch_id
+            )
+            report2.lines = [
+                _line(
+                    item_id,
+                    entered_quantity=100,
+                    expected_quantity=100,
+                    source_summary={"entered_columns": [], "prefilled": {}},
+                )
+            ]
+            db.add(report2)
+            await db.flush()
+            report2_id = report2.id
+            # A delivery of the report's own item lands after the refresh.
+            await _post_txn(
+                db,
+                branch_id=branch_id,
+                warehouse_id=warehouse_id,
+                user_id=user_id,
+                item_id=item_id,
+                ttype=InventoryTransactionTypeEnum.PURCHASING.value,
+                qty=10,
+            )
+            await db.commit()
+
+        async with Session() as db:
+            report2 = await report_service.load_report(db, report2_id)
+            user = await db.get(User, user_id)
+            with pytest.raises(ConflictError) as raised:
+                await report_service.submit_report(db, report=report2, user=user)
+            assert "Brownie" in raised.value.detail
+    finally:
+        async with Session() as db:
+            from app.models.inventory import InventoryLevel
+
+            await db.execute(text("SET session_replication_role = 'replica'"))
+            await db.execute(
+                InventoryLevel.__table__.delete().where(
+                    InventoryLevel.item_id == other_id
+                )
+            )
+            await db.execute(
+                InventoryItem.__table__.delete().where(InventoryItem.id == other_id)
+            )
+            await db.execute(text("SET session_replication_role = 'origin'"))
+            await db.commit()
+
+
+async def test_refresh_keeps_typed_columns_unless_the_item_moved(engine, env):
+    """A refresh must be safe to run at any time: a column the shop typed on an
+    item nothing moved keeps its value and marker (its prefill is unchanged, so
+    `entered − prefilled` still posts exactly what was added). Once a competing
+    movement lands on the item, the typed value goes and the line is un-confirmed —
+    re-posting it on top of, say, a PO the office received is a double count."""
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    zero = str(report_service.quantity(Decimal("0")))
+    async with Session() as db:
+        report = _report(branch_id, template_id, report_type="raw_materials")
+        report.status = ShiftInventoryReportStatusEnum.DRAFT.value
+        report.base_posting_sequence = await report_service.current_sequence(
+            db, branch_id
+        )
+        report.lines = [
+            _line(
+                item_id,
+                waste_quantity=3,
+                entered_quantity=7,
+                source_summary={
+                    "entered_columns": ["waste_quantity"],
+                    "prefilled": {"waste_quantity": zero},
+                },
+            )
+        ]
+        db.add(report)
+        await db.flush()
+        report_id = report.id
+        await db.commit()
+
+    async with Session() as db:
+        report = await report_service.load_report(db, report_id)
+        refreshed = await report_service.refresh_report(db, report)
+        await db.commit()
+        line = refreshed.lines[0]
+        assert line.source_summary.get("entered_columns") == ["waste_quantity"]
+        assert Decimal(str(line.waste_quantity)) == Decimal("3")
+        assert line.source_summary.get("moved_since_prefill") is False
+        assert line.confirmed is True
+
+    async with Session() as db:
+        await _post_txn(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            user_id=user_id,
+            item_id=item_id,
+            ttype=InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+            qty=2,
+        )
+        await db.commit()
+
+    async with Session() as db:
+        report = await report_service.load_report(db, report_id)
+        refreshed = await report_service.refresh_report(db, report)
+        await db.commit()
+        line = refreshed.lines[0]
+        assert line.source_summary.get("entered_columns") == []
+        assert Decimal(str(line.waste_quantity)) == Decimal("0")
+        assert line.source_summary.get("moved_since_prefill") is True
+        assert line.confirmed is False
+
+
 # --- Per-till count windows tile the timeline (dead-zone fix, F-INV) --------------
 #
 # A per-till count window used to run from till.opened_at to till.closed_at, so an

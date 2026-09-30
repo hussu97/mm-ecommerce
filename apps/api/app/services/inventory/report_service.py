@@ -263,31 +263,83 @@ async def current_sequence(db: AsyncSession, branch_id: uuid.UUID) -> int | None
 #: transfer, internal use), which sale consumption never touches. So routine sale
 #: consumption is orthogonal to everything the report posts — and it never stops
 #: while a branch trades, which is why gating on it made the close count
-#: unsubmittable at a working kitchen (Sharjah, 2026-09-09). Any *other* movement
-#: (a manual adjustment, a transfer, a sibling production posting) does move a
-#: baseline the report posts against and still blocks.
+#: unsubmittable at a working kitchen (Sharjah, 2026-09-09). A customer restock
+#: (`return_from_orders`) is the same order-driven flow in reverse and has no
+#: column of its own either. Any *other* movement (a manual adjustment, a
+#: transfer, a PO receipt, a sibling production posting) does move a baseline the
+#: report posts against and still blocks — but only for the items it touched.
 _NON_BLOCKING_MOVEMENT_TYPES = frozenset(
-    {InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value}
+    {
+        InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
+        InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
+    }
 )
 
 
-async def _competing_movement_since(
-    db: AsyncSession, branch_id: uuid.UUID, base_sequence: int | None
-) -> bool:
-    """Whether a movement that would invalidate the report's posting has landed
-    since it was refreshed — everything except routine sale consumption."""
-    return (
-        await db.execute(
-            select(func.count())
-            .select_from(InventoryTransaction)
-            .where(
-                InventoryTransaction.branch_id == branch_id,
-                InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
-                InventoryTransaction.posting_sequence > (base_sequence or 0),
-                InventoryTransaction.type.notin_(_NON_BLOCKING_MOVEMENT_TYPES),
-            )
+async def _moved_item_ids(
+    db: AsyncSession,
+    report: ShiftInventoryReport,
+    *,
+    since_sequence: int | None,
+    through_sequence: int | None = None,
+) -> set[uuid.UUID]:
+    """The report's own items that a competing (non-sale) movement touched in
+    ``(since_sequence, through_sequence]`` — what a refresh un-confirms and what
+    blocks a submit.
+
+    Item-scoped on purpose: a movement of an item the report does not carry
+    changes nothing it posts. Gating on *any* branch movement made the Packaging
+    report unsubmittable once the Production report posted its finished-goods
+    count, or the office received a butter PO (Sharjah, 2026-09-29/30).
+    """
+    item_ids = {line.item_id for line in report.lines}
+    if not item_ids:
+        return set()
+    stmt = (
+        select(InventoryTransactionItem.item_id)
+        .join(
+            InventoryTransaction,
+            InventoryTransaction.id == InventoryTransactionItem.transaction_id,
         )
-    ).scalar_one() > 0
+        .where(
+            InventoryTransaction.branch_id == report.branch_id,
+            InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+            InventoryTransaction.posting_sequence > (since_sequence or 0),
+            InventoryTransaction.type.notin_(_NON_BLOCKING_MOVEMENT_TYPES),
+            InventoryTransactionItem.item_id.in_(item_ids),
+        )
+        .distinct()
+    )
+    if through_sequence is not None:
+        stmt = stmt.where(InventoryTransaction.posting_sequence <= through_sequence)
+    return set((await db.execute(stmt)).scalars().all())
+
+
+async def _competing_items_since(
+    db: AsyncSession, report: ShiftInventoryReport
+) -> list[str]:
+    """Names of the report's items moved by something other than a sale since
+    the report was last refreshed — empty when the submit is safe."""
+    moved = await _moved_item_ids(
+        db, report, since_sequence=report.base_posting_sequence
+    )
+    return sorted(
+        str((line.source_summary or {}).get("item_name") or line.item_id)
+        for line in report.lines
+        if line.item_id in moved
+    )
+
+
+def _moved_conflict_message(names: list[str]) -> str:
+    """The submit refusal, naming what moved so the shop knows what to recount.
+    The POS matches on the leading phrase to refresh the report automatically."""
+    shown = ", ".join(names[:5]) + (
+        f" and {len(names) - 5} more" if len(names) > 5 else ""
+    )
+    return (
+        f"Stock changed since this report was refreshed: {shown}. "
+        "Refresh and recount those items."
+    )
 
 
 #: The template columns an admin sets. One list for both the create and the
@@ -1493,34 +1545,18 @@ async def refresh_report(
         db, report, through_sequence=latest, since_sequence=since_sequence
     )
     proposed = await _proposed_production_consumption(db, report)
-    moved = set(
-        (
-            await db.execute(
-                select(InventoryTransactionItem.item_id)
-                .join(
-                    InventoryTransaction,
-                    InventoryTransaction.id == InventoryTransactionItem.transaction_id,
-                )
-                .where(
-                    InventoryTransaction.branch_id == report.branch_id,
-                    InventoryTransaction.warehouse_id == warehouse.id,
-                    InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
-                    InventoryTransaction.posting_sequence
-                    > (report.base_posting_sequence or 0),
-                    InventoryTransaction.posting_sequence <= latest,
-                    # A sale does not invalidate a confirmed count — the count is
-                    # absolute — so it must not un-confirm the line and force a
-                    # reconfirm on every refresh while the shop trades. Only a
-                    # movement the report posts against does.
-                    InventoryTransaction.type.notin_(_NON_BLOCKING_MOVEMENT_TYPES),
-                )
-                .distinct()
-            )
+    # A sale does not invalidate a confirmed count — the count is absolute — so
+    # it must not un-confirm the line and force a reconfirm on every refresh while
+    # the shop trades. Only a movement the report posts against does.
+    moved = (
+        await _moved_item_ids(
+            db,
+            report,
+            since_sequence=report.base_posting_sequence,
+            through_sequence=latest,
         )
-        .scalars()
-        .all()
         if latest is not None
-        else []
+        else set()
     )
     for line in report.lines:
         level = await inventory_service.level_for(db, line.item_id, warehouse.id)
@@ -1530,6 +1566,13 @@ async def refresh_report(
         )
         if line.item_id in moved:
             line.confirmed = False
+        before = line.source_summary or {}
+        typed = {
+            column: getattr(line, column)
+            for column in before.get("entered_columns", [])
+            if hasattr(line, column)
+        }
+        prefilled_before = dict(before.get("prefilled") or {})
         _apply_source_columns(
             line,
             expected=expected,
@@ -1537,15 +1580,32 @@ async def refresh_report(
             through_sequence=latest,
             proposed_production_consumption=proposed.get(line.item_id, Decimal("0")),
         )
+        # _apply_source_columns just rewrote every movement column back to the
+        # ledger's value. A column the shop typed survives only where its ledger
+        # prefill is exactly what it was when the shop typed on top of it — then
+        # `entered − prefilled` still posts precisely what the shop added. Where a
+        # competing movement landed on the item, or the prefill moved, the typed
+        # value and its marker go: re-posting it against the new prefill is how one
+        # delivery gets counted twice (the Received figure typed for a PO that the
+        # office then received — Sharjah butter, 2026-09-30), so the shop re-enters
+        # that one. Keeping the rest is what makes a refresh safe to run at any
+        # time instead of wiping every row the shop typed.
+        prefilled_after = line.source_summary.get("prefilled") or {}
+        kept = sorted(
+            column
+            for column in typed
+            if line.item_id not in moved
+            and column in prefilled_before
+            and prefilled_before[column] == prefilled_after.get(column)
+        )
+        for column in kept:
+            setattr(line, column, typed[column])
+        if kept:
+            line.expected_quantity = _net_quantity(line)
         line.source_summary = {
             **line.source_summary,
             "moved_since_prefill": line.item_id in moved,
-            # _apply_source_columns just rewrote every movement column back to the
-            # ledger's value, discarding whatever the shop had typed. The typed
-            # markers must go with them — otherwise submit would re-post the
-            # ledger's own movement as if the shop had entered it. The shop
-            # re-enters and re-confirms after a refresh.
-            "entered_columns": [],
+            "entered_columns": kept,
         }
     # A PO raised or received since the report was opened is exactly what the
     # Received warning exists for, so the overlap is re-read with everything else.
@@ -1796,12 +1856,8 @@ async def submit_report(
     # routine sale consumption that never stops while a branch trades. Gating on
     # any sequence change made the close count unsubmittable at a working kitchen:
     # a sale posted between every refresh and submit. See `_NON_BLOCKING_MOVEMENT_TYPES`.
-    if await _competing_movement_since(
-        db, report.branch_id, report.base_posting_sequence
-    ):
-        raise ConflictError(
-            "Inventory moved since this report was refreshed; refresh and reconfirm"
-        )
+    if moved := await _competing_items_since(db, report):
+        raise ConflictError(_moved_conflict_message(moved))
     if any(
         not line.confirmed or line.entered_quantity is None for line in report.lines
     ):
@@ -1827,7 +1883,10 @@ async def submit_report(
     report.status = ShiftInventoryReportStatusEnum.APPROVED.value
     await db.flush()
     await post_report(db, report=report, user=user)
-    await _notify_report_submitted(db, report=report, submitter=user)
+    # The office email is NOT sent here: this transaction holds the branch
+    # inventory lock, and every counter sale's stock draw at the branch waits on it
+    # for as long as the mail round-trip takes. The caller commits, then calls
+    # `notify_report_submitted`.
     return report
 
 
@@ -1867,13 +1926,13 @@ def _variance_summary(report: ShiftInventoryReport) -> list[dict[str, str]]:
     return summary
 
 
-async def _notify_report_submitted(
+async def notify_report_submitted(
     db: AsyncSession,
     *,
     report: ShiftInventoryReport,
     submitter: User,
 ) -> None:
-    """Email the office the moment a report is submitted. Every report now
+    """Email the office once a submitted report is committed. Every report now
     auto-posts to the stock ledger, so the mail carries a summary of the lines
     whose physical count differed from the expected on-hand for after-the-fact
     review. ``email_service`` never raises and journals every attempt, so a mail

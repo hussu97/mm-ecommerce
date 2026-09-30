@@ -29,6 +29,7 @@ from app.models.inventory_v2 import (
     InventorySourceEvent,
     Recipe,
     ShiftInventoryReport,
+    ShiftInventoryReportStatusEnum,
 )
 from app.models.order import Order
 from app.models.till import Till
@@ -909,7 +910,21 @@ async def submit_shift_report(
 ):
     report = await report_service.load_report(db, report_id)
     await _assert_branch_access(db, user, report.branch_id)
-    return await report_service.submit_report(db, report=report, user=user)
+    already_submitted = report.status in {
+        ShiftInventoryReportStatusEnum.POSTED.value,
+        ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value,
+    }
+    report = await report_service.submit_report(db, report=report, user=user)
+    # Commit before the office email and before answering: the posting holds the
+    # branch inventory lock until commit, so mailing first stalled every sale's
+    # stock draw at the branch behind a Resend round-trip; and a report the till
+    # is told was posted must be on disk (the same reasoning as order create). The
+    # `get_db` commit that follows is then a no-op. A retried submit of a report
+    # that already posted (the till timed out waiting) sends no second email.
+    await db.commit()
+    if not already_submitted:
+        await report_service.notify_report_submitted(db, report=report, submitter=user)
+    return report
 
 
 @pos_inventory_router.post(
