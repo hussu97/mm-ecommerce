@@ -898,48 +898,113 @@ async def test_per_till_report_raised_only_at_first_close(engine, env):
         await db.rollback()
 
 
-async def test_unresolved_first_close_report_carries_to_next_close(engine, env):
-    """An unresolved first-close report keeps surfacing as mandatory on the next
-    close — the optional step is not offered while something is still pending."""
+async def _first_close_then_second(db, env, *, second_opened_before_first_closed=False):
+    """Close a first till (raising the day's report), then a second one. Returns
+    ``(first_report_id, t2)``. The second till opens after the first closed —
+    a later shift — unless told to overlap it."""
     branch_id, _warehouse_id, user_id, _item_id, _template_id = env
+    now = report_service.utcnow()
+    t1 = _closed_till(
+        branch_id,
+        user_id,
+        opened_at=now - timedelta(hours=6),
+        closed_at=now - timedelta(hours=3),
+    )
+    db.add(t1)
+    await db.flush()
+    reports, first_close, _optional = await report_service.till_close_tasks(db, till=t1)
+    assert first_close is True
+    assert len(reports) == 1
+
+    u2 = User(email=f"{MARKER}-{uuid.uuid4().hex[:8]}@example.com", hashed_password="x")
+    db.add(u2)
+    await db.flush()
+    t2 = _closed_till(
+        branch_id,
+        u2.id,
+        opened_at=now - timedelta(hours=4 if second_opened_before_first_closed else 2),
+        closed_at=now,
+    )
+    db.add(t2)
+    await db.flush()
+    return reports[0].id, t2
+
+
+async def test_a_report_left_open_by_an_earlier_shift_is_closed_not_carried(
+    engine, env
+):
+    """Sharjah 2026-09-30: the afternoon's unfinished reports rode into the
+    evening close and were handed over *instead of* the evening's own, so the
+    evening Production report was never offered. A leftover from a till that
+    closed before this one opened is now closed (skipped, with a reason), and
+    the later close is offered its fresh optional set."""
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
-        now = report_service.utcnow()
-        t1 = _closed_till(
-            branch_id,
-            user_id,
-            opened_at=now - timedelta(hours=6),
-            closed_at=now - timedelta(hours=3),
-        )
-        db.add(t1)
-        await db.flush()
-        reports, first_close, _optional = await report_service.till_close_tasks(
-            db, till=t1
-        )
-        assert first_close is True
-        assert len(reports) == 1
-        first_id = reports[0].id
-
-        u2 = User(
-            email=f"{MARKER}-{uuid.uuid4().hex[:8]}@example.com", hashed_password="x"
-        )
-        db.add(u2)
-        await db.flush()
-        t2 = _closed_till(
-            branch_id,
-            u2.id,
-            opened_at=now - timedelta(hours=2),
-            closed_at=now,
-        )
-        db.add(t2)
-        await db.flush()
+        first_id, t2 = await _first_close_then_second(db, env)
 
         reports2, first_close2, optional2 = await report_service.till_close_tasks(
             db, till=t2
         )
         assert first_close2 is False
-        assert optional2 is False
+        assert reports2 == []
+        assert optional2 is True
+
+        leftover = await db.get(ShiftInventoryReport, first_id)
+        assert leftover.status == ShiftInventoryReportStatusEnum.SKIPPED.value
+        assert leftover.deferred_reason == report_service.CARRIED_OVER_REASON
+
+        await db.rollback()
+
+
+async def test_an_overlapping_tills_report_is_not_closed_under_it(engine, env):
+    """Two terminals trading side by side: the second closing must not shut the
+    first's report while somebody may still be counting it."""
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        first_id, t2 = await _first_close_then_second(
+            db, env, second_opened_before_first_closed=True
+        )
+
+        reports2, _first, optional2 = await report_service.till_close_tasks(db, till=t2)
         assert [r.id for r in reports2] == [first_id]
+        assert optional2 is False
+
+        await db.rollback()
+
+
+async def test_a_report_sent_back_for_a_redo_still_surfaces(engine, env):
+    """REJECTED is a reviewer's decision, not something the shop walked away
+    from — a later close hands it over rather than closing it."""
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        first_id, t2 = await _first_close_then_second(db, env)
+        rejected = await db.get(ShiftInventoryReport, first_id)
+        rejected.status = ShiftInventoryReportStatusEnum.REJECTED.value
+        await db.flush()
+
+        reports2, _first, _optional = await report_service.till_close_tasks(db, till=t2)
+        assert [r.id for r in reports2] == [first_id]
+
+        await db.rollback()
+
+
+async def test_deferring_a_report_closes_it(engine, env):
+    """ "Defer" is "not this one": the report is closed like a skip — no manager
+    needed — and does not come back at the next close."""
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        first_id, t2 = await _first_close_then_second(db, env)
+        report = await db.get(ShiftInventoryReport, first_id)
+
+        deferred = await report_service.defer_report(
+            db, report=report, reason="Deferred after till close"
+        )
+        assert deferred.status == ShiftInventoryReportStatusEnum.SKIPPED.value
+        assert deferred.deferred_reason == "Deferred after till close"
+
+        reports2, _first, optional2 = await report_service.till_close_tasks(db, till=t2)
+        assert reports2 == []
+        assert optional2 is True
 
         await db.rollback()
 
