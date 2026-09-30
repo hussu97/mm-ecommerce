@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { emailLogsApi } from '@/lib/api';
+import { emailLogsApi, type EmailTemplateOption } from '@/lib/api';
+import { humaniseTemplateKey, templateOptions } from '@/lib/email-templates';
 import type { EmailLog, EmailLogStatus } from '@/lib/types';
 import { Badge, Input, Pagination, Select, LoadError, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
@@ -16,31 +17,11 @@ const STATUS_OPTIONS = [
   { value: 'skipped', label: 'Skipped' },
 ];
 
-// Every template identifier the backend can write to email_logs, in one place.
-// The filter dropdown and the Template column both derive from this, so the two
-// can never drift apart the way they had (five names for ~twelve templates).
-// Keep in sync with the send sites in apps/api/app/services/email_service.py
-// (filename-minus-.html) and daily_sales_email.py (_TEMPLATE).
-const EMAIL_TEMPLATES: { value: string; label: string }[] = [
-  { value: 'order_confirmation', label: 'Order Confirmation' },
-  { value: 'payment_failed', label: 'Payment Failed' },
-  { value: 'order_packed', label: 'Order Packed' },
-  { value: 'order_out_for_delivery', label: 'Out for Delivery' },
-  { value: 'order_delivered', label: 'Order Delivered' },
-  { value: 'order_undelivered', label: 'Order Undelivered' },
-  { value: 'order_cancelled', label: 'Order Cancelled' },
-  { value: 'order_refunded', label: 'Order Refunded' },
-  { value: 'welcome', label: 'Welcome' },
-  { value: 'password_reset', label: 'Password Reset' },
-  { value: 'owner_order_notification', label: 'Owner Order Notification' },
-  { value: 'daily_sales_report', label: 'Daily Sales Report' },
-];
-
-const TEMPLATE_OPTIONS = [{ value: '', label: 'All Templates' }, ...EMAIL_TEMPLATES];
-
-const TEMPLATE_LABELS: Record<string, string> = Object.fromEntries(
-  EMAIL_TEMPLATES.map(t => [t.value, t.label]),
-);
+// The template filter and the Template column are both read from the backend's
+// `EmailTemplate` registry (GET /email-logs/admin/templates). This page used to
+// keep its own list, and it stopped at twelve while the shop grew to twenty-one
+// — so inventory reports and the rest showed as raw keys and could not be
+// filtered for. A key the registry does not name is humanised, never shown raw.
 
 const STATUS_VARIANT: Record<EmailLogStatus, 'success' | 'danger' | 'warning'> = {
   sent: 'success',
@@ -91,6 +72,24 @@ export default function EmailLogsPage() {
 
   // Expanded error row
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Template names. Best-effort: without them the filter still lists what is on
+  // screen and every key still reads as words, so a failure is not an error.
+  const [templates, setTemplates] = useState<EmailTemplateOption[]>([]);
+  useEffect(() => {
+    emailLogsApi.templates().then(setTemplates).catch(() => {});
+  }, []);
+  const templateLabels = useMemo(
+    () => new Map(templates.map(t => [t.value, t.label])),
+    [templates],
+  );
+  const templateFilterOptions = useMemo(
+    () => [
+      { value: '', label: 'All Templates' },
+      ...templateOptions(templates, [...logs.map(l => l.template), templateFilter]),
+    ],
+    [templates, logs, templateFilter],
+  );
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -175,7 +174,7 @@ export default function EmailLogsPage() {
           <Select
             value={templateFilter}
             onChange={e => setTemplateFilter(e.target.value)}
-            options={TEMPLATE_OPTIONS}
+            options={templateFilterOptions}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -253,7 +252,7 @@ export default function EmailLogsPage() {
             },
             {
               header: 'Template',
-              render: log => TEMPLATE_LABELS[log.template] ?? log.template,
+              render: log => templateLabels.get(log.template) ?? humaniseTemplateKey(log.template),
             },
             {
               header: 'Order / Ref',

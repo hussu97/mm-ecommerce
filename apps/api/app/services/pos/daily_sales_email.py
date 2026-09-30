@@ -48,6 +48,7 @@ from app.models.aggregator import (
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.daily_sales_send import DailySalesSend
+from app.models.email_log import EmailTemplate
 from app.models.legal_entity import LegalEntity
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
@@ -83,7 +84,7 @@ _TICK_SECONDS = 600
 #: Where the automatic send goes. The manual admin trigger passes its own list.
 DEFAULT_RECIPIENTS = ["h_abbasi97@hotmail.com", "fahimakhtarabbasi@gmail.com"]
 
-_TEMPLATE = "daily_sales_report"
+_TEMPLATE = EmailTemplate.DAILY_SALES_REPORT
 
 #: The channel columns, in report order. The five aggregators are the courier
 #: catalogue's own codes; website delivery folds every courier into one column,

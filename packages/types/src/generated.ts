@@ -3326,6 +3326,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/email-logs/admin/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Email Templates
+         * @description Every template the filter can offer, with the name the admin shows for it.
+         *
+         *     The `EmailTemplate` registry first, in its own order, so an email that has
+         *     not been sent yet can still be looked for. Then any key actually in the
+         *     table that the registry no longer carries — a retired or renamed email —
+         *     so its rows stay filterable and are named rather than shown raw.
+         */
+        get: operations["list_email_templates_api_v1_email_logs_admin_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/export/categories": {
         parameters: {
             query?: never;
@@ -14591,6 +14616,19 @@ export interface components {
             subject: string;
             /** Template */
             template: string;
+        };
+        /**
+         * EmailTemplateOption
+         * @description One entry in the admin's Email Log template filter.
+         *
+         *     `value` is the `email_logs.template` key the list endpoint filters on;
+         *     `label` is what the admin shows for it, in the filter and in the table.
+         */
+        EmailTemplateOption: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
         };
         /**
          * EventCount
@@ -30353,6 +30391,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_email_templates_api_v1_email_logs_admin_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailTemplateOption"][];
                 };
             };
         };

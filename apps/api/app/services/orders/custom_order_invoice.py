@@ -40,6 +40,7 @@ from app.core.exceptions import CustomOrderInvoiceUnavailable
 from app.core.money import money, to_decimal
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.custom_order import CustomOrder, CustomOrderPaymentTypeEnum
+from app.models.email_log import EmailTemplate
 from app.models.legal_entity import LegalEntity
 from app.models.order import Order, OrderStatusEnum
 from app.services import email_service
@@ -446,7 +447,7 @@ async def send_invoice(db: AsyncSession, order: Order) -> dict:
         html,
         filename=f"{loaded.order_number}.pdf",
         content=pdf,
-        template="custom_order_invoice",
+        template=EmailTemplate.CUSTOM_ORDER_INVOICE,
         cc=list(entity.invoice_cc_emails or []) or None,
         order_number=loaded.order_number,
     )
