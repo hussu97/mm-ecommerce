@@ -216,12 +216,12 @@ async def test_submit_report_auto_posts_even_with_a_large_variance(monkeypatch):
         AsyncMock(),
     )
     monkeypatch.setattr(
-        report_service, "_competing_movement_since", AsyncMock(return_value=False)
+        report_service, "_competing_items_since", AsyncMock(return_value=[])
     )
     post = AsyncMock()
     monkeypatch.setattr(report_service, "post_report", post)
     notify = AsyncMock()
-    monkeypatch.setattr(report_service, "_notify_report_submitted", notify)
+    monkeypatch.setattr(report_service, "notify_report_submitted", notify)
     db = SimpleNamespace(flush=AsyncMock())
     user = SimpleNamespace(id=uuid4())
 
@@ -229,7 +229,47 @@ async def test_submit_report_auto_posts_even_with_a_large_variance(monkeypatch):
 
     assert result.status == ShiftInventoryReportStatusEnum.APPROVED.value
     post.assert_awaited_once()
-    notify.assert_awaited_once()
+    # The office email goes out after the router commits, never while the posting
+    # still holds the branch inventory lock.
+    notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_refusal_names_the_items_that_moved(monkeypatch):
+    """A competing movement blocks the submit with the items it touched, so the
+    shop knows what to recount and the POS can refresh on the leading phrase."""
+    report = SimpleNamespace(
+        id=uuid4(),
+        branch_id=uuid4(),
+        status=ShiftInventoryReportStatusEnum.DRAFT.value,
+        base_posting_sequence=10,
+        lines=[],
+    )
+    monkeypatch.setattr(report_service, "_lock_report", AsyncMock(return_value=report))
+    monkeypatch.setattr(
+        report_service.source_event_service, "lock_branch_inventory", AsyncMock()
+    )
+    monkeypatch.setattr(
+        report_service, "_competing_items_since", AsyncMock(return_value=["Butter"])
+    )
+    post = AsyncMock()
+    monkeypatch.setattr(report_service, "post_report", post)
+
+    with pytest.raises(ConflictError) as raised:
+        await report_service.submit_report(
+            SimpleNamespace(flush=AsyncMock()), report=report, user=SimpleNamespace()
+        )
+
+    assert raised.value.detail.startswith(
+        "Stock changed since this report was refreshed: Butter."
+    )
+    post.assert_not_awaited()
+
+
+def test_moved_conflict_message_caps_the_list():
+    names = [f"Item {n}" for n in range(8)]
+    message = report_service._moved_conflict_message(names)
+    assert "Item 0, Item 1, Item 2, Item 3, Item 4 and 3 more" in message
 
 
 @pytest.mark.asyncio

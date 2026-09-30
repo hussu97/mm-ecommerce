@@ -1178,7 +1178,7 @@ async def send_inventory_report_submitted(
                 variance_lines=variance_lines or [],
                 admin_report_url=_admin_report_url(report_id),
             )
-            result = await asyncio.to_thread(_send, recipient, subject, html)
+            result = await _send_async(recipient, subject, html)
         except Exception as exc:
             logger.error(
                 "inventory_report_submitted render/send failed for %s to %s: %s",
@@ -1284,7 +1284,7 @@ async def send_transfer_sending_variance(
                 lines=lines,
                 admin_transfer_url=_admin_transfer_url(order_id),
             )
-            result = await asyncio.to_thread(_send, recipient, subject, html)
+            result = await _send_async(recipient, subject, html)
         except Exception as exc:
             logger.error(
                 "transfer_sending_variance render/send failed for %s to %s: %s",
@@ -1396,7 +1396,7 @@ async def send_purchase_order_receiving_variance(
                 lines=lines,
                 admin_purchase_order_url=_admin_purchase_order_url(purchase_order_id),
             )
-            result = await asyncio.to_thread(_send, recipient, subject, html)
+            result = await _send_async(recipient, subject, html)
         except Exception as exc:
             logger.error(
                 "purchase_order_receiving_variance render/send failed for %s to %s: %s",
