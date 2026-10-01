@@ -19,6 +19,7 @@ from app.models.product import (
     has_label,
     sells_on,
 )
+from app.models.tax import TaxGroup
 from app.schemas.product import (
     ProductCreate,
     ProductModifierLink,
@@ -394,6 +395,27 @@ async def get_cart_addons(
     ]
 
 
+async def default_tax_group_id(db: AsyncSession) -> uuid.UUID | None:
+    """The tax group a new product is sold under: the shop's default one.
+
+    The create form has no tax field, and a product with no group is taxed at
+    nothing on the counter (`pos_order_service._resolve_tax`). Five products
+    added in Sept 2026 (FG0133–FG0137, Classic Cake among them) sold that way
+    at Sharjah, a VAT-registered counter, until they were fixed by hand. With
+    more than one default the newest wins, deterministically.
+    """
+    return await db.scalar(
+        select(TaxGroup.id)
+        .where(
+            TaxGroup.is_default.is_(True),
+            TaxGroup.is_active.is_(True),
+            TaxGroup.deleted_at.is_(None),
+        )
+        .order_by(TaxGroup.created_at.desc())
+        .limit(1)
+    )
+
+
 async def create(db: AsyncSession, data: ProductCreate) -> ProductResponse:
     existing = await db.execute(select(Product).where(Product.slug == data.slug))
     if existing.scalar_one_or_none():
@@ -405,6 +427,7 @@ async def create(db: AsyncSession, data: ProductCreate) -> ProductResponse:
             raise ConflictError(f"Product with SKU '{data.sku}' already exists")
 
     product = Product(**data.model_dump())
+    product.tax_group_id = await default_tax_group_id(db)
     db.add(product)
     await db.flush()
 
