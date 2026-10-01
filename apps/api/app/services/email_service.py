@@ -269,8 +269,14 @@ def _order_tracking_url(order_number: str, email: str, locale: str = "en") -> st
     return f"{settings.WEB_URL.rstrip('/')}/{locale}/track?{query}"
 
 
-def _account_order_url(order_number: str, locale: str = "en") -> str:
-    return f"{settings.WEB_URL.rstrip('/')}/{locale}/account/orders/{order_number}"
+def _payment_retry_url(order_number: str, locale: str = "en") -> str:
+    """The checkout's payment step with this unpaid order loaded to pay again.
+
+    The same screen a gateway's cancel URL returns to. The account order page
+    has no pay button, so a "try again" link there was a dead end.
+    """
+    query = urlencode({"step": "payment", "order_number": order_number})
+    return f"{settings.WEB_URL.rstrip('/')}/{locale}/checkout?{query}"
 
 
 def _admin_order_url(order_number: str) -> str:
@@ -679,7 +685,7 @@ def _order_context(
         # the box, and give us nothing to link to. Without this the email simply
         # showed no live link and said nothing about why.
         "tracking_by_sms": bool(fulfilment and fulfilment.tracking_by_sms),
-        "retry_url": _account_order_url(order.order_number, locale),
+        "retry_url": _payment_retry_url(order.order_number, locale),
         # The one specific line the payment-failed email adds, when the gateway
         # gave a reason worth reading. Null for every other template and for an
         # order abandoned rather than declined. A normalised code is localised

@@ -28,6 +28,21 @@ class TestEmailService:
         assert "order_number=MM-20260605-001" in url
         assert "email=Guest+User%2Btest%40example.com" in url
 
+    def test_payment_retry_url_reopens_checkout_with_the_order(self, monkeypatch):
+        """The account order page has no pay button; checkout's payment step does."""
+        monkeypatch.setattr(
+            email_service.settings,
+            "WEB_URL",
+            "https://meltingmomentscakes.com/",
+        )
+
+        url = email_service._payment_retry_url("MM-20261001-002", "ar")
+
+        assert url == (
+            "https://meltingmomentscakes.com/ar/checkout"
+            "?step=payment&order_number=MM-20261001-002"
+        )
+
     def test_admin_order_url_points_to_order_detail(self, monkeypatch):
         monkeypatch.setattr(
             email_service.settings,
