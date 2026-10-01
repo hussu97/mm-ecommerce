@@ -57,6 +57,12 @@ def test_commission_or_vat_keys_on_both_categories_only():
     assert "%vat%" not in sql  # not the broad LIKE match
 
 
+def test_commission_or_vat_includes_deliveroo_commission_on_a_cancelled_order():
+    # Deliveroo books the commission it keeps on a cancelled order under its own
+    # category; without it only the commission VAT reached the order.
+    assert "deliveroo_commission_on_cancelled_order" in _sql(sc.is_commission_or_vat())
+
+
 def test_other_revenue_covers_credits_and_positive_adjustments():
     sql = _sql(sc.is_other_revenue())
     assert "merchant_compensation" in sql
