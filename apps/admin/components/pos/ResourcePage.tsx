@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, uploadsApi } from '@/lib/api';
-import { Badge, Button, Input, Select } from '@/components/ui';
+import { Badge, Button, Input, MultiSelect, Select } from '@/components/ui';
 import {
   RowAction,
   sortByAccessor,
@@ -28,6 +28,7 @@ export type FieldType =
   | 'number'
   | 'password'
   | 'select'
+  | 'multiselect'
   | 'checkbox'
   | 'textarea'
   | 'image';
@@ -41,7 +42,15 @@ export interface FieldDef {
   label: string;
   type?: FieldType;
   options?: Array<{ value: string; label: string }>;
+  /** For `select`, the empty option's text; for `multiselect`, what an empty
+   *  selection reads as. */
   placeholder?: string;
+  /**
+   * For `type: 'select'` — the empty option means "no value" and is sent as an
+   * explicit `null`, so choosing it on an edit resets the column rather than
+   * posting an empty string the API would refuse.
+   */
+  nullable?: boolean;
   helper?: string;
   required?: boolean;
   /** Hide from the create form (e.g. server-assigned values). */
@@ -253,9 +262,11 @@ export function ResourcePage<T extends { id: string }>({
       fields.forEach((f) => {
         if (creating && f.editOnly) return;
         if (editing && f.createOnly) return;
-        payload[f.name] = f.type === 'number' && form[f.name] !== '' && form[f.name] !== undefined
-          ? Number(form[f.name])
-          : form[f.name];
+        const v = form[f.name];
+        if (f.type === 'number' && v !== '' && v !== undefined) payload[f.name] = Number(v);
+        else if (f.type === 'select' && f.nullable) payload[f.name] = v === '' || v === undefined ? null : v;
+        else if (f.type === 'multiselect') payload[f.name] = Array.isArray(v) ? v : [];
+        else payload[f.name] = v;
       });
 
       if (editing && update) await update(editing.id, payload);
@@ -450,13 +461,37 @@ function FormField({
 
   if (field.type === 'select') {
     return (
-      <Select
-        label={field.label}
-        value={String(value ?? '')}
-        onChange={(e) => onChange(e.target.value)}
-        options={field.options ?? []}
-        placeholder="Choose…"
-      />
+      <div>
+        <Select
+          label={field.label}
+          value={String(value ?? '')}
+          onChange={(e) => onChange(e.target.value)}
+          options={field.options ?? []}
+          placeholder={field.placeholder ?? 'Choose…'}
+        />
+        {field.helper && (
+          <p className="mt-1 text-[11px] font-body text-gray-400">{field.helper}</p>
+        )}
+      </div>
+    );
+  }
+
+  if (field.type === 'multiselect') {
+    return (
+      <div>
+        <span className="block text-xs font-medium uppercase tracking-wider text-gray-600 mb-1">
+          {field.label}
+        </span>
+        <MultiSelect
+          options={field.options ?? []}
+          value={Array.isArray(value) ? (value as string[]) : []}
+          onChange={onChange}
+          placeholder={field.placeholder}
+        />
+        {field.helper && (
+          <p className="mt-1 text-[11px] font-body text-gray-400">{field.helper}</p>
+        )}
+      </div>
     );
   }
 

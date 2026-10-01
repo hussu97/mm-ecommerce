@@ -49,6 +49,8 @@ ManualTransactionTypeLiteral = Literal[
 ]
 
 UnitLiteral = Literal["storage", "ingredient"]
+#: Where a misc PO line lands on the P&L (``models.inventory.MISC_PNL_LEVELS``).
+MiscPnlLevelLiteral = Literal["pc1", "pc2", "pc3", "pc4"]
 
 
 class ORMModel(BaseModel):
@@ -293,6 +295,12 @@ class SupplierCreate(BaseModel):
     allow_any_item: bool = False
     #: Allow free-text miscellaneous (non-inventory) lines on this supplier's POs.
     allows_misc_items: bool = False
+    #: Where its misc lines land on the P&L, overriding the line's category
+    #: field by field: level (null = the category's, else PC4), sales channels
+    #: and branches (empty = the category's channels / every branch).
+    misc_pnl_level: MiscPnlLevelLiteral | None = None
+    misc_pnl_channels: list[str] = Field(default_factory=list)
+    misc_pnl_branch_ids: list[UUID] = Field(default_factory=list)
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     trade_license_number: str | None = Field(None, max_length=50)
@@ -310,6 +318,10 @@ class SupplierUpdate(BaseModel):
     is_vat_deductible: bool | None = None
     allow_any_item: bool | None = None
     allows_misc_items: bool | None = None
+    #: An explicit null clears the override back to the category's.
+    misc_pnl_level: MiscPnlLevelLiteral | None = None
+    misc_pnl_channels: list[str] | None = None
+    misc_pnl_branch_ids: list[UUID] | None = None
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     trade_license_number: str | None = Field(None, max_length=50)
@@ -337,6 +349,9 @@ class SupplierResponse(ORMModel):
     is_vat_deductible: bool
     allow_any_item: bool = False
     allows_misc_items: bool = False
+    misc_pnl_level: MiscPnlLevelLiteral | None = None
+    misc_pnl_channels: list[str] = []
+    misc_pnl_branch_ids: list[UUID] = []
     address: str | None
     tax_number: str | None
     trade_license_number: str | None = None
@@ -569,12 +584,19 @@ class PurchaseOrderMiscCategoryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     admin_only: bool = False
     is_active: bool = True
+    #: Where its lines land on the P&L unless their supplier overrides it:
+    #: level (null = PC4) and the sales channels that carry them (empty = all).
+    pnl_level: MiscPnlLevelLiteral | None = None
+    pnl_channels: list[str] = Field(default_factory=list)
 
 
 class PurchaseOrderMiscCategoryUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     admin_only: bool | None = None
     is_active: bool | None = None
+    #: An explicit null puts it back at PC4.
+    pnl_level: MiscPnlLevelLiteral | None = None
+    pnl_channels: list[str] | None = None
 
 
 class PurchaseOrderMiscCategoryResponse(ORMModel):
@@ -582,6 +604,8 @@ class PurchaseOrderMiscCategoryResponse(ORMModel):
     name: str
     admin_only: bool
     is_active: bool
+    pnl_level: MiscPnlLevelLiteral | None = None
+    pnl_channels: list[str] = []
     deleted_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

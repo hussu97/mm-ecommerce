@@ -1,6 +1,7 @@
 // Purchasing helpers shared by the PO screens.
 
 import { holdsPermission } from './nav';
+import type { PurchaseOrderMiscCategory } from './pos-api';
 
 /** Holders see — and may use — admin-only misc categories (rent, salary…).
  *  The API enforces it; the console only hides what it would refuse. */
@@ -10,6 +11,43 @@ export function canSeeRestrictedMisc(
   user: { is_superadmin?: boolean; permissions?: string[] } | null | undefined,
 ): boolean {
   return holdsPermission(RESTRICTED_MISC_PERMISSION, user);
+}
+
+// ─── P&L placement of misc spend ──────────────────────────────────────────────
+
+/** Which profit level a misc line's cost lands above. Unset means PC4. */
+export type MiscPnlLevel = NonNullable<PurchaseOrderMiscCategory['pnl_level']>;
+
+export const PNL_LEVEL_OPTIONS: { value: MiscPnlLevel; label: string }[] = [
+  { value: 'pc1', label: 'PC1 · cost of goods (above PC1)' },
+  { value: 'pc2', label: 'PC2 · above PC2 (with fees)' },
+  { value: 'pc3', label: 'PC3 · above PC3 (with discounts)' },
+  { value: 'pc4', label: 'PC4 · overhead below PC3' },
+];
+
+/** The P&L's sales channels, in its column order. */
+export const PNL_CHANNEL_OPTIONS: { value: string; label: string }[] = [
+  { value: 'counter', label: 'Counter' },
+  { value: 'website_delivery', label: 'Website delivery' },
+  { value: 'website_pickup', label: 'Store pickup' },
+  { value: 'custom', label: 'Custom orders' },
+  { value: 'talabat', label: 'Talabat' },
+  { value: 'keeta', label: 'Keeta' },
+  { value: 'noon_food', label: 'noon Food' },
+  { value: 'deliveroo', label: 'Deliveroo' },
+  { value: 'careem', label: 'Careem' },
+];
+
+/** `Talabat, Keeta` for channel codes; an unknown code shows as itself. */
+export function pnlChannelsLabel(codes: string[]): string {
+  return codes
+    .map((c) => PNL_CHANNEL_OPTIONS.find((o) => o.value === c)?.label ?? c)
+    .join(', ');
+}
+
+/** A category's placement as one line: `PC1 · Custom orders`, `PC4 · All channels`. */
+export function pnlPlacementLabel(level: MiscPnlLevel | null | undefined, channels: string[]): string {
+  return `${(level ?? 'pc4').toUpperCase()} · ${channels.length ? pnlChannelsLabel(channels) : 'All channels'}`;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

@@ -44,13 +44,14 @@ from app.schemas.inventory import (
     SupplierContactInput,
     SupplierCreate,
     SupplierItemUpsert,
+    SupplierUpdate,
 )
 from app.services.inventory import (
     inventory_service,
     po_misc_service,
     supplier_service,
 )
-from app.services.orders.misc_expenses import misc_expenses
+from app.services.orders.misc_expenses import allocate, misc_lines
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -958,25 +959,80 @@ async def test_pnl_misc_expenses_spread_per_day_over_received_pos(engine, env):
                 allow_gated=True,
             )
 
-        rows = await misc_expenses(
-            db, "2026-09-21", "2026-09-30", branch_ids=[branch_id], include_gated=True
-        )
+        # One cell of sales, so each category's row is its whole spend.
+        cell = ("counter", branch_id, None)
+        gmv = {cell: D("1000")}
+
+        async def rows(date_from, date_to, *, gated=True):
+            lines = [
+                line
+                for line in await misc_lines(
+                    db, date_from, date_to, include_gated=gated
+                )
+                if line.category in ("Cake Supplies", "Rent")
+            ]
+            return allocate(lines, gmv)
+
         # Gross, VAT included; the reclaimed VAT is its own figure and the two
         # net back to the cost: 105.00 − 5.00 = 100.00, 345.21 − 16.44 = 328.77.
-        assert [(r.category, r.amount, r.vat_recovered, r.lines) for r in rows] == [
-            ("Cake Supplies", D("105.00"), D("5.00"), 1),  # 10 of 30 days
-            ("Rent", D("345.21"), D("16.44"), 1),  # 12,600 × 10 / 365
+        september = await rows("2026-09-21", "2026-09-30")
+        assert [(r.category, r.level, r.cells[cell], r.lines) for r in september] == [
+            ("Cake Supplies", "pc4", (D("105.00"), D("5.00")), 1),  # 10 of 30 days
+            ("Rent", "pc4", (D("345.21"), D("16.44")), 1),  # 12,600 × 10 / 365
         ]
-        blind = await misc_expenses(
-            db, "2026-09-21", "2026-09-30", branch_ids=[branch_id], include_gated=False
-        )
+        blind = await rows("2026-09-21", "2026-09-30", gated=False)
         assert [r.category for r in blind] == ["Cake Supplies"]
-        october = await misc_expenses(
-            db, "2026-10-01", "2026-10-31", branch_ids=[branch_id], include_gated=True
-        )
-        assert [(r.category, r.amount - r.vat_recovered) for r in october] == [
+        october = await rows("2026-10-01", "2026-10-31")
+        assert [(r.category, r.cells[cell][0] - r.cells[cell][1]) for r in october] == [
             ("Rent", D("1019.18"))
         ]
+
+        # Placement: the category says PC1 on custom orders; the supplier moves
+        # its own lines to PC2 and to this branch, keeping the category's channels.
+        cake = (
+            await db.execute(
+                select(PurchaseOrderMiscCategory).where(
+                    PurchaseOrderMiscCategory.name == "Cake Supplies"
+                )
+            )
+        ).scalar_one()
+        cake.pnl_level, cake.pnl_channels = "pc1", ["custom"]
+        await db.flush()
+        (placed,) = [
+            line
+            for line in await misc_lines(db, "2026-09-21", "2026-09-30")
+            if line.category == "Cake Supplies"
+        ]
+        assert (placed.placement.level, placed.placement.channels) == (
+            "pc1",
+            ("custom",),
+        )
+        assert placed.placement.branch_ids == ()
+        await supplier_service.update_supplier(
+            db,
+            supplier,
+            SupplierUpdate(misc_pnl_level="pc2", misc_pnl_branch_ids=[branch_id]),
+        )
+        (placed,) = [
+            line
+            for line in await misc_lines(db, "2026-09-21", "2026-09-30")
+            if line.category == "Cake Supplies"
+        ]
+        assert placed.placement.level == "pc2"
+        assert placed.placement.channels == ("custom",)
+        assert placed.placement.branch_ids == (branch_id,)
+        # No custom sales on the branch: split evenly over the named channel.
+        (row,) = allocate([placed], gmv)
+        assert row.cells == {("custom", branch_id, None): (D("105.00"), D("5.00"))}
+        # An unknown channel or branch is refused.
+        with pytest.raises(BadRequestError):
+            await supplier_service.update_supplier(
+                db, supplier, SupplierUpdate(misc_pnl_channels=["fax"])
+            )
+        with pytest.raises(BadRequestError):
+            await supplier_service.update_supplier(
+                db, supplier, SupplierUpdate(misc_pnl_branch_ids=[uuid.uuid4()])
+            )
         await db.rollback()
 
 

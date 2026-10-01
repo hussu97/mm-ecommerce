@@ -2,8 +2,9 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { inventoryApi } from '@/lib/pos-api';
+import { branchesApi, inventoryApi } from '@/lib/pos-api';
 import type {
+  Branch,
   InventoryItem,
   Supplier,
   SupplierContactInput,
@@ -13,11 +14,17 @@ import type {
   TradeLicenseAuthorityOption,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Pagination, Select, Spinner, TabBar, Textarea } from '@/components/ui';
+import { Badge, Button, Input, MultiSelect, Pagination, Select, Spinner, TabBar, Textarea } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal, StatusBadge } from '@/components/pos/ResourcePage';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useAuth } from '@/lib/auth-context';
+import {
+  PNL_CHANNEL_OPTIONS,
+  PNL_LEVEL_OPTIONS,
+  pnlChannelsLabel,
+  type MiscPnlLevel,
+} from '@/lib/purchasing';
 
 // Only items that are bought (not produced from a recipe) can be supplied. The
 // server enforces this too; filtering here keeps the picker honest.
@@ -47,6 +54,20 @@ interface MappingDraft {
   supplier_sku: string;
 }
 
+// The supplier's own P&L placement for its misc lines, as a compact line
+// (`PC2 · DSO`) — only what it sets itself; the rest comes from the category.
+function miscPlacementLabel(s: Supplier, branches: Branch[]): string | null {
+  const parts: string[] = [];
+  if (s.misc_pnl_level) parts.push(s.misc_pnl_level.toUpperCase());
+  if (s.misc_pnl_channels.length) parts.push(pnlChannelsLabel(s.misc_pnl_channels));
+  if (s.misc_pnl_branch_ids.length) {
+    parts.push(
+      s.misc_pnl_branch_ids.map((id) => branches.find((b) => b.id === id)?.reference ?? 'Unknown branch').join(', '),
+    );
+  }
+  return parts.length ? parts.join(' · ') : null;
+}
+
 // `useSearchParams` needs a Suspense boundary above it.
 export default function SuppliersPage() {
   return (
@@ -60,6 +81,7 @@ function SuppliersList() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [authorities, setAuthorities] = useState<TradeLicenseAuthorityOption[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Supplier | null>(null);
@@ -78,14 +100,17 @@ function SuppliersList() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, i, a] = await Promise.all([
+      const [s, i, a, b] = await Promise.all([
         inventoryApi.suppliers({ include_inactive: true }),
         inventoryApi.items(),
         inventoryApi.tradeLicenseAuthorities(),
+        // Only names the branches in a misc P&L placement — never block the list on it.
+        branchesApi.list().catch(() => [] as Branch[]),
       ]);
       setSuppliers(s);
       setItems(i);
       setAuthorities(a);
+      setBranches(b.filter((br) => !br.deleted_at));
       setError('');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load suppliers.');
@@ -232,7 +257,19 @@ function SuppliersList() {
               { header: 'Contacts', render: (s) => (s.contacts.length ? `${s.contacts.length}` : '—') },
               { header: 'VAT', render: (s) => (s.is_vat_deductible ? <Badge variant="info">Deductible</Badge> : <span className="text-gray-400">—</span>) },
               { header: 'Flexible items', render: (s) => (s.allow_any_item ? <Badge variant="info">Any item</Badge> : <span className="text-gray-400">—</span>) },
-              { header: 'Misc. items', render: (s) => (s.allows_misc_items ? <Badge variant="info">Allowed</Badge> : <span className="text-gray-400">—</span>) },
+              {
+                header: 'Misc. items',
+                render: (s) => {
+                  if (!s.allows_misc_items) return <span className="text-gray-400">—</span>;
+                  const placement = miscPlacementLabel(s, branches);
+                  return (
+                    <span className="flex flex-col items-start gap-0.5">
+                      <Badge variant="info">Allowed</Badge>
+                      {placement && <span className="text-[11px] text-gray-500" title="P&L placement of misc. items">{placement}</span>}
+                    </span>
+                  );
+                },
+              },
               {
                 header: 'Documents',
                 render: (s) => {
@@ -268,6 +305,7 @@ function SuppliersList() {
           supplier={editing}
           items={items}
           authorities={authorities}
+          branches={branches}
           onClose={closeModal}
           onSaved={() => { closeModal(); void load(); }}
         />
@@ -280,12 +318,14 @@ function SupplierModal({
   supplier,
   items,
   authorities,
+  branches,
   onClose,
   onSaved,
 }: {
   supplier: Supplier | null;
   items: InventoryItem[];
   authorities: TradeLicenseAuthorityOption[];
+  branches: Branch[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -305,6 +345,10 @@ function SupplierModal({
   const [vatDeductible, setVatDeductible] = useState(supplier?.is_vat_deductible ?? true);
   const [allowAnyItem, setAllowAnyItem] = useState(supplier?.allow_any_item ?? false);
   const [allowsMiscItems, setAllowsMiscItems] = useState(supplier?.allows_misc_items ?? false);
+  // Empty level / lists mean "inherit from the line's category".
+  const [pnlLevel, setPnlLevel] = useState<MiscPnlLevel | ''>(supplier?.misc_pnl_level ?? '');
+  const [pnlChannels, setPnlChannels] = useState<string[]>(supplier?.misc_pnl_channels ?? []);
+  const [pnlBranchIds, setPnlBranchIds] = useState<string[]>(supplier?.misc_pnl_branch_ids ?? []);
   const [active, setActive] = useState(supplier?.is_active ?? true);
   const [contacts, setContacts] = useState<ContactDraft[]>(
     supplier?.contacts.map((c) => ({
@@ -402,6 +446,10 @@ function SupplierModal({
         is_vat_deductible: vatDeductible,
         allow_any_item: allowAnyItem,
         allows_misc_items: allowsMiscItems,
+        // Explicit null, so clearing the level on an edit resets it.
+        misc_pnl_level: pnlLevel || null,
+        misc_pnl_channels: pnlChannels,
+        misc_pnl_branch_ids: pnlBranchIds,
         is_active: active,
         contacts: cleanContacts,
       };
@@ -514,6 +562,45 @@ function SupplierModal({
           Active
         </label>
       </div>
+
+      {/* Where this supplier's misc lines land on the P&L */}
+      {allowsMiscItems && (
+        <section className="mt-5">
+          <h3 className="mb-2 text-[11px] uppercase tracking-widest text-gray-500 font-body">P&amp;L placement of misc. items</h3>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Select
+              label="P&L level"
+              value={pnlLevel}
+              onChange={(e) => setPnlLevel(e.target.value as MiscPnlLevel | '')}
+              placeholder="From category"
+              options={PNL_LEVEL_OPTIONS}
+            />
+            <div>
+              <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-gray-600">Channels</span>
+              <MultiSelect
+                options={PNL_CHANNEL_OPTIONS}
+                value={pnlChannels}
+                onChange={setPnlChannels}
+                placeholder="From category"
+              />
+            </div>
+            <div>
+              <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-gray-600">Branches</span>
+              <MultiSelect
+                options={branches.map((b) => ({ value: b.id, label: `${b.reference} · ${b.name}` }))}
+                value={pnlBranchIds}
+                onChange={setPnlBranchIds}
+                placeholder="All branches"
+              />
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-gray-400 font-body">
+            Each misc line&apos;s cost is split across the chosen branches and channels in proportion to their GMV,
+            at the chosen level. What is set here wins over the line&apos;s category; anything left empty falls back
+            to the category, then to PC4 across every channel. Branches are set only here.
+          </p>
+        </section>
+      )}
 
       {/* Contacts */}
       <section className="mt-5">

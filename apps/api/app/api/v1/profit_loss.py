@@ -20,6 +20,7 @@ from app.core.permissions import require
 from app.models import User
 from app.schemas.pnl import (
     PnlChannelColumn,
+    PnlMiscAmount,
     PnlMiscExpenseRow,
     PnlMiscExpenses,
     PnlPeriodChargeRow,
@@ -99,26 +100,30 @@ async def profit_and_loss(
             net_vat=float(total.net_vat),
         ),
         misc_expenses=PnlMiscExpenses(
-            included=report.misc_expenses_included,
-            rows=[
-                PnlMiscExpenseRow(
-                    category_id=row.category_id,
-                    category=row.category,
-                    admin_only=row.admin_only,
-                    amount=float(row.amount),
-                    share=_float(total.share(row.amount)),
-                    vat_recovered=float(row.vat_recovered),
-                    lines=row.lines,
-                )
-                for row in report.misc_expenses
-            ],
-            total=float(report.misc_expenses_total),
-            total_share=_float(total.share(report.misc_expenses_total)),
-            vat_recovered=float(report.misc_vat_recovered),
-            vat_recovered_share=_float(total.share(report.misc_vat_recovered)),
-            pc4=float(report.pc4),
-            pc4_pct=_float(total.share(report.pc4)),
+            rows=[_misc_row(report, row) for row in report.misc],
+            unallocated=float(report.misc_unallocated),
+            unallocated_included=report.unfiltered,
         ),
+    )
+
+
+def _misc_row(report: pnl_report.PnlReport, row) -> PnlMiscExpenseRow:
+    columns = dict(report.channels)
+    columns["total"] = report.total
+    return PnlMiscExpenseRow(
+        category_id=row.category_id,
+        category=row.category,
+        admin_only=row.admin_only,
+        level=row.level,
+        columns={
+            code: PnlMiscAmount(
+                amount=float(gross),
+                share=_float(columns[code].share(gross)) if code in columns else None,
+                vat_recovered=float(vat),
+            )
+            for code, (gross, vat) in report.misc_amounts(row).items()
+        },
+        lines=row.lines,
     )
 
 

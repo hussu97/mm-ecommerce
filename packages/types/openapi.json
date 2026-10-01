@@ -23302,6 +23302,46 @@
             "title": "Misc Fees",
             "type": "number"
           },
+          "misc_pc1": {
+            "default": 0.0,
+            "title": "Misc Pc1",
+            "type": "number"
+          },
+          "misc_pc1_vat": {
+            "default": 0.0,
+            "title": "Misc Pc1 Vat",
+            "type": "number"
+          },
+          "misc_pc2": {
+            "default": 0.0,
+            "title": "Misc Pc2",
+            "type": "number"
+          },
+          "misc_pc2_vat": {
+            "default": 0.0,
+            "title": "Misc Pc2 Vat",
+            "type": "number"
+          },
+          "misc_pc3": {
+            "default": 0.0,
+            "title": "Misc Pc3",
+            "type": "number"
+          },
+          "misc_pc3_vat": {
+            "default": 0.0,
+            "title": "Misc Pc3 Vat",
+            "type": "number"
+          },
+          "misc_pc4": {
+            "default": 0.0,
+            "title": "Misc Pc4",
+            "type": "number"
+          },
+          "misc_pc4_vat": {
+            "default": 0.0,
+            "title": "Misc Pc4 Vat",
+            "type": "number"
+          },
           "net_revenue": {
             "title": "Net Revenue",
             "type": "number"
@@ -23367,6 +23407,21 @@
             ],
             "title": "Pc3 Pct"
           },
+          "pc4": {
+            "title": "Pc4",
+            "type": "number"
+          },
+          "pc4_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc4 Pct"
+          },
           "period_charges": {
             "title": "Period Charges",
             "type": "number"
@@ -23410,10 +23465,12 @@
           "pc2",
           "discounts",
           "pc3",
+          "pc4",
           "net_vat",
           "pc1_pct",
           "pc2_pct",
           "pc3_pct",
+          "pc4_pct",
           "shares",
           "order_number",
           "channel",
@@ -26226,6 +26283,46 @@
             "title": "Misc Fees",
             "type": "number"
           },
+          "misc_pc1": {
+            "default": 0.0,
+            "title": "Misc Pc1",
+            "type": "number"
+          },
+          "misc_pc1_vat": {
+            "default": 0.0,
+            "title": "Misc Pc1 Vat",
+            "type": "number"
+          },
+          "misc_pc2": {
+            "default": 0.0,
+            "title": "Misc Pc2",
+            "type": "number"
+          },
+          "misc_pc2_vat": {
+            "default": 0.0,
+            "title": "Misc Pc2 Vat",
+            "type": "number"
+          },
+          "misc_pc3": {
+            "default": 0.0,
+            "title": "Misc Pc3",
+            "type": "number"
+          },
+          "misc_pc3_vat": {
+            "default": 0.0,
+            "title": "Misc Pc3 Vat",
+            "type": "number"
+          },
+          "misc_pc4": {
+            "default": 0.0,
+            "title": "Misc Pc4",
+            "type": "number"
+          },
+          "misc_pc4_vat": {
+            "default": 0.0,
+            "title": "Misc Pc4 Vat",
+            "type": "number"
+          },
           "net_revenue": {
             "title": "Net Revenue",
             "type": "number"
@@ -26299,6 +26396,21 @@
             ],
             "title": "Pc3 Pct"
           },
+          "pc4": {
+            "title": "Pc4",
+            "type": "number"
+          },
+          "pc4_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc4 Pct"
+          },
           "period_charges": {
             "title": "Period Charges",
             "type": "number"
@@ -26342,10 +26454,12 @@
           "pc2",
           "discounts",
           "pc3",
+          "pc4",
           "net_vat",
           "pc1_pct",
           "pc2_pct",
           "pc3_pct",
+          "pc4_pct",
           "shares",
           "channel",
           "orders",
@@ -26357,29 +26471,12 @@
         "title": "PnlChannelColumn",
         "type": "object"
       },
-      "PnlMiscExpenseRow": {
-        "description": "One misc PO category's spend in the window, spread per day over each\nline's own period.",
+      "PnlMiscAmount": {
+        "description": "One misc row's figure in one column.",
         "properties": {
-          "admin_only": {
-            "title": "Admin Only",
-            "type": "boolean"
-          },
           "amount": {
             "title": "Amount",
             "type": "number"
-          },
-          "category": {
-            "title": "Category",
-            "type": "string"
-          },
-          "category_id": {
-            "format": "uuid",
-            "title": "Category Id",
-            "type": "string"
-          },
-          "lines": {
-            "title": "Lines",
-            "type": "integer"
           },
           "share": {
             "anyOf": [
@@ -26393,44 +26490,70 @@
             "title": "Share"
           },
           "vat_recovered": {
-            "default": 0.0,
             "title": "Vat Recovered",
             "type": "number"
+          }
+        },
+        "required": [
+          "amount",
+          "share",
+          "vat_recovered"
+        ],
+        "title": "PnlMiscAmount",
+        "type": "object"
+      },
+      "PnlMiscExpenseRow": {
+        "description": "One misc PO category's spend at one P&L level, in the window \u2014 each line\nspread per day over its own period, then split across the sales it is\nplaced on by GMV.",
+        "properties": {
+          "admin_only": {
+            "title": "Admin Only",
+            "type": "boolean"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "category_id": {
+            "format": "uuid",
+            "title": "Category Id",
+            "type": "string"
+          },
+          "columns": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PnlMiscAmount"
+            },
+            "title": "Columns",
+            "type": "object"
+          },
+          "level": {
+            "enum": [
+              "pc1",
+              "pc2",
+              "pc3",
+              "pc4"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "lines": {
+            "title": "Lines",
+            "type": "integer"
           }
         },
         "required": [
           "category_id",
           "category",
           "admin_only",
-          "amount",
-          "share",
+          "level",
+          "columns",
           "lines"
         ],
         "title": "PnlMiscExpenseRow",
         "type": "object"
       },
       "PnlMiscExpenses": {
-        "description": "Below PC3: overheads bought on misc PO lines. They belong to no channel,\nso only the total carries them.",
+        "description": "Misc PO spend (rent, salaries, supplies). Each column's own figures are\non the column (`misc_pc1`\u2026); these are the rows behind them.",
         "properties": {
-          "included": {
-            "title": "Included",
-            "type": "boolean"
-          },
-          "pc4": {
-            "title": "Pc4",
-            "type": "number"
-          },
-          "pc4_pct": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pc4 Pct"
-          },
           "rows": {
             "items": {
               "$ref": "#/components/schemas/PnlMiscExpenseRow"
@@ -26438,45 +26561,19 @@
             "title": "Rows",
             "type": "array"
           },
-          "total": {
-            "title": "Total",
+          "unallocated": {
+            "title": "Unallocated",
             "type": "number"
           },
-          "total_share": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total Share"
-          },
-          "vat_recovered": {
-            "default": 0.0,
-            "title": "Vat Recovered",
-            "type": "number"
-          },
-          "vat_recovered_share": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Vat Recovered Share"
+          "unallocated_included": {
+            "title": "Unallocated Included",
+            "type": "boolean"
           }
         },
         "required": [
-          "included",
           "rows",
-          "total",
-          "total_share",
-          "pc4",
-          "pc4_pct"
+          "unallocated",
+          "unallocated_included"
         ],
         "title": "PnlMiscExpenses",
         "type": "object"
@@ -26778,6 +26875,94 @@
             ],
             "title": "Misc Fees"
           },
+          "misc_pc1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc1"
+          },
+          "misc_pc1_vat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc1 Vat"
+          },
+          "misc_pc2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc2"
+          },
+          "misc_pc2_vat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc2 Vat"
+          },
+          "misc_pc3": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc3"
+          },
+          "misc_pc3_vat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc3 Vat"
+          },
+          "misc_pc4": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc4"
+          },
+          "misc_pc4_vat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pc4 Vat"
+          },
           "net_revenue": {
             "anyOf": [
               {
@@ -26855,6 +27040,17 @@
             ],
             "title": "Pc3"
           },
+          "pc4": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc4"
+          },
           "period_charges": {
             "anyOf": [
               {
@@ -26916,6 +27112,15 @@
           "pc2",
           "discounts",
           "pc3",
+          "misc_pc1",
+          "misc_pc1_vat",
+          "misc_pc2",
+          "misc_pc2_vat",
+          "misc_pc3",
+          "misc_pc3_vat",
+          "misc_pc4",
+          "misc_pc4_vat",
+          "pc4",
           "net_vat"
         ],
         "title": "PnlShares",
@@ -32536,6 +32741,30 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "pnl_channels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pnl Channels",
+            "type": "array"
+          },
+          "pnl_level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pc1",
+                  "pc2",
+                  "pc3",
+                  "pc4"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Level"
           }
         },
         "required": [
@@ -32579,6 +32808,31 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "pnl_channels": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Pnl Channels",
+            "type": "array"
+          },
+          "pnl_level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pc1",
+                  "pc2",
+                  "pc3",
+                  "pc4"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Level"
           },
           "updated_at": {
             "format": "date-time",
@@ -32633,6 +32887,37 @@
               }
             ],
             "title": "Name"
+          },
+          "pnl_channels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Channels"
+          },
+          "pnl_level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pc1",
+                  "pc2",
+                  "pc3",
+                  "pc4"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Level"
           }
         },
         "title": "PurchaseOrderMiscCategoryUpdate",
@@ -37934,6 +38219,38 @@
             "title": "Is Vat Deductible",
             "type": "boolean"
           },
+          "misc_pnl_branch_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Misc Pnl Branch Ids",
+            "type": "array"
+          },
+          "misc_pnl_channels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Misc Pnl Channels",
+            "type": "array"
+          },
+          "misc_pnl_level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pc1",
+                  "pc2",
+                  "pc3",
+                  "pc4"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pnl Level"
+          },
           "name": {
             "maxLength": 200,
             "minLength": 1,
@@ -38312,6 +38629,40 @@
             "title": "Mapped Items",
             "type": "array"
           },
+          "misc_pnl_branch_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Misc Pnl Branch Ids",
+            "type": "array"
+          },
+          "misc_pnl_channels": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Misc Pnl Channels",
+            "type": "array"
+          },
+          "misc_pnl_level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pc1",
+                  "pc2",
+                  "pc3",
+                  "pc4"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pnl Level"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -38519,6 +38870,52 @@
               }
             ],
             "title": "Is Vat Deductible"
+          },
+          "misc_pnl_branch_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pnl Branch Ids"
+          },
+          "misc_pnl_channels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pnl Channels"
+          },
+          "misc_pnl_level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pc1",
+                  "pc2",
+                  "pc3",
+                  "pc4"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Pnl Level"
           },
           "name": {
             "anyOf": [

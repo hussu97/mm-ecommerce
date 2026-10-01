@@ -1,11 +1,14 @@
 'use client';
 
 /**
- * Profit & loss: GMV → PC1 → PC2 → PC3, per sales channel, net of VAT.
+ * Profit & loss: GMV → PC1 → PC2 → PC3 → PC4, per sales channel, net of VAT.
  *
  * Every number is the API's (`/profit-loss`, built on the same per-order
- * expressions as the orders list's Profit column), so a channel's PC3 here is
- * exactly the sum of that channel's rows there. The filters live in the URL, so
+ * expressions as the orders list's Profit column). Misc purchase-order spend
+ * (rent, salaries, supplies) is report-only: the API places each category at a
+ * level and splits it over the channels it belongs to by GMV, so a channel's
+ * PC3 here is the sum of its rows there less any misc spend placed above PC3.
+ * The filters live in the URL, so
  * a view is shareable and survives a refresh. Orders are dated by the shop day
  * they were created in, the same window the dashboard and orders list use;
  * marketplace period charges (monthly platform fees…) by their statement date.
@@ -65,6 +68,7 @@ const CHANNEL_OPTIONS = Object.entries(CHANNEL_LABEL)
   .map(([value, label]) => ({ value, label }));
 
 type Column = PnlReport['total'];
+type MiscLevel = 'pc1' | 'pc2' | 'pc3' | 'pc4';
 type Row = {
   label: string;
   value: (c: Column) => number | null;
@@ -79,7 +83,8 @@ type Row = {
 
 // The statement, top to bottom. Costs are shown as negatives; the sub-lines
 // under a cost group are the parts it is made of.
-const ROWS: Row[] = [
+// `{ misc }` marks where a level's misc purchase-order spend sits.
+const ROWS: (Row | { misc: MiscLevel })[] = [
   { label: 'GMV (items before discounts, incl. VAT)', value: c => c.gmv, share: 'gmv', kind: 'line' },
   { label: 'Refunds', value: c => c.refunds, share: 'refunds', kind: 'cost' },
   { label: 'VAT on sales', value: c => c.output_vat, share: 'output_vat', kind: 'cost' },
@@ -91,6 +96,7 @@ const ROWS: Row[] = [
   { label: 'Raw ingredients', value: c => c.cogs_raw, share: 'cogs_raw', kind: 'detail', always: true },
   { label: 'Packaging', value: c => c.cogs_packaging, share: 'cogs_packaging', kind: 'detail', always: true },
   { label: 'Resale goods', value: c => c.cogs_resale, share: 'cogs_resale', kind: 'detail', always: true },
+  { misc: 'pc1' },
   { label: 'PC1', value: c => c.pc1, share: 'pc1', kind: 'sub' },
   { label: 'Customer fees charged (no VAT)', value: c => c.delivery_fees, share: 'delivery_fees', kind: 'credit' },
   { label: 'Delivery fees', value: c => c.delivery_charge, share: 'delivery_charge', kind: 'detail', credit: true },
@@ -105,75 +111,80 @@ const ROWS: Row[] = [
   { label: 'Cancellation charges', value: c => c.cancellation_charges, share: 'cancellation_charges', kind: 'detail' },
   { label: 'Platform & period charges', value: c => c.period_charges, share: 'period_charges', kind: 'detail' },
   { label: 'VAT reclaimed on fees', value: c => c.fees_vat, share: 'fees_vat', kind: 'credit' },
+  { misc: 'pc2' },
   { label: 'PC2', value: c => c.pc2, share: 'pc2', kind: 'sub' },
   { label: 'Discounts', value: c => c.discounts, share: 'discounts', kind: 'cost' },
-  { label: 'PC3', value: c => c.pc3, share: 'pc3', kind: 'result' },
+  { misc: 'pc3' },
+  { label: 'PC3', value: c => c.pc3, share: 'pc3', kind: 'sub' },
+  { misc: 'pc4' },
+  { label: 'PC4', value: c => c.pc4, share: 'pc4', kind: 'result' },
 ];
 
+const MISC_LABEL: Record<MiscLevel, string> = {
+  pc1: 'Misc. costs of goods (purchase orders, incl. VAT)',
+  pc2: 'Misc. operating costs (purchase orders, incl. VAT)',
+  pc3: 'Misc. costs (purchase orders, incl. VAT)',
+  pc4: 'Misc. expenses (purchase orders, incl. VAT)',
+};
+
 /**
- * Below PC3: misc purchase-order spend (rent, groceries, a licence…) by
- * category, VAT included, each line spread equally per day over its own period
- * — so only the days inside this window count. The input VAT reclaimed on it is
- * credited back as its own line before PC4. It is overhead with no channel, so
- * only the total column carries it; the rest show a dash.
+ * One level's misc purchase-order spend: the total, a row per category, and the
+ * input VAT recovered on it. Each line is spread per day over its own period
+ * (only the days inside this window count), then split by the API over the
+ * channels and branches it is placed on, in proportion to their GMV — so a row
+ * reads as the same % of GMV in every column it lands in. A column it has
+ * nothing on shows a dash. Hidden when the level carries nothing.
  */
-function MiscExpenseRows({ report, columns }: { report: PnlReport; columns: Column[] }) {
-  const misc = report.misc_expenses;
-  // The total column carries them — or the only column, which is the total when
-  // a single channel had activity.
-  const carries = (c: Column) => c.channel === 'total' || columns.length === 1;
-  const cell = (c: Column, value: number | null, kind: Row['kind'], pct: number | null) => (
-    <td
-      key={c.channel}
-      className={cn(
-        'whitespace-nowrap px-3 py-1.5 text-right tabular-nums',
-        kind === 'result' && value !== null && value < 0 && 'text-red-600',
-      )}
-    >
-      {carries(c) ? money(value, kind) : '—'}
+function MiscRows({
+  level,
+  report,
+  columns,
+}: {
+  level: MiscLevel;
+  report: PnlReport;
+  columns: Column[];
+}) {
+  const spend = (c: Column) => c[`misc_${level}`];
+  const vat = (c: Column) => c[`misc_${level}_vat`];
+  const rows = report.misc_expenses.rows.filter(r => r.level === level);
+  if (rows.length === 0 && !columns.some(c => spend(c) !== 0)) return null;
+  const cell = (
+    key: string,
+    value: number | null,
+    kind: Row['kind'],
+    pct: number | null | undefined,
+  ) => (
+    <td key={key} className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums">
+      {value === null ? '—' : money(value, kind)}
       <span className="block text-[10px] text-gray-400">
-        {carries(c) && pct !== null ? `${pct.toFixed(1)}%` : ''}
+        {value !== null && pct != null ? `${pct.toFixed(1)}%` : ''}
       </span>
     </td>
   );
-  if (!misc.included) {
-    return (
-      <tr className="border-b border-gray-100 text-gray-400">
-        <td className="sticky left-0 bg-white px-3 py-1.5">
-          Misc. expenses
-          <span className="block text-[11px]">Not shown under a channel filter — they belong to no channel.</span>
-        </td>
-        {columns.map(c => (
-          <td key={c.channel} className="px-3 py-1.5 text-right">—</td>
-        ))}
-      </tr>
-    );
-  }
   return (
     <>
       <tr className="border-b border-gray-100 text-gray-600">
-        <td className="sticky left-0 bg-white px-3 py-1.5">Misc. expenses (purchase orders, incl. VAT)</td>
-        {columns.map(c => cell(c, misc.total, 'cost', misc.total_share))}
+        <td className="sticky left-0 bg-white px-3 py-1.5">{MISC_LABEL[level]}</td>
+        {columns.map(c => cell(c.channel, spend(c), 'cost', c.shares[`misc_${level}`]))}
       </tr>
-      {misc.rows.map(row => (
+      {rows.map(row => (
         <tr key={row.category_id} className="border-b border-gray-100 text-[11px] text-gray-400">
           <td className="sticky left-0 bg-white px-3 py-1.5 pl-6">
             {row.category}
             {row.admin_only && <span className="ml-1 text-amber-600">· admin only</span>}
           </td>
-          {columns.map(c => cell(c, row.amount, 'detail', row.share))}
+          {columns.map(c => {
+            const amount = row.columns[c.channel];
+            return cell(c.channel, amount ? amount.amount : null, 'detail', amount?.share);
+          })}
         </tr>
       ))}
-      {misc.vat_recovered !== 0 && (
+      {columns.some(c => vat(c) !== 0) && (
         <tr className="border-b border-gray-100 text-gray-600">
-          <td className="sticky left-0 bg-white px-3 py-1.5">VAT recovered on misc. expenses</td>
-          {columns.map(c => cell(c, misc.vat_recovered, 'credit', misc.vat_recovered_share ?? null))}
+          <td className="sticky left-0 bg-white px-3 py-1.5">VAT recovered on misc. costs</td>
+          {columns.map(c => cell(c.channel, vat(c), 'credit', c.shares[`misc_${level}_vat`]))}
         </tr>
       )}
-      <tr className="bg-gray-50 text-sm font-medium text-gray-800">
-        <td className="sticky left-0 bg-gray-50 px-3 py-1.5">PC4</td>
-        {columns.map(c => cell(c, misc.pc4, 'result', misc.pc4_pct))}
-      </tr>
     </>
   );
 }
@@ -268,8 +279,12 @@ export default function ProfitLossPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
+  // The total alone carries unallocated misc spend, so keep it beside a lone
+  // channel when there is some.
+  const unallocated =
+    report && report.misc_expenses.unallocated_included ? report.misc_expenses.unallocated : 0;
   const columns: Column[] = report
-    ? report.channels.length > 1
+    ? report.channels.length > 1 || (report.channels.length === 1 && unallocated !== 0)
       ? [report.total, ...report.channels]
       : report.channels.length === 1
         ? report.channels
@@ -390,23 +405,12 @@ export default function ProfitLossPage() {
         </div>
       ) : report && total ? (
         <div className={cn('space-y-6', loading && 'opacity-60')}>
-          <div
-            className={cn(
-              'grid grid-cols-2 gap-3',
-              report.misc_expenses.included ? 'md:grid-cols-5' : 'md:grid-cols-4',
-            )}
-          >
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <Tile label="GMV" value={total.gmv} />
             <Tile label="PC1 · after COGS" value={total.pc1} pct={total.pc1_pct} />
             <Tile label="PC2 · after fees" value={total.pc2} pct={total.pc2_pct} />
             <Tile label="PC3 · after discounts" value={total.pc3} pct={total.pc3_pct} />
-            {report.misc_expenses.included && (
-              <Tile
-                label="PC4 · after misc expenses"
-                value={report.misc_expenses.pc4}
-                pct={report.misc_expenses.pc4_pct}
-              />
-            )}
+            <Tile label="PC4 · after misc expenses" value={total.pc4} pct={total.pc4_pct} />
           </div>
 
           <div className="overflow-x-auto border border-gray-200 bg-white">
@@ -427,8 +431,14 @@ export default function ProfitLossPage() {
               <tbody>
                 {ROWS.filter(
                   r =>
-                    r.kind !== 'detail' || r.always || columns.some(c => (r.value(c) ?? 0) !== 0),
+                    'misc' in r ||
+                    r.kind !== 'detail' ||
+                    r.always ||
+                    columns.some(c => (r.value(c) ?? 0) !== 0),
                 ).map(r => {
+                  if ('misc' in r) {
+                    return <MiscRows key={r.misc} level={r.misc} report={report} columns={columns} />;
+                  }
                   return (
                     <tr
                       key={r.label}
@@ -470,7 +480,6 @@ export default function ProfitLossPage() {
                     </tr>
                   );
                 })}
-                <MiscExpenseRows report={report} columns={columns} />
               </tbody>
             </table>
           </div>
@@ -548,6 +557,19 @@ export default function ProfitLossPage() {
                 will fall as they arrive.
               </p>
             )}
+            {report.misc_expenses.unallocated !== 0 &&
+              (report.misc_expenses.unallocated_included ? (
+                <p>
+                  <strong>{formatCurrency(report.misc_expenses.unallocated)}</strong> of misc. spend
+                  could not be split — the branches it is placed on had no sales in this window — so
+                  only the Total column carries it.
+                </p>
+              ) : (
+                <p>
+                  {formatCurrency(report.misc_expenses.unallocated)} of misc. spend that no sales in
+                  this window carried is left out of a filtered view.
+                </p>
+              ))}
             {total.charged_cancellations > 0 && (
               <p>
                 Includes {total.charged_cancellations} cancelled orders the marketplace still charged
