@@ -42,6 +42,7 @@ from app.models.inventory import (
     SupplierItem,
 )
 from app.models.inventory_v2 import Recipe
+from app.services.inventory import po_misc_service
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +128,23 @@ async def assert_item_purchasable(db: AsyncSession, item: InventoryItem) -> None
         )
 
 
+async def _clean_misc_placement(db: AsyncSession, payload: dict) -> None:
+    """Validate the misc-line P&L placement fields present in ``payload``, in
+    place. A null list means "none set", the same as an empty one."""
+    if "misc_pnl_channels" in payload:
+        payload["misc_pnl_channels"] = po_misc_service.clean_pnl_channels(
+            payload["misc_pnl_channels"]
+        )
+    if "misc_pnl_branch_ids" in payload:
+        payload["misc_pnl_branch_ids"] = await po_misc_service.clean_pnl_branches(
+            db, payload["misc_pnl_branch_ids"]
+        )
+
+
 async def create_supplier(db: AsyncSession, data) -> Supplier:
-    supplier = Supplier(
-        **data.model_dump(exclude={"contacts"}),
-    )
+    payload = data.model_dump(exclude={"contacts"})
+    await _clean_misc_placement(db, payload)
+    supplier = Supplier(**payload)
     db.add(supplier)
     await db.flush()
     for contact in data.contacts:
@@ -142,6 +156,7 @@ async def create_supplier(db: AsyncSession, data) -> Supplier:
 
 async def update_supplier(db: AsyncSession, supplier: Supplier, data) -> Supplier:
     payload = data.model_dump(exclude={"contacts"}, exclude_unset=True)
+    await _clean_misc_placement(db, payload)
     for key, value in payload.items():
         setattr(supplier, key, value)
     if data.contacts is not None:

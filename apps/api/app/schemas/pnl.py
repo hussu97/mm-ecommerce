@@ -9,6 +9,7 @@ derives nothing. `float` for transport, like the other report schemas.
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -44,6 +45,15 @@ class PnlShares(BaseModel):
     pc2: float | None
     discounts: float | None
     pc3: float | None
+    misc_pc1: float | None
+    misc_pc1_vat: float | None
+    misc_pc2: float | None
+    misc_pc2_vat: float | None
+    misc_pc3: float | None
+    misc_pc3_vat: float | None
+    misc_pc4: float | None
+    misc_pc4_vat: float | None
+    pc4: float | None
     net_vat: float | None
 
 
@@ -113,12 +123,27 @@ class PnlStatement(BaseModel):
     discounts: float
     #: PC2 − discounts.
     pc3: float
+    #: Misc PO spend placed at each level, VAT included, and the input VAT
+    #: recovered on it (credited back at the same level). Report only — zero
+    #: on an order. PC1 already has `misc_pc1` off and `misc_pc1_vat` back,
+    #: and likewise for PC2 and PC3; `misc_pc4` is the overhead below PC3.
+    misc_pc1: float = 0.0
+    misc_pc1_vat: float = 0.0
+    misc_pc2: float = 0.0
+    misc_pc2_vat: float = 0.0
+    misc_pc3: float = 0.0
+    misc_pc3_vat: float = 0.0
+    misc_pc4: float = 0.0
+    misc_pc4_vat: float = 0.0
+    #: PC3 − misc overhead + its VAT recovered. An order's PC4 is its PC3.
+    pc4: float
     #: VAT on sales − VAT reclaimed on fees.
     net_vat: float
-    #: PC1–PC3 as a % of GMV (VAT included); null when there is no GMV.
+    #: PC1–PC4 as a % of GMV (VAT included); null when there is no GMV.
     pc1_pct: float | None
     pc2_pct: float | None
     pc3_pct: float | None
+    pc4_pct: float | None
     #: Every line above as a % of GMV.
     shares: PnlShares
 
@@ -194,40 +219,45 @@ class PnlVatSummary(BaseModel):
     net_vat: float
 
 
+class PnlMiscAmount(BaseModel):
+    """One misc row's figure in one column."""
+
+    #: VAT included.
+    amount: float
+    #: `amount` as a % of the column's GMV; null with no GMV.
+    share: float | None
+    #: The input VAT inside `amount` the buying entity reclaims.
+    vat_recovered: float
+
+
 class PnlMiscExpenseRow(BaseModel):
-    """One misc PO category's spend in the window, spread per day over each
-    line's own period."""
+    """One misc PO category's spend at one P&L level, in the window — each line
+    spread per day over its own period, then split across the sales it is
+    placed on by GMV."""
 
     category_id: UUID
     category: str
     #: Admin-only (rent, salary…) — only shown to holders of the permission.
     admin_only: bool
-    #: VAT included — what the invoices say.
-    amount: float
-    #: `amount` as a % of the total column's GMV; null with no GMV.
-    share: float | None
-    #: The input VAT inside `amount` the entity reclaims; zero when it is not
-    #: VAT-registered.
-    vat_recovered: float = 0.0
+    #: `pc1`–`pc3`: a cost above that subtotal. `pc4`: overhead below PC3.
+    level: Literal["pc1", "pc2", "pc3", "pc4"]
+    #: Per column: a channel code, and `total`. A channel the row has nothing
+    #: on is absent.
+    columns: dict[str, PnlMiscAmount]
     lines: int
 
 
 class PnlMiscExpenses(BaseModel):
-    """Below PC3: overheads bought on misc PO lines. They belong to no channel,
-    so only the total carries them."""
+    """Misc PO spend (rent, salaries, supplies). Each column's own figures are
+    on the column (`misc_pc1`…); these are the rows behind them."""
 
-    #: False under a channel filter (overhead has no channel).
-    included: bool
     rows: list[PnlMiscExpenseRow]
-    #: VAT included.
-    total: float
-    total_share: float | None
-    #: The input VAT reclaimed on `total`, credited back as its own line.
-    vat_recovered: float = 0.0
-    vat_recovered_share: float | None = None
-    #: PC3 − `total` + `vat_recovered`.
-    pc4: float
-    pc4_pct: float | None
+    #: Spend no sales carried (placed on no channel, and its branches sold
+    #: nothing). The total column carries it, unfiltered only.
+    unallocated: float
+    #: False under a channel, branch or entity filter, which leaves the
+    #: unallocated spend out.
+    unallocated_included: bool
 
 
 class PnlReportResponse(BaseModel):

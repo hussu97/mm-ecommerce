@@ -19,6 +19,13 @@ the book (a date range, a channel, a branch):
   = PC2
   − Discounts                       coupon / counter / marketplace merchant discounts
   = PC3
+  − Misc. expenses (report only)    overhead bought on misc PO lines, VAT recovered
+  = PC4
+
+Misc PO spend (rent, salaries, cake supplies) is report-only, like the period
+charges: it can also be placed above PC1, PC2 or PC3 (`misc_expenses`), each
+level as its own pair of lines (the spend, then the VAT recovered on it), and on
+an order every one of them is zero — so an order's PC4 is its PC3.
 
 **Amounts as billed, VAT as its own lines.** Revenue and fees are shown
 VAT-inclusive, so each matches a receipt, an invoice or a marketplace statement,
@@ -85,6 +92,7 @@ from app.core.exceptions import NotFoundError
 from app.core.money import money
 from app.models.aggregator import AggregatorOrder
 from app.models.inventory import (
+    MISC_PNL_LEVELS,
     InventoryItem,
     InventoryLineCost,
     InventoryTransaction,
@@ -102,6 +110,7 @@ from app.services.pos.pos_reports._base import _COMPLETED_SALE
 
 __all__ = [
     "CHANNELS",
+    "MISC_KEYS",
     "OrderPnl",
     "PnlTotals",
     "channel_expression",
@@ -113,6 +122,7 @@ __all__ = [
     "statement_fields",
     "statement_payload",
     "share_fields",
+    "totals_by_cell",
     "totals_by_channel",
     "with_cogs",
     "without_jit",
@@ -166,6 +176,12 @@ LINE_KEYS: tuple[str, ...] = (
     "cancellation_charges",
     "fees_vat",
     "discounts",
+)
+
+#: The report-level misc PO lines, per level: the spend, then the VAT recovered
+#: on it (`misc_expenses`). Zero on an order.
+MISC_KEYS: tuple[str, ...] = tuple(
+    f"misc_{level}{suffix}" for level in MISC_PNL_LEVELS for suffix in ("", "_vat")
 )
 
 
@@ -559,6 +575,16 @@ class _Lines:
     #: Input VAT reclaimed on the fee lines (and on the period charges).
     fees_vat: Decimal = _ZERO
     discounts: Decimal = _ZERO
+    #: Misc PO spend placed at each level (VAT included), and the input VAT
+    #: recovered on it. Report-level only (`misc_expenses`).
+    misc_pc1: Decimal = _ZERO
+    misc_pc1_vat: Decimal = _ZERO
+    misc_pc2: Decimal = _ZERO
+    misc_pc2_vat: Decimal = _ZERO
+    misc_pc3: Decimal = _ZERO
+    misc_pc3_vat: Decimal = _ZERO
+    misc_pc4: Decimal = _ZERO
+    misc_pc4_vat: Decimal = _ZERO
 
     @property
     def net_revenue(self) -> Decimal:
@@ -566,7 +592,9 @@ class _Lines:
 
     @property
     def pc1(self) -> Decimal:
-        return money(self.net_revenue - (self.cogs or _ZERO))
+        return money(
+            self.net_revenue - (self.cogs or _ZERO) - self.misc_pc1 + self.misc_pc1_vat
+        )
 
     @property
     def aggregator_and_delivery_fees(self) -> Decimal:
@@ -586,11 +614,19 @@ class _Lines:
             - self.aggregator_and_delivery_fees
             - self.misc_fees
             + self.fees_vat
+            - self.misc_pc2
+            + self.misc_pc2_vat
         )
 
     @property
     def pc3(self) -> Decimal:
-        return money(self.pc2 - self.discounts)
+        return money(self.pc2 - self.discounts - self.misc_pc3 + self.misc_pc3_vat)
+
+    @property
+    def pc4(self) -> Decimal:
+        """PC3 less the overheads below it: what the period made. An order's
+        PC4 is its PC3 (misc spend is report-only)."""
+        return money(self.pc3 - self.misc_pc4 + self.misc_pc4_vat)
 
     @property
     def net_vat(self) -> Decimal:
@@ -634,6 +670,8 @@ class PnlTotals(_Lines):
             setattr(self, key, money(getattr(self, key) + getattr(other, key)))
         if other.cogs is not None:
             self.cogs = money((self.cogs or _ZERO) + other.cogs)
+        for key in MISC_KEYS:
+            setattr(self, key, money(getattr(self, key) + getattr(other, key)))
         self.period_charges = money(self.period_charges + other.period_charges)
         self.orders += other.orders
         self.charged_cancellations += other.charged_cancellations
@@ -719,9 +757,10 @@ async def for_order(db: AsyncSession, order_id: uuid.UUID) -> OrderPnl | None:
     return order_pnl_from_mapping(row._mapping)
 
 
-def totals_statement(*where):
+def totals_statement(*where, by_cell: bool = False):
     """
-    The grouped-by-channel SELECT behind `totals_by_channel`.
+    The grouped-by-channel SELECT behind `totals_by_channel` — or, `by_cell`,
+    grouped by (channel, branch, legal entity), behind `totals_by_cell`.
 
     Two steps on purpose: the per-order lines are computed once per order in a
     materialised CTE, then summed. Summing the expressions directly makes
@@ -731,9 +770,12 @@ def totals_statement(*where):
     cols = line_columns()
     per_order = (
         with_cogs(
-            select(channel_expression().label("channel"), *cols.values()).select_from(
-                Order
-            )
+            select(
+                channel_expression().label("channel"),
+                Order.branch_id.label("branch_id"),
+                Order.legal_entity_id.label("legal_entity_id"),
+                *cols.values(),
+            ).select_from(Order)
         )
         .where(in_pnl_clause(), *where)
         .cte("pnl_orders")
@@ -745,14 +787,15 @@ def totals_statement(*where):
         for key in cols
         if key not in ("fees_pending", "is_sale")
     ]
+    groups = [c.channel, c.branch_id, c.legal_entity_id] if by_cell else [c.channel]
     return select(
-        c.channel,
+        *groups,
         func.count().label("orders"),
         func.count(case((c.is_sale, None), else_=1)).label("charged_cancellations"),
         func.count(c.cogs).label("orders_with_cogs"),
         func.count(case((c.fees_pending, 1))).label("orders_fees_pending"),
         *sums,
-    ).group_by(c.channel)
+    ).group_by(*groups)
 
 
 async def totals_by_channel(db: AsyncSession, *where) -> dict[str, PnlTotals]:
@@ -762,34 +805,51 @@ async def totals_by_channel(db: AsyncSession, *where) -> dict[str, PnlTotals]:
     adds non-order period charges on top.
     """
     await without_jit(db)
-    stmt = totals_statement(*where)
-    out: dict[str, PnlTotals] = {}
-    for row in (await db.execute(stmt)).all():
-        m = row._mapping
-        out[m["channel"]] = PnlTotals(
-            gmv=money(m["gmv"]),
-            refunds=money(m["refunds"]),
-            cogs=_money_or_none(m["cogs"]),
-            **{key: money(m[key]) for key in COGS_KINDS},
-            delivery_fees=money(m["delivery_fees"]),
-            delivery_charge=money(m["delivery_charge"]),
-            surcharges=money(m["surcharges"]),
-            compensation=money(m["compensation"]),
-            payment_fees=money(m["payment_fees"]),
-            commission=money(m["commission"]),
-            marketplace_fees=money(m["marketplace_fees"]),
-            delivery_cost=money(m["delivery_cost"]),
-            cancellation_charges=money(m["cancellation_charges"]),
-            fees_vat=money(m["fees_vat"]),
-            discounts=money(m["discounts"]),
-            output_vat=money(m["output_vat"]),
-            cogs_provisional=money(m["cogs_provisional"]),
-            orders=int(m["orders"]),
-            charged_cancellations=int(m["charged_cancellations"]),
-            orders_with_cogs=int(m["orders_with_cogs"]),
-            orders_fees_pending=int(m["orders_fees_pending"]),
-        )
-    return out
+    rows = (await db.execute(totals_statement(*where))).all()
+    return {row._mapping["channel"]: _totals(row._mapping) for row in rows}
+
+
+async def totals_by_cell(
+    db: AsyncSession, *where
+) -> dict[tuple[str, uuid.UUID | None, uuid.UUID | None], PnlTotals]:
+    """
+    `totals_by_channel`, one level finer: per (channel, branch, legal entity).
+    The report sums these under its filters, and splits misc PO spend over
+    them by GMV (`misc_expenses.allocate`).
+    """
+    await without_jit(db)
+    rows = (await db.execute(totals_statement(*where, by_cell=True))).all()
+    return {
+        (m["channel"], m["branch_id"], m["legal_entity_id"]): _totals(m)
+        for m in (row._mapping for row in rows)
+    }
+
+
+def _totals(m: Mapping) -> PnlTotals:
+    """A `totals_statement` row as `PnlTotals`."""
+    return PnlTotals(
+        gmv=money(m["gmv"]),
+        refunds=money(m["refunds"]),
+        cogs=_money_or_none(m["cogs"]),
+        **{key: money(m[key]) for key in COGS_KINDS},
+        delivery_fees=money(m["delivery_fees"]),
+        delivery_charge=money(m["delivery_charge"]),
+        surcharges=money(m["surcharges"]),
+        compensation=money(m["compensation"]),
+        payment_fees=money(m["payment_fees"]),
+        commission=money(m["commission"]),
+        marketplace_fees=money(m["marketplace_fees"]),
+        delivery_cost=money(m["delivery_cost"]),
+        cancellation_charges=money(m["cancellation_charges"]),
+        fees_vat=money(m["fees_vat"]),
+        discounts=money(m["discounts"]),
+        output_vat=money(m["output_vat"]),
+        cogs_provisional=money(m["cogs_provisional"]),
+        orders=int(m["orders"]),
+        charged_cancellations=int(m["charged_cancellations"]),
+        orders_with_cogs=int(m["orders_with_cogs"]),
+        orders_fees_pending=int(m["orders_fees_pending"]),
+    )
 
 
 def pnl_margin(pnl: OrderPnl | None) -> Decimal | None:
@@ -823,10 +883,13 @@ def statement_fields(lines: _Lines) -> dict:
         "pc2": lines.pc2,
         "discounts": lines.discounts,
         "pc3": lines.pc3,
+        **{key: getattr(lines, key) for key in MISC_KEYS},
+        "pc4": lines.pc4,
         "net_vat": lines.net_vat,
         "pc1_pct": lines.share(lines.pc1),
         "pc2_pct": lines.share(lines.pc2),
         "pc3_pct": lines.share(lines.pc3),
+        "pc4_pct": lines.share(lines.pc4),
         "shares": share_fields(lines),
     }
 
@@ -857,6 +920,8 @@ SHARE_KEYS: tuple[str, ...] = (
     "pc2",
     "discounts",
     "pc3",
+    *MISC_KEYS,
+    "pc4",
     "net_vat",
 )
 

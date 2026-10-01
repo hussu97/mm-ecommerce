@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.money import money as _money
 from app.models.base import utcnow
+from app.models.branch import Branch
 from app.models.inventory import (
     PurchaseOrder,
     PurchaseOrderItem,
@@ -53,6 +54,8 @@ __all__ = [
     "hide_gated_lines",
     "po_is_visible",
     "load_categories",
+    "clean_pnl_channels",
+    "clean_pnl_branches",
     "list_categories",
     "create_category",
     "update_category",
@@ -251,6 +254,45 @@ async def load_categories(
     return categories
 
 
+# ─── P&L placement ────────────────────────────────────────────────────────────
+
+
+def clean_pnl_channels(channels: Iterable[str] | None) -> list[str]:
+    """The P&L channel codes a category or supplier places its misc lines on —
+    deduplicated, in the P&L's own column order; an unknown code is refused."""
+    # Imported here: `order_pnl` reaches into the order and register models,
+    # which have no business loading for a supplier form.
+    from app.services.orders.order_pnl import CHANNELS
+
+    wanted = set(channels or ())
+    unknown = wanted - set(CHANNELS)
+    if unknown:
+        raise BadRequestError(f"Unknown sales channel(s): {', '.join(sorted(unknown))}")
+    return [code for code in CHANNELS if code in wanted]
+
+
+async def clean_pnl_branches(
+    db: AsyncSession, branch_ids: Iterable[uuid.UUID] | None
+) -> list[uuid.UUID]:
+    """The branches a supplier's misc lines are charged to — each must exist and
+    not be deleted. Deduplicated, in the order given."""
+    ids = list(dict.fromkeys(branch_ids or ()))
+    if not ids:
+        return []
+    found = set(
+        (
+            await db.execute(
+                select(Branch.id).where(Branch.id.in_(ids), Branch.deleted_at.is_(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(found) != len(ids):
+        raise BadRequestError("Unknown branch in the P&L branches")
+    return ids
+
+
 # ─── Category CRUD ────────────────────────────────────────────────────────────
 
 
@@ -304,7 +346,11 @@ async def create_category(
     name = " ".join(data.name.split())
     await _assert_category_name_free(db, name)
     category = PurchaseOrderMiscCategory(
-        name=name, admin_only=data.admin_only, is_active=data.is_active
+        name=name,
+        admin_only=data.admin_only,
+        is_active=data.is_active,
+        pnl_level=data.pnl_level,
+        pnl_channels=clean_pnl_channels(data.pnl_channels),
     )
     db.add(category)
     await db.flush()
@@ -322,6 +368,12 @@ async def update_category(
     if changes.get("name") is not None:
         changes["name"] = " ".join(changes["name"].split())
         await _assert_category_name_free(db, changes["name"], exclude_id=category.id)
+    # The level is nullable on purpose — an explicit null puts it back at PC4 —
+    # so it is set as sent; a null channel list means "all", as an empty one.
+    if "pnl_level" in changes:
+        category.pnl_level = changes.pop("pnl_level")
+    if "pnl_channels" in changes:
+        category.pnl_channels = clean_pnl_channels(changes.pop("pnl_channels"))
     for key, value in changes.items():
         if value is not None:
             setattr(category, key, value)

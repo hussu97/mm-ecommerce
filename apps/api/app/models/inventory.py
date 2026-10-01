@@ -36,7 +36,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import (
@@ -47,6 +47,11 @@ from .base import (
     status_vocabulary,
     utcnow,
 )
+
+#: The P&L levels a misc PO line can be placed at (``misc_expenses``): a cost
+#: above PC1, PC2 or PC3, or overhead below PC3 (PC4, the default).
+MISC_PNL_LEVELS: tuple[str, ...] = ("pc1", "pc2", "pc3", "pc4")
+MISC_PNL_LEVELS_SQL = "(" + ", ".join(f"'{lvl}'" for lvl in MISC_PNL_LEVELS) + ")"
 
 if TYPE_CHECKING:
     from .branch import Branch
@@ -442,6 +447,10 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
             + ")",
             name="ck_supplier_trade_license_authority",
         ),
+        CheckConstraint(
+            "misc_pnl_level IS NULL OR misc_pnl_level IN " + MISC_PNL_LEVELS_SQL,
+            name="ck_supplier_misc_pnl_level",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -466,6 +475,18 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
     #: items. See ``PurchaseOrderMiscItem``.
     allows_misc_items: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
+    )
+    #: Where this supplier's misc lines land on the P&L, each overriding the
+    #: line's category field by field (``services/orders/misc_expenses``):
+    #: the level (``pc1``–``pc4``; NULL = the category's, else PC4), the sales
+    #: channels (``order_pnl.CHANNELS`` codes) and the branches that carry the
+    #: cost — empty = the category's channels / every branch.
+    misc_pnl_level: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    misc_pnl_channels: Mapped[list[str]] = mapped_column(
+        ARRAY(String(40)), nullable=False, default=list, server_default="{}"
+    )
+    misc_pnl_branch_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     tax_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -1118,6 +1139,12 @@ class PurchaseOrderMiscCategory(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "purchase_order_misc_categories"
+    __table_args__ = (
+        CheckConstraint(
+            "pnl_level IS NULL OR pnl_level IN " + MISC_PNL_LEVELS_SQL,
+            name="ck_po_misc_category_pnl_level",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     admin_only: Mapped[bool] = mapped_column(
@@ -1128,6 +1155,12 @@ class PurchaseOrderMiscCategory(Base, UUIDMixin, TimestampMixin):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    #: Where its lines land on the P&L unless the supplier says otherwise: the
+    #: level (NULL = PC4) and the sales channels that carry them (empty = all).
+    pnl_level: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    pnl_channels: Mapped[list[str]] = mapped_column(
+        ARRAY(String(40)), nullable=False, default=list, server_default="{}"
     )
 
     def __repr__(self) -> str:

@@ -17570,6 +17570,46 @@ export interface components {
             marketplace_fees: number;
             /** Misc Fees */
             misc_fees: number;
+            /**
+             * Misc Pc1
+             * @default 0
+             */
+            misc_pc1: number;
+            /**
+             * Misc Pc1 Vat
+             * @default 0
+             */
+            misc_pc1_vat: number;
+            /**
+             * Misc Pc2
+             * @default 0
+             */
+            misc_pc2: number;
+            /**
+             * Misc Pc2 Vat
+             * @default 0
+             */
+            misc_pc2_vat: number;
+            /**
+             * Misc Pc3
+             * @default 0
+             */
+            misc_pc3: number;
+            /**
+             * Misc Pc3 Vat
+             * @default 0
+             */
+            misc_pc3_vat: number;
+            /**
+             * Misc Pc4
+             * @default 0
+             */
+            misc_pc4: number;
+            /**
+             * Misc Pc4 Vat
+             * @default 0
+             */
+            misc_pc4_vat: number;
             /** Net Revenue */
             net_revenue: number;
             /** Net Vat */
@@ -17592,6 +17632,10 @@ export interface components {
             pc3: number;
             /** Pc3 Pct */
             pc3_pct: number | null;
+            /** Pc4 */
+            pc4: number;
+            /** Pc4 Pct */
+            pc4_pct: number | null;
             /** Period Charges */
             period_charges: number;
             /** Refunds */
@@ -18616,6 +18660,46 @@ export interface components {
             marketplace_fees: number;
             /** Misc Fees */
             misc_fees: number;
+            /**
+             * Misc Pc1
+             * @default 0
+             */
+            misc_pc1: number;
+            /**
+             * Misc Pc1 Vat
+             * @default 0
+             */
+            misc_pc1_vat: number;
+            /**
+             * Misc Pc2
+             * @default 0
+             */
+            misc_pc2: number;
+            /**
+             * Misc Pc2 Vat
+             * @default 0
+             */
+            misc_pc2_vat: number;
+            /**
+             * Misc Pc3
+             * @default 0
+             */
+            misc_pc3: number;
+            /**
+             * Misc Pc3 Vat
+             * @default 0
+             */
+            misc_pc3_vat: number;
+            /**
+             * Misc Pc4
+             * @default 0
+             */
+            misc_pc4: number;
+            /**
+             * Misc Pc4 Vat
+             * @default 0
+             */
+            misc_pc4_vat: number;
             /** Net Revenue */
             net_revenue: number;
             /** Net Vat */
@@ -18642,6 +18726,10 @@ export interface components {
             pc3: number;
             /** Pc3 Pct */
             pc3_pct: number | null;
+            /** Pc4 */
+            pc4: number;
+            /** Pc4 Pct */
+            pc4_pct: number | null;
             /** Period Charges */
             period_charges: number;
             /** Refunds */
@@ -18651,15 +18739,26 @@ export interface components {
             surcharges: number;
         };
         /**
+         * PnlMiscAmount
+         * @description One misc row's figure in one column.
+         */
+        PnlMiscAmount: {
+            /** Amount */
+            amount: number;
+            /** Share */
+            share: number | null;
+            /** Vat Recovered */
+            vat_recovered: number;
+        };
+        /**
          * PnlMiscExpenseRow
-         * @description One misc PO category's spend in the window, spread per day over each
-         *     line's own period.
+         * @description One misc PO category's spend at one P&L level, in the window — each line
+         *     spread per day over its own period, then split across the sales it is
+         *     placed on by GMV.
          */
         PnlMiscExpenseRow: {
             /** Admin Only */
             admin_only: boolean;
-            /** Amount */
-            amount: number;
             /** Category */
             category: string;
             /**
@@ -18667,41 +18766,30 @@ export interface components {
              * Format: uuid
              */
             category_id: string;
+            /** Columns */
+            columns: {
+                [key: string]: components["schemas"]["PnlMiscAmount"];
+            };
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "pc1" | "pc2" | "pc3" | "pc4";
             /** Lines */
             lines: number;
-            /** Share */
-            share: number | null;
-            /**
-             * Vat Recovered
-             * @default 0
-             */
-            vat_recovered: number;
         };
         /**
          * PnlMiscExpenses
-         * @description Below PC3: overheads bought on misc PO lines. They belong to no channel,
-         *     so only the total carries them.
+         * @description Misc PO spend (rent, salaries, supplies). Each column's own figures are
+         *     on the column (`misc_pc1`…); these are the rows behind them.
          */
         PnlMiscExpenses: {
-            /** Included */
-            included: boolean;
-            /** Pc4 */
-            pc4: number;
-            /** Pc4 Pct */
-            pc4_pct: number | null;
             /** Rows */
             rows: components["schemas"]["PnlMiscExpenseRow"][];
-            /** Total */
-            total: number;
-            /** Total Share */
-            total_share: number | null;
-            /**
-             * Vat Recovered
-             * @default 0
-             */
-            vat_recovered: number;
-            /** Vat Recovered Share */
-            vat_recovered_share?: number | null;
+            /** Unallocated */
+            unallocated: number;
+            /** Unallocated Included */
+            unallocated_included: boolean;
         };
         /**
          * PnlPeriodChargeRow
@@ -18781,6 +18869,22 @@ export interface components {
             marketplace_fees: number | null;
             /** Misc Fees */
             misc_fees: number | null;
+            /** Misc Pc1 */
+            misc_pc1: number | null;
+            /** Misc Pc1 Vat */
+            misc_pc1_vat: number | null;
+            /** Misc Pc2 */
+            misc_pc2: number | null;
+            /** Misc Pc2 Vat */
+            misc_pc2_vat: number | null;
+            /** Misc Pc3 */
+            misc_pc3: number | null;
+            /** Misc Pc3 Vat */
+            misc_pc3_vat: number | null;
+            /** Misc Pc4 */
+            misc_pc4: number | null;
+            /** Misc Pc4 Vat */
+            misc_pc4_vat: number | null;
             /** Net Revenue */
             net_revenue: number | null;
             /** Net Vat */
@@ -18795,6 +18899,8 @@ export interface components {
             pc2: number | null;
             /** Pc3 */
             pc3: number | null;
+            /** Pc4 */
+            pc4: number | null;
             /** Period Charges */
             period_charges: number | null;
             /** Refunds */
@@ -20640,6 +20746,10 @@ export interface components {
             is_active: boolean;
             /** Name */
             name: string;
+            /** Pnl Channels */
+            pnl_channels?: string[];
+            /** Pnl Level */
+            pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
         };
         /** PurchaseOrderMiscCategoryResponse */
         PurchaseOrderMiscCategoryResponse: {
@@ -20662,6 +20772,13 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Pnl Channels
+             * @default []
+             */
+            pnl_channels: string[];
+            /** Pnl Level */
+            pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
+            /**
              * Updated At
              * Format: date-time
              */
@@ -20675,6 +20792,10 @@ export interface components {
             is_active?: boolean | null;
             /** Name */
             name?: string | null;
+            /** Pnl Channels */
+            pnl_channels?: string[] | null;
+            /** Pnl Level */
+            pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
         };
         /**
          * PurchaseOrderMiscLineEdit
@@ -22566,6 +22687,12 @@ export interface components {
              * @default true
              */
             is_vat_deductible: boolean;
+            /** Misc Pnl Branch Ids */
+            misc_pnl_branch_ids?: string[];
+            /** Misc Pnl Channels */
+            misc_pnl_channels?: string[];
+            /** Misc Pnl Level */
+            misc_pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
             /** Name */
             name: string;
             /** Name Localized */
@@ -22709,6 +22836,18 @@ export interface components {
              * @default []
              */
             mapped_items: components["schemas"]["SupplierMappedItem"][];
+            /**
+             * Misc Pnl Branch Ids
+             * @default []
+             */
+            misc_pnl_branch_ids: string[];
+            /**
+             * Misc Pnl Channels
+             * @default []
+             */
+            misc_pnl_channels: string[];
+            /** Misc Pnl Level */
+            misc_pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
             /** Name */
             name: string;
             /** Name Localized */
@@ -22745,6 +22884,12 @@ export interface components {
             is_active?: boolean | null;
             /** Is Vat Deductible */
             is_vat_deductible?: boolean | null;
+            /** Misc Pnl Branch Ids */
+            misc_pnl_branch_ids?: string[] | null;
+            /** Misc Pnl Channels */
+            misc_pnl_channels?: string[] | null;
+            /** Misc Pnl Level */
+            misc_pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
             /** Name */
             name?: string | null;
             /** Name Localized */

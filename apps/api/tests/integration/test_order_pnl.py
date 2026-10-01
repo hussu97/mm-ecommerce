@@ -534,6 +534,97 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
     assert by_channel["talabat"].pc3 == D("2.20")  # 23.20 − 21.00
 
 
+async def test_misc_spend_placed_higher_moves_pc1_but_never_pc4(engine, world):
+    """A misc line split over the branch's sales by GMV: at PC4 by default, then
+    moved by its supplier to PC1 on two channels — PC1 falls by its net cost,
+    both channels carry the same % of their GMV, and PC4 does not move."""
+    from datetime import date
+
+    from app.models.inventory import (
+        PurchaseOrder,
+        PurchaseOrderMiscCategory,
+        PurchaseOrderMiscItem,
+        Supplier,
+    )
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    async with Session() as db:
+        category = PurchaseOrderMiscCategory(name=f"pnl-misc {tag}")
+        supplier = Supplier(
+            name=f"pnl-misc {tag}",
+            allows_misc_items=True,
+            misc_pnl_branch_ids=[world["branch"]],
+        )
+        db.add_all([category, supplier])
+        await db.flush()
+        po = PurchaseOrder(
+            reference=f"PO-PNL-{tag}",
+            status="closed",
+            supplier_id=supplier.id,
+            branch_id=world["branch"],
+            business_date=DAY,
+        )
+        db.add(po)
+        await db.flush()
+        db.add(
+            PurchaseOrderMiscItem(
+                purchase_order_id=po.id,
+                name="Rent",
+                quantity=D("1"),
+                storage_unit="month",
+                entered_total=D("105.00"),
+                vat_amount=D("5.00"),
+                net_total=D("100.00"),
+                unit_cost=D("105.00"),
+                category_id=category.id,
+                period_from=date.fromisoformat(DAY),
+                period_to=date.fromisoformat(DAY),
+            )
+        )
+        await db.flush()
+
+        async def build():
+            return await pnl_report.build(
+                db,
+                date_from=DAY,
+                date_to=DAY,
+                branch_ids=[world["branch"]],
+                include_gated_misc=True,
+            )
+
+        before = await build()
+        (row,) = [r for r in before.misc if r.category_id == category.id]
+        assert row.level == "pc4"
+        assert before.total.misc_pc4 == D("105.00")
+        assert before.total.misc_pc4_vat == D("5.00")
+        assert before.total.pc4 == before.total.pc3 - D("100.00")
+        # Spread over every channel the branch sold on, by GMV (397 in all).
+        by_channel = dict(before.channels)
+        assert by_channel["talabat"].gmv == D("42.00")
+        assert by_channel["talabat"].misc_pc4 == D("11.11")  # 105 × 42 / 397
+        assert sum(c.misc_pc4 for c in by_channel.values()) == D("105.00")
+
+        supplier.misc_pnl_level = "pc1"
+        supplier.misc_pnl_channels = ["counter", "talabat"]
+        await db.flush()
+        after = await build()
+        assert after.total.pc4 == before.total.pc4
+        assert after.total.pc1 == before.total.pc1 - D("100.00")
+        assert after.total.misc_pc4 == D("0.00")
+        by_channel = dict(after.channels)
+        counter, talabat = by_channel["counter"], by_channel["talabat"]
+        assert counter.misc_pc1 + talabat.misc_pc1 == D("105.00")
+        # The same % of GMV, up to the fils each part is rounded to.
+        gap = counter.share(counter.misc_pc1) - talabat.share(talabat.misc_pc1)
+        assert abs(gap) < D("0.05")
+        assert by_channel["website_delivery"].misc_pc1 == D("0.00")
+        (row,) = [r for r in after.misc if r.category_id == category.id]
+        assert set(after.misc_amounts(row)) == {"counter", "talabat", "total"}
+        assert after.misc_amounts(row)["total"] == (D("105.00"), D("5.00"))
+        await db.rollback()
+
+
 async def test_period_charges_book_the_monthly_fees_with_their_vat(engine, world):
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
