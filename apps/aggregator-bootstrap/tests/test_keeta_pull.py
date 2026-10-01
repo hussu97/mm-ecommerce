@@ -10,6 +10,7 @@ expects.
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -19,10 +20,19 @@ import pytest
 # imports when the tests run under the api venv.
 _API_ROOT = Path(__file__).resolve().parents[2] / "api"
 
+from aggregator_bootstrap import keeta_pull  # noqa: E402
 from aggregator_bootstrap.keeta_pull import (  # noqa: E402
     _month_windows,
     fetch_keeta_orders,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mid_month(monkeypatch):
+    """Pin "today" mid-month so the window count is not the calendar's choice;
+    the boundary tests override it."""
+    monkeypatch.setattr(keeta_pull, "_today", lambda: date(2026, 9, 17))
+
 
 # A realistic getOrders response: `data.list[]` of the Keeta envelope
 # (baseOrder / merchantOrder / products / feeDtl.merchantFee) that parse_orders
@@ -143,6 +153,20 @@ def test_month_windows_newest_first():
     windows = _month_windows(1)
     assert len(windows) == 2
     assert windows[0][0] > windows[1][0]
+
+
+def test_month_windows_reach_back_over_the_month_boundary(monkeypatch):
+    """On the 1st the current-month pull still covers the last two days of the
+    previous month, so its late orders get scraped and completed."""
+    monkeypatch.setattr(keeta_pull, "_today", lambda: date(2026, 10, 1))
+    assert _month_windows(0) == [
+        (date(2026, 10, 1), date(2026, 10, 1)),
+        (date(2026, 9, 29), date(2026, 9, 30)),
+    ]
+
+
+def test_month_windows_mid_month_is_the_current_month_only():
+    assert _month_windows(0) == [(date(2026, 9, 1), date(2026, 9, 17))]
 
 
 async def test_fetch_keeta_orders_walks_current_month_before_older():

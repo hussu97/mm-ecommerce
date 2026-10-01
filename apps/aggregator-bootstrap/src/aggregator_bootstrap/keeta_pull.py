@@ -37,7 +37,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -138,16 +138,34 @@ def _add_months(value: date, months: int) -> date:
     return date(year, month + 1, 1)
 
 
+#: Days before today every pull reaches back, whatever the month. The 3-hourly
+#: pull is `months_back=0` (the current month), so without this the first pull
+#: after midnight on the 1st never saw the previous evening again: the last
+#: month's late orders were never scraped and its out-for-delivery ones never
+#: reached `completed` (30 Sep 2026: eight orders, AED 470, stuck that way).
+_TRAILING_DAYS = 2
+
+
+def _today() -> date:
+    """Today in the shop's timezone (a seam for tests)."""
+    return datetime.now(_BUSINESS_TZ).date()
+
+
 def _month_windows(months_back: int) -> list[tuple[date, date]]:
     """Calendar-month (start, end) windows from `months_back` months ago to today.
 
     `months_back=1` yields last month's full window and the current month up to
-    today; `months_back=0` is just the current month. Each window is clamped to
-    the requested span so the first and last are partial where they should be.
-    Returned newest-first so a budgeted pull captures last-2d before history.
+    today; `months_back=0` is just the current month. Either way the span starts
+    no later than `_TRAILING_DAYS` before today, so a pull early in a month still
+    covers the end of the last one. Each window is clamped to the requested span
+    so the first and last are partial where they should be. Returned newest-first
+    so a budgeted pull captures last-2d before history.
     """
-    today = datetime.now(_BUSINESS_TZ).date()
-    from_date = _add_months(date(today.year, today.month, 1), -max(months_back, 0))
+    today = _today()
+    from_date = min(
+        _add_months(date(today.year, today.month, 1), -max(months_back, 0)),
+        today - timedelta(days=_TRAILING_DAYS),
+    )
     windows: list[tuple[date, date]] = []
     current = date(from_date.year, from_date.month, 1)
     while current <= today:
