@@ -34,7 +34,7 @@ from app.core.permissions import require
 from app.models.payment_gateway import PaymentGateway
 from app.models.user import User
 from app.services import audit_service
-from app.services.payments.payment_gateway_router import PROVIDERS
+from app.services.payments.payment_gateway_router import PROVIDERS, is_restricted
 
 logger = logging.getLogger(__name__)
 
@@ -216,11 +216,14 @@ async def _assert_not_the_last_one(db: AsyncSession, row: PaymentGateway) -> Non
         .scalars()
         .all()
     )
+    # A gateway in a staged rollout serves only its listed accounts, so it is
+    # no fallback for everyone else either.
     usable = [
         other
         for other in others
         if (provider := PROVIDERS.get(other.code)) is not None
         and provider.is_configured()
+        and not is_restricted(other.code)
     ]
     if not usable:
         raise BadRequestError(
