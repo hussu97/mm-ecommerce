@@ -54,8 +54,15 @@ def is_commission_or_vat(col=AggregatorStatementLine):
     `commission_vat` line. Deliberately keys on `commission`/`commission_vat`
     ONLY — never the broad `is_vat` — so a `payment_handling_vat` line is not
     mistaken for commission VAT. Verified equal to the sales-feed value on live
-    noon and Talabat orders (2026-09-22)."""
-    return _fc(col).in_(["commission", "commission_vat"])
+    noon and Talabat orders (2026-09-22).
+
+    Deliveroo's commission on an order the customer cancelled is the same charge
+    under its own category (`deliveroo_commission_on_cancelled_order`, ex-VAT,
+    beside a `commission_vat` line). Left out, only that VAT reached the order,
+    so a 13.02 cancellation charge read as 0.62 (AGG-20260916-071)."""
+    return _fc(col).in_(
+        ["commission", "commission_vat", "deliveroo_commission_on_cancelled_order"]
+    )
 
 
 def is_payment_fee_or_vat(col=AggregatorStatementLine):

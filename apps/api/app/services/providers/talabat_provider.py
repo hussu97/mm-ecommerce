@@ -56,6 +56,7 @@ from openpyxl import load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.money import money
 from app.models.aggregator import CHANNEL_TALABAT, GRAIN_LINE
 from app.services.aggregators.normalized import (
     PayoutsResult,
@@ -277,6 +278,10 @@ _MAX_LIST_ORDERS_PAGES = 40
 #: guard against an unexpectedly large billed/unpriced-order set hammering the
 #: portal. A month backfill runs day-by-day (each day well under this).
 _MAX_DETAIL_FETCHES = 200
+
+#: The most an order's fees + net may fall short of its gross and still count
+#: as rounding: Talabat's net carries three decimals (30.096), our columns two.
+_NET_RECONCILE_TOLERANCE = Decimal("0.02")
 
 #: The return PIN and the rider's timeline for one order. The portal's order
 #: drawer labels `pin` "Return PIN"; the schema's `returnOrderPin` exists but was
@@ -1390,6 +1395,7 @@ class TalabatClient(BaseAggregatorClient):
         csv_text = await self._download_csv(session, download_url)
         orders = self._orders_from_csv(csv_text)
         orders = await self._enrich_orders(session, orders, since=since, until=until)
+        orders = [self._fees_reconciled_to_net(o) for o in orders]
         await self._attach_return_details(session, orders)
         return SalesResult(orders=orders, truncation_note=truncation_note)
 
@@ -1681,6 +1687,57 @@ class TalabatClient(BaseAggregatorClient):
                 "net_payable": net,
             }
         return patches
+
+    @staticmethod
+    def _fees_reconciled_to_net(order: StandardOrder) -> StandardOrder:
+        """Book what Talabat deducted but did not itemise, so fees tie to its net.
+
+        Talabat's own per-order net (`net_payable`, the "Estimated earnings") is
+        the figure its payouts are made of: every Sept 2026 payout matched the sum
+        of its orders' nets to the fils. The itemised fees do not always add up
+        to it. On some orders the payment fee is reported before its 5% VAT (1.40
+        on a 70 order whose net says 1.47 left), cash orders report no payment fee
+        though the invoice bills "Cash Handling Charges", and the avoidable
+        wait-time fee has no column of its own. Prod, Sept 2026: 140 orders, AED
+        40.76 of deductions the P&L never saw.
+
+        So on a billed, standing order the gap between the gross (less any refund)
+        and fees + net is booked: the CSV's "Wait time fee" first, onto
+        `cancellation_fee` (Talabat's other avoidable-delay penalty, a Misc fee in
+        the P&L), and the rest onto `payment_fee`, where the August invoice puts
+        the payment VAT and the cash handling. Talabat's net carries three
+        decimals, so a gap within `_NET_RECONCILE_TOLERANCE` is rounding and is
+        left alone, as is a gap the other way (fees above the net). A cancelled
+        order is skipped: its settled net is the cancellation's outcome
+        (`promote._cancellation_net`), not a sale's.
+        """
+        if (
+            order.net_payable is None
+            or order.commission_amount is None
+            or order.gross_sales is None
+            or (order.status or "").strip().lower() == "cancelled"
+        ):
+            return order
+        payment = order.payment_fee or Decimal("0")
+        cancellation = order.cancellation_fee or Decimal("0")
+        gap = (
+            order.gross_sales
+            - (order.refund_amount or Decimal("0"))
+            - order.commission_amount
+            - (order.marketing_fee or Decimal("0"))
+            - cancellation
+            - payment
+            - order.net_payable
+        )
+        if gap <= _NET_RECONCILE_TOLERANCE:
+            return order
+        wait = _money((order.raw or {}).get("Wait time fee")) or Decimal("0")
+        wait = min(max(wait, Decimal("0")), gap)
+        return replace(
+            order,
+            cancellation_fee=money(cancellation + wait),
+            payment_fee=money(payment + gap - wait),
+        )
 
     async def _enrich_orders(
         self,

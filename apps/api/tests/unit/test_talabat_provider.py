@@ -2049,3 +2049,86 @@ def test_net_payable_is_unknown_until_billed():
         _csv_from_rows([_dispute_row(**{"Estimated earnings": "0.00"})])
     )[0]
     assert order.net_payable is None  # blank "Payment type" = not billed yet
+
+
+# ── fees reconciled to Talabat's own net ─────────────────────────────────────
+
+
+def _billed(**overrides):
+    from app.services.aggregators.normalized import StandardOrder
+
+    base = dict(
+        external_order_id="TB-9001",
+        status="Delivered",
+        gross_sales=Decimal("70.00"),
+        commission_amount=Decimal("22.05"),
+        payment_fee=Decimal("1.40"),
+        marketing_fee=Decimal("4.00"),
+        cancellation_fee=Decimal("0.00"),
+        net_payable=Decimal("42.48"),
+        raw={},
+    )
+    base.update(overrides)
+    return StandardOrder(**base)
+
+
+def test_fees_reconciled_to_net_books_the_payment_fee_vat():
+    """Prod AGG-20260925-024: 70 − 22.05 − 4 − 1.40 = 42.55, Talabat's net 42.48.
+    The 0.07 is the VAT on the 1.40 payment fee."""
+    order = TalabatClient._fees_reconciled_to_net(_billed())
+    assert order.payment_fee == Decimal("1.47")
+    assert order.cancellation_fee == Decimal("0.00")
+
+
+def test_fees_reconciled_to_net_books_the_wait_time_fee_as_a_penalty():
+    """Prod AGG-20260909-050: the 6.30 avoidable wait-time fee has no column."""
+    order = TalabatClient._fees_reconciled_to_net(
+        _billed(
+            gross_sales=Decimal("55.00"),
+            commission_amount=Decimal("17.33"),
+            payment_fee=Decimal("1.28"),
+            marketing_fee=Decimal("0.00"),
+            net_payable=Decimal("30.096"),
+            raw={"Wait time fee": "6.30"},
+        )
+    )
+    assert order.cancellation_fee == Decimal("6.29")
+    assert order.payment_fee == Decimal("1.28")
+
+
+def test_fees_reconciled_to_net_cash_order_gets_its_handling_fee():
+    """Prod AGG-20260910-009: a cash order reports no payment fee, yet its net is
+    2.18 short — the invoice's "Cash Handling Charges"."""
+    order = TalabatClient._fees_reconciled_to_net(
+        _billed(
+            gross_sales=Decimal("95.00"),
+            commission_amount=Decimal("29.93"),
+            payment_fee=Decimal("0.00"),
+            marketing_fee=Decimal("0.00"),
+            net_payable=Decimal("62.89"),
+        )
+    )
+    assert order.payment_fee == Decimal("2.18")
+
+
+def test_fees_reconciled_to_net_leaves_rounding_unbilled_and_cancelled_alone():
+    rounding = _billed(net_payable=Decimal("42.54"))  # 0.01 gap
+    assert TalabatClient._fees_reconciled_to_net(rounding) is rounding
+    over = _billed(net_payable=Decimal("43.00"))  # fees above the net
+    assert TalabatClient._fees_reconciled_to_net(over) is over
+    unbilled = _billed(net_payable=None)
+    assert TalabatClient._fees_reconciled_to_net(unbilled) is unbilled
+    cancelled = _billed(status="Cancelled", net_payable=Decimal("-22.05"))
+    assert TalabatClient._fees_reconciled_to_net(cancelled) is cancelled
+
+
+def test_fees_reconciled_to_net_nets_a_partial_refund_first():
+    """Prod AGG-20260909-017: 140 with 70 refunded ties exactly — nothing booked."""
+    order = _billed(
+        gross_sales=Decimal("140.00"),
+        refund_amount=Decimal("70.00"),
+        commission_amount=Decimal("44.10"),
+        payment_fee=Decimal("1.47"),
+        net_payable=Decimal("20.43"),
+    )
+    assert TalabatClient._fees_reconciled_to_net(order) is order
