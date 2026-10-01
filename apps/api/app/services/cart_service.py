@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -38,6 +39,7 @@ __all__ = [
     "line_total",
     "line_unit_price",
     "merge",
+    "recordable_email",
     "remember_checkout_email",
     "remove_item",
     "require_identity",
@@ -211,6 +213,24 @@ async def _is_guest_account(db: AsyncSession, user_id: uuid.UUID) -> bool:
     return await db.scalar(select(User.is_guest).where(User.id == user_id)) is True
 
 
+#: Something@something.tld — enough to tell a finished address from one being
+#: typed, without pretending to be a deliverability check.
+_EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s.]{2,}$")
+
+
+def recordable_email(email: str | None) -> str | None:
+    """The typed address, normalised, or None for a blank, a half-typed address
+    or a generated `…@guest.local` placeholder."""
+    cleaned = (email or "").strip().lower()
+    if (
+        len(cleaned) > 255
+        or not _EMAIL_SHAPE.match(cleaned)
+        or cleaned.endswith("@guest.local")
+    ):
+        return None
+    return cleaned
+
+
 async def remember_checkout_email(
     db: AsyncSession, cart: Cart | None, email: str | None
 ) -> None:
@@ -232,24 +252,29 @@ async def remember_checkout_email(
     address is the only real one — and skipping it because the basket carries a
     `user_id` left those guests unreachable.
 
-    Not validated, and deliberately: this is not a login and it does not decide
-    anything. It records what was typed. Whether it is deliverable is Resend's
-    answer to give, at the point something is actually sent, and a stricter rule
-    here would only mean a reachable customer we refused to record.
+    **Only an address shaped like one, and never the placeholder.** The preview
+    fires on every checkout load, before anything is typed, and with a blank form
+    `POST /orders/preview` falls back to the session's own email — for a guest
+    account, `…@guest.local`. Recording that put a placeholder on half the guest
+    baskets in the console, and worse, a reload (or a cleared field) replaced an
+    address the shopper *had* typed with it. So a blank, a half-typed address or
+    the placeholder is no answer at all and the last real one stands. The check
+    is shape only: no DNS, no login. Deliverability is Resend's to judge when
+    something is actually sent.
     """
     if cart is None:
         return
     if cart.user_id is not None and not await _is_guest_account(db, cart.user_id):
         return
-    cleaned = (email or "").strip().lower()
-    if not cleaned or cleaned == cart.guest_email:
+    cleaned = recordable_email(email)
+    if cleaned is None or cleaned == cart.guest_email:
         # Still activity, even when the address has not changed — somebody is on
         # the checkout right now, which is the most interesting thing a basket
         # can be doing.
         if cleaned:
             await _touched(db, cart)
         return
-    cart.guest_email = cleaned[:255]
+    cart.guest_email = cleaned
     touch(cart)
     await db.flush()
 

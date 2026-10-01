@@ -184,8 +184,9 @@ def _cart_email(cart: Cart) -> tuple[str | None, str | None]:
         and not cart.user.email.lower().endswith("@guest.local")
     ):
         return cart.user.email, "account"
-    if cart.guest_email:
-        return cart.guest_email, "checkout"
+    # Rows written before the writer refused placeholders still carry one.
+    if typed := cart_service.recordable_email(cart.guest_email):
+        return typed, "checkout"
     return None, None
 
 
