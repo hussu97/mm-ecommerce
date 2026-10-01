@@ -303,6 +303,36 @@ async def test_an_empty_address_changes_nothing():
     assert db.flushes == 0
 
 
+@pytest.mark.parametrize(
+    "noise",
+    ["guest-1a2b3c4d@guest.local", "Guest-1A2B@Guest.Local", "someone", "someone@exam"],
+)
+async def test_a_placeholder_or_half_typed_address_never_replaces_a_real_one(noise):
+    """
+    With a blank form the preview falls back to the session's own email — for a
+    guest, the generated placeholder — and it fires on every checkout load. That
+    used to overwrite the address the shopper had typed.
+    """
+    db = _Db([], is_guest=True)
+    user = User(id=uuid.uuid4(), email="guest-1a2b3c4d@guest.local", is_guest=True)
+    cart = _cart(user=user, guest_email="someone@example.com")
+
+    await cart_service.remember_checkout_email(db, cart, noise)
+
+    assert cart.guest_email == "someone@example.com"
+    assert db.flushes == 0
+
+
+async def test_a_changed_address_replaces_the_old_one():
+    db = _Db([])
+    cart = _cart(guest_email="old@example.com")
+
+    await cart_service.remember_checkout_email(db, cart, "new@example.ae")
+
+    assert cart.guest_email == "new@example.ae"
+    assert db.flushes == 1
+
+
 async def test_a_basket_that_does_not_exist_is_not_an_error():
     """A preview fires while the basket is still loading. That is ordinary."""
     await cart_service.remember_checkout_email(_Db([]), None, "someone@example.com")
@@ -340,6 +370,13 @@ def test_a_guest_placeholder_address_gives_way_to_the_typed_one():
 
 def test_a_basket_nobody_can_be_written_to_says_so():
     assert analytics._cart_email(_cart()) == (None, None)
+
+
+def test_a_stored_placeholder_is_not_shown_as_a_typed_address():
+    """Rows written before the writer refused it still carry the placeholder."""
+    cart = _cart(guest_email="guest-75fd112c@guest.local")
+
+    assert analytics._cart_email(cart) == (None, None)
 
 
 def test_options_read_as_words():
