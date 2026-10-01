@@ -320,6 +320,56 @@ class TestSelection:
         assert (await router.select_gateway(db, Decimal("500.00"))).code == "ziina"
 
 
+# ── staged rollout: Paymob for listed accounts only ───────────────────────────
+
+
+class TestPaymobAllowlist:
+    """
+    `PAYMOB_ALLOWED_EMAILS` lets Paymob be tried on production by one account
+    while every other customer keeps paying exactly as before.
+    """
+
+    @pytest.fixture
+    def estate(self, providers, monkeypatch):
+        monkeypatch.setattr(settings, "PAYMOB_ALLOWED_EMAILS", "owner@example.com")
+        providers["stripe"] = _FakeProvider("stripe")
+        providers["paymob"] = _FakeProvider("paymob")
+        # Paymob behind Stripe, as it ships: the listed account must not need a
+        # priority change that would also move everyone else.
+        return _db_returning([_row("stripe", priority=1), _row("paymob", priority=3)])
+
+    async def test_a_listed_account_gets_paymob_first(self, estate):
+        options = await router.candidates(
+            estate, Decimal("50.00"), account_email="Owner@Example.com "
+        )
+
+        assert [o.code for o in options] == ["paymob", "stripe"]
+
+    async def test_anyone_else_never_sees_it(self, estate):
+        for email in (None, "someone@example.com"):
+            options = await router.candidates(
+                estate, Decimal("50.00"), account_email=email
+            )
+            assert [o.code for o in options] == ["stripe"]
+
+    async def test_no_list_means_plain_priority(self, providers, monkeypatch):
+        monkeypatch.setattr(settings, "PAYMOB_ALLOWED_EMAILS", "")
+        providers["stripe"] = _FakeProvider("stripe")
+        providers["paymob"] = _FakeProvider("paymob")
+        db = _db_returning([_row("stripe", priority=1), _row("paymob", priority=3)])
+
+        options = await router.candidates(db, Decimal("50.00"))
+
+        assert [o.code for o in options] == ["stripe", "paymob"]
+        assert not router.is_restricted("paymob")
+
+    async def test_the_list_never_restricts_another_gateway(self, monkeypatch):
+        monkeypatch.setattr(settings, "PAYMOB_ALLOWED_EMAILS", "owner@example.com")
+
+        assert router.is_restricted("paymob")
+        assert not router.is_restricted("stripe")
+
+
 # ── failover ──────────────────────────────────────────────────────────────────
 
 

@@ -76,6 +76,7 @@ def order():
         payment_provider=None,
         payment_id=None,
         payment_transactions=[],
+        user_id=None,
     )
 
 
@@ -359,3 +360,39 @@ async def test_a_gateway_that_opted_out_is_not_reached_for_automatically(
         await payment_service._create_card_session(db, order, order.total)
 
     assert options[1].provider.calls == 0
+
+
+# ── staged rollout: the paying account reaches the router ─────────────────────
+
+
+class TestAccountEmail:
+    async def test_a_signed_in_account_is_passed_to_the_router(
+        self, db, order, monkeypatch
+    ):
+        order.user_id = "user-uuid"
+        db.get = AsyncMock(
+            return_value=SimpleNamespace(email="Owner@Example.com", is_guest=False)
+        )
+        candidates = AsyncMock(return_value=[_choice("stripe")])
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router, "candidates", candidates
+        )
+
+        await payment_service._create_card_session(db, order, order.total)
+
+        assert candidates.await_args.kwargs["account_email"] == "Owner@Example.com"
+
+    async def test_a_guest_account_is_no_account(self, db, order, monkeypatch):
+        """A guest typed that address; it proves nothing about who is paying."""
+        order.user_id = "guest-uuid"
+        db.get = AsyncMock(
+            return_value=SimpleNamespace(email="owner@example.com", is_guest=True)
+        )
+        candidates = AsyncMock(return_value=[_choice("stripe")])
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router, "candidates", candidates
+        )
+
+        await payment_service._create_card_session(db, order, order.total)
+
+        assert candidates.await_args.kwargs["account_email"] is None

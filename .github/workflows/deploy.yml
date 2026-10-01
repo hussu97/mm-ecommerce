@@ -530,6 +530,7 @@ jobs:
           ZIINA_TEST_MODE=${{ secrets.ZIINA_TEST_MODE }}
           ZIINA_TIMEOUT_SECONDS=${{ secrets.ZIINA_TIMEOUT_SECONDS }}
           PAYMOB_ENABLED=${{ secrets.PAYMOB_ENABLED }}
+          PAYMOB_ALLOWED_EMAILS=${{ secrets.PAYMOB_ALLOWED_EMAILS }}
           PAYMOB_API_URL=${{ secrets.PAYMOB_API_URL }}
           PAYMOB_CHECKOUT_URL=${{ secrets.PAYMOB_CHECKOUT_URL }}
           PAYMOB_SECRET_KEY=${{ secrets.PAYMOB_SECRET_KEY }}

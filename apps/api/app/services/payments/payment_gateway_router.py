@@ -17,6 +17,11 @@ Three questions, in this order, and each one is a different kind of no:
    edge, where the refusal is an opaque 400 in the last screen of checkout.
    Caught here it is a sentence the customer can act on.
 
+A gateway in a staged rollout (`PAYMOB_ALLOWED_EMAILS`) adds a fourth: **is this
+account on the list?** Off the list it is skipped as if it were unconfigured; on
+it, it goes first regardless of priority, so testing it on production needs no
+priority change that would also move everyone else.
+
 Failover is the same walk, resumed. It is offered only for
 `GatewayUnavailableError` — the gateway could not be reached, or answered 5xx —
 and never for a refusal. Re-presenting a declined card to a second processor is
@@ -33,6 +38,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.models.payment_gateway import PaymentGateway, PaymentGatewayEnum
 from app.services.providers.base import PaymentGatewayProvider
@@ -47,6 +53,7 @@ __all__ = [
     "NoGatewayAvailableError",
     "PROVIDERS",
     "candidates",
+    "is_restricted",
     "select_gateway",
 ]
 
@@ -91,13 +98,37 @@ class GatewayChoice:
         return bool(self.row.test_mode)
 
 
-async def candidates(db: AsyncSession, amount: Decimal) -> list[GatewayChoice]:
+def _allowed_emails(code: str) -> frozenset[str] | None:
+    """The accounts a gateway is limited to, or None when it is open to all."""
+    if code != PaymentGatewayEnum.PAYMOB.value:
+        return None
+    emails = frozenset(
+        e.strip().lower()
+        for e in settings.PAYMOB_ALLOWED_EMAILS.split(",")
+        if e.strip()
+    )
+    return emails or None
+
+
+def is_restricted(code: str) -> bool:
+    """Whether a gateway is in a staged rollout, offered to listed accounts only."""
+    return _allowed_emails(code) is not None
+
+
+async def candidates(
+    db: AsyncSession, amount: Decimal, *, account_email: str | None = None
+) -> list[GatewayChoice]:
     """
     Every gateway that could take *amount*, best first.
 
     The list rather than just the winner, because failover needs to know what
     comes next and computing it twice invites the two answers to disagree.
+
+    *account_email* is the signed-in, non-guest account paying, or None. It
+    only matters to a gateway in a staged rollout: off its list the gateway is
+    skipped, on it the gateway is moved to the front.
     """
+    email = account_email.strip().lower() if account_email else None
     rows = (
         (
             await db.execute(
@@ -132,12 +163,19 @@ async def candidates(db: AsyncSession, amount: Decimal) -> list[GatewayChoice]:
             continue
         if not _amount_fits(row, provider, amount):
             continue
+        allowed = _allowed_emails(row.code)
+        if allowed is not None and email not in allowed:
+            continue
         usable.append(GatewayChoice(row=row, provider=provider))
 
+    # Stable, so the unrestricted gateways keep their priority order behind it.
+    usable.sort(key=lambda choice: not is_restricted(choice.code))
     return usable
 
 
-async def select_gateway(db: AsyncSession, amount: Decimal) -> GatewayChoice:
+async def select_gateway(
+    db: AsyncSession, amount: Decimal, *, account_email: str | None = None
+) -> GatewayChoice:
     """
     The gateway to try first for an order of *amount*.
 
@@ -145,7 +183,7 @@ async def select_gateway(db: AsyncSession, amount: Decimal) -> GatewayChoice:
     distinguishes "your basket is too small" from "we cannot take cards right
     now", because those are not the same news.
     """
-    options = await candidates(db, amount)
+    options = await candidates(db, amount, account_email=account_email)
     if options:
         return options[0]
 
@@ -253,6 +291,7 @@ async def _lowest_floor(db: AsyncSession) -> Decimal | None:
         for row in rows
         if (provider := PROVIDERS.get(row.code)) is not None
         and provider.is_configured()
+        and not is_restricted(row.code)
         and (floor := _floor_for(row, provider)) is not None
     ]
     return min(floors) if floors else None

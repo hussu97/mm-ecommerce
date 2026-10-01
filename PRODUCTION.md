@@ -779,6 +779,7 @@ anything.
 | Secret | Production value | Notes |
 |--------|-----------------|-------|
 | `PAYMOB_ENABLED` | `false` | The master switch. Leave false until Paymob is signed off. |
+| `PAYMOB_ALLOWED_EMAILS` | *(unset)* | Staged rollout. Comma-separated account emails; when set, only those signed-in (non-guest) accounts are offered Paymob — ahead of every other gateway, whatever the priorities — and everyone else skips it. Webhooks and the reconcile sweep are unaffected. Clear it to open Paymob to all. |
 | `PAYMOB_SECRET_KEY` | *(unset)* | Paymob dashboard → Settings → Account info. Sent as `Authorization: Token …` for intentions and refunds |
 | `PAYMOB_PUBLIC_KEY` | *(unset)* | Same page. Public; rides on the hosted checkout URL |
 | `PAYMOB_API_KEY` | *(unset)* | Same page. Minted into the Bearer token the transaction reads (inquiry, refund read-back) need — not the secret key |
@@ -807,6 +808,13 @@ of the six is missing), set Paymob's real `fee_percent` / `fee_fixed` on its
 they do for Ziina: a lower number than Stripe makes Paymob the primary; leaving
 them alone keeps it as a standby reached only when the gateways ahead of it
 cannot produce a session.
+
+**Testing on production first.** Set `PAYMOB_ALLOWED_EMAILS` to your own
+account email *before* `PAYMOB_ENABLED=true`, deploy, and activate the row with
+its priority untouched. Your signed-in checkouts go to Paymob; every other
+customer stays on Stripe (Paymob is not even a failover target for them). The
+admin will not let you deactivate the last *unrestricted* gateway while the
+list is set. Apple Pay keeps following the unrestricted default (Stripe).
 
 **Paymob go-live checklist (sandbox).** Each of these is a place the provider
 was written from documentation that is silent or ambiguous. Confirm every one

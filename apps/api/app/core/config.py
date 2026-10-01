@@ -153,6 +153,13 @@ class Settings(BaseSettings):
     #: and none of them is a decision to start charging real cards through a
     #: new processor.
     PAYMOB_ENABLED: bool = False
+    #: A staged rollout. Comma-separated account emails; when set, Paymob is
+    #: offered ONLY to a signed-in (non-guest) account on the list — and offered
+    #: to them first, whatever the row's priority — and skipped for everyone
+    #: else, who carry on through the next gateway as if Paymob were off. Empty
+    #: means no restriction. It narrows selection only: webhooks, the signed
+    #: return and the reconcile sweep settle a Paymob payment whoever made it.
+    PAYMOB_ALLOWED_EMAILS: str = ""
     #: The API host (intentions, refunds, transaction reads).
     PAYMOB_API_URL: str = "https://uae.paymob.com"
     #: The hosted Unified Checkout page the customer is sent to.

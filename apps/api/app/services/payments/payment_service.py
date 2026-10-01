@@ -36,6 +36,7 @@ from app.models.payment_transaction import (
     PaymentTransactionStatusEnum,
 )
 from app.models.pos_order import OrderSourceEnum
+from app.models.user import User
 from app.models.webhook_event import WebhookEvent
 from app.services import email_service
 from app.services.orders import order_lifecycle, order_service
@@ -318,6 +319,21 @@ async def create_session(
     return await _create_card_session(db, order, order_total)
 
 
+async def _account_email(db: AsyncSession, order: Order) -> str | None:
+    """
+    The signed-in account paying for *order*, for a gateway's staged rollout.
+
+    The account's own email, never the order's contact email — anyone can type
+    an address into a guest checkout, so a guest order has no account here.
+    """
+    if order.user_id is None:
+        return None
+    user = await db.get(User, order.user_id)
+    if user is None or user.is_guest:
+        return None
+    return user.email
+
+
 async def _create_card_session(
     db: AsyncSession, order: Order, order_total: Decimal
 ) -> dict:
@@ -337,14 +353,19 @@ async def _create_card_session(
     question anyone asks about a checkout that misbehaved, and before this table
     it had no answer at all.
     """
-    options = await payment_gateway_router.candidates(db, order_total)
+    account_email = await _account_email(db, order)
+    options = await payment_gateway_router.candidates(
+        db, order_total, account_email=account_email
+    )
     if not options:
         # Re-asks so the customer gets the specific reason — too small, versus
         # nothing available — rather than a generic failure. `select_gateway`
         # always raises on an empty list; the raise after it is here so that a
         # future edit which makes it return instead fails loudly rather than
         # falling into `options[0]` and an IndexError inside a checkout.
-        await payment_gateway_router.select_gateway(db, order_total)
+        await payment_gateway_router.select_gateway(
+            db, order_total, account_email=account_email
+        )
         raise BadRequestError(
             "Card payments are temporarily unavailable. Please try again shortly."
         )
