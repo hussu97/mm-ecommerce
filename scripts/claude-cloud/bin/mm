@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+mm-auth
+miss=""
+for v in MM_VM_USER MM_VM_SSH_KEY_B64 MM_GCS_SA_KEY_B64; do [ -n "${!v:-}" ] || miss="$miss $v"; done
+if [ -n "$miss" ]; then
+  echo "mm: not set in this session:$miss. Add them to the environment's variables, then start a new session." >&2
+  exit 2
+fi
+kh="$HOME/.ssh/known_hosts_mm"; vm="${MM_VM_NAME:-mm-backend}"
+if [ ! -s "$kh" ]; then
+  # host key comes from Google's guest attributes, so it is verified, not trusted on first use
+  gcloud compute instances get-guest-attributes "$vm" --zone="${MM_VM_ZONE:-me-central1-a}" \
+    --query-path=hostkeys/ --format='value(key,value)' | awk -v h="$vm" '{print h, $1, $2}' > "$kh.tmp"
+  [ -s "$kh.tmp" ] && mv "$kh.tmp" "$kh" || { echo "mm: could not fetch the VM host key" >&2; exit 1; }
+fi
+exec ssh -F "$HOME/.ssh/mm_config" mm "$@"

@@ -1,0 +1,2 @@
+#!/bin/bash
+exec mm "c=\$(sudo docker ps --format '{{.Names}}' | grep -E '[-_]postgres[-_]1\$' | head -1); sudo docker exec -i \"\$c\" sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -v ON_ERROR_STOP=1 ${MMSQL_FLAGS:--x}'" <<< "$*"

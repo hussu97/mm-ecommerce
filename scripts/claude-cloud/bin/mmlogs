@@ -1,0 +1,3 @@
+#!/bin/bash
+svc="${1:?service, e.g. api|pos-api|aggregator-worker|nginx}"; shift
+exec mm "c=\$(sudo docker ps --format '{{.Names}}' | grep -E '[-_]${svc}(-(blue|green))?[-_]1\$' | head -1); sudo docker logs ${*:---since 1h} \"\$c\" 2>&1"
