@@ -33,6 +33,7 @@ from app.models import (
     ProductionOrder,
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseOrderMiscCategory,
     PurchaseOrderMiscItem,
     PurchaseOrderStatusEnum,
     Supplier,
@@ -1398,10 +1399,17 @@ def _apply_po_filters(
     date_from: date | None = None,
     date_to: date | None = None,
     item_id: uuid.UUID | None = None,
+    misc_category_id: uuid.UUID | None = None,
+    sees_gated: bool = False,
 ):
     """The purchase-order WHERE clauses shared by the admin list and export so the
     two never diverge on what a filter means. ``business_date`` is an ISO string,
-    so a date bound compares lexicographically (correct for ``YYYY-MM-DD``)."""
+    so a date bound compares lexicographically (correct for ``YYYY-MM-DD``).
+
+    ``misc_category_id`` keeps POs with at least one misc line in that category
+    (the whole PO, like ``item_id``). A viewer who may not see admin-only
+    categories (``sees_gated`` false) never matches on one — a PO's hidden rent
+    line must not surface the PO under the Rent filter."""
     if supplier_id:
         stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
     if status_filter:
@@ -1417,6 +1425,17 @@ def _apply_po_filters(
                 PurchaseOrderItem.item_id == item_id,
             )
         )
+    if misc_category_id:
+        line = exists().where(
+            PurchaseOrderMiscItem.purchase_order_id == PurchaseOrder.id,
+            PurchaseOrderMiscItem.category_id == misc_category_id,
+        )
+        if not sees_gated:
+            line = line.where(
+                PurchaseOrderMiscCategory.id == PurchaseOrderMiscItem.category_id,
+                PurchaseOrderMiscCategory.admin_only.is_(False),
+            )
+        stmt = stmt.where(line)
     return stmt
 
 
@@ -1440,6 +1459,7 @@ async def list_purchase_orders(
     date_from: date | None = None,
     date_to: date | None = None,
     item_id: uuid.UUID | None = None,
+    misc_category_id: uuid.UUID | None = None,
     limit: int = Query(1000, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
@@ -1448,7 +1468,8 @@ async def list_purchase_orders(
     if branch_id:
         await access_service.assert_branch_access(db, user, branch_id)
     stmt = _scope_po_to_access(stmt, user, branch_id)
-    if not po_misc_service.can_see_gated(user):
+    sees_gated = po_misc_service.can_see_gated(user)
+    if not sees_gated:
         stmt = stmt.where(po_misc_service.visible_po_clause())
     stmt = _apply_po_filters(
         stmt,
@@ -1457,6 +1478,8 @@ async def list_purchase_orders(
         date_from=date_from,
         date_to=date_to,
         item_id=item_id,
+        misc_category_id=misc_category_id,
+        sees_gated=sees_gated,
     )
     stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
     orders = list((await db.execute(stmt)).scalars().unique().all())
@@ -1501,6 +1524,7 @@ async def export_purchase_orders(
     date_from: date | None = None,
     date_to: date | None = None,
     item_id: uuid.UUID | None = None,
+    misc_category_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
@@ -1525,6 +1549,8 @@ async def export_purchase_orders(
         date_from=date_from,
         date_to=date_to,
         item_id=item_id,
+        misc_category_id=misc_category_id,
+        sees_gated=sees_gated,
     )
     stmt = stmt.order_by(PurchaseOrder.created_at.desc())
     orders = list((await db.execute(stmt)).scalars().unique().all())

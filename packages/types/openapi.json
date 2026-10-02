@@ -57856,6 +57856,23 @@
           },
           {
             "in": "query",
+            "name": "misc_category_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Misc Category Id"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -58052,6 +58069,23 @@
                 }
               ],
               "title": "Item Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "misc_category_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Misc Category Id"
             }
           }
         ],

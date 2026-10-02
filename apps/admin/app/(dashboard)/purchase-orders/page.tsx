@@ -75,6 +75,10 @@ export default function PurchaseOrdersPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [itemOptions, setItemOptions] = useState<PurchaseOrderItemOption[]>([]);
+  // Filter options include inactive suppliers and retired categories: old POs
+  // still carry them. The create form keeps using the active `suppliers`.
+  const [supplierOptions, setSupplierOptions] = useState<Supplier[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<PurchaseOrderMiscCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -88,6 +92,8 @@ export default function PurchaseOrdersPage() {
   // is on screen; an empty value means "no filter" (buildQs drops it).
   const [statusFilter, setStatusFilter] = useState('');
   const [itemFilter, setItemFilter] = useState('');
+  const [supplierFilter, setSupplierFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
@@ -99,10 +105,12 @@ export default function PurchaseOrdersPage() {
     () => ({
       status: statusFilter || undefined,
       item_id: itemFilter || undefined,
+      supplier_id: supplierFilter || undefined,
+      misc_category_id: categoryFilter || undefined,
       date_from: dateFrom || undefined,
       date_to: dateTo || undefined,
     }),
-    [statusFilter, itemFilter, dateFrom, dateTo],
+    [statusFilter, itemFilter, supplierFilter, categoryFilter, dateFrom, dateTo],
   );
 
   // Reference data that does not change with a filter — loaded once.
@@ -113,13 +121,17 @@ export default function PurchaseOrdersPage() {
       branchesApi.list(),
       inventoryApi.items(),
       inventoryApi.purchaseOrderItemOptions(),
+      inventoryApi.suppliers({ include_inactive: true }),
+      inventoryApi.miscCategories({ include_deleted: true }),
     ])
-      .then(([s, b, i, opts]) => {
+      .then(([s, b, i, opts, allSuppliers, categories]) => {
         if (cancelled) return;
         setSuppliers(s);
         setBranches(b);
         setItems(i);
         setItemOptions(opts);
+        setSupplierOptions([...allSuppliers].sort((x, y) => x.name.localeCompare(y.name)));
+        setCategoryOptions(categories);
       })
       .catch(() => { /* the orders load surfaces any auth/network error */ });
     return () => { cancelled = true; };
@@ -242,11 +254,42 @@ export default function PurchaseOrdersPage() {
             placeholder="All items"
           />
         </div>
-        {(statusFilter || itemFilter || dateFrom || dateTo) && (
+        <div className="w-56">
+          <Select
+            label="Supplier"
+            value={supplierFilter}
+            onChange={(e) => setSupplierFilter(e.target.value)}
+            options={supplierOptions.map((o) => ({
+              value: o.id,
+              label: o.is_active === false ? `${o.name} (inactive)` : o.name,
+            }))}
+            placeholder="All suppliers"
+          />
+        </div>
+        <div className="w-56">
+          <Select
+            label="Misc category"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            options={categoryOptions.map((c) => ({
+              value: c.id,
+              label: c.deleted_at ? `${c.name} (retired)` : c.name,
+            }))}
+            placeholder="All categories"
+          />
+        </div>
+        {(statusFilter || itemFilter || supplierFilter || categoryFilter || dateFrom || dateTo) && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setStatusFilter(''); setItemFilter(''); setDateFrom(''); setDateTo(''); }}
+            onClick={() => {
+              setStatusFilter('');
+              setItemFilter('');
+              setSupplierFilter('');
+              setCategoryFilter('');
+              setDateFrom('');
+              setDateTo('');
+            }}
           >
             Clear
           </Button>
