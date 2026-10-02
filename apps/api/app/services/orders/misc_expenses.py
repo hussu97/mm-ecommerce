@@ -11,9 +11,12 @@ of 12,000 shows 986.30 in a 30-day month (12,000 × 30 / 365).
 **At which level.** PC1 (a cost of the goods — cake supplies for custom
 orders), PC2, PC3, or PC4 (overhead below PC3, the default).
 
-**On which sales.** A set of channels and a set of branches; empty means all.
-The line's cost is split over the *(channel, branch, entity)* cells of the
-window's sales inside that set **in proportion to their GMV**, so the line
+**On which sales.** The buying entity's own, narrowed by a set of channels and
+a set of branches (empty means all). The entity is the PO's
+``legal_entity_id`` — frozen from its branch's counter tax config — so a
+Sharjah (Fatema) cost never lands on Barsha's counter (Najm) sales, and the
+reverse. The line's cost is split over the *(channel, branch, entity)* cells
+of the window's sales inside that set **in proportion to their GMV**, so the line
 reads as the same % of GMV in every column it lands in, even though the AED
 differ. A cost with no placement at all — salaries — is spread over everything.
 
@@ -25,7 +28,8 @@ it was bought, not whom it is for), else its **category**
 
 **No sales to carry it.** When the targeted cells sold nothing in the window: a
 line placed on named channels is split **equally** over those channels (and its
-named branches), so a channel-specific cost still shows against its channel; a
+named branches), under the buying entity, so a channel-specific cost still
+shows against its channel and in its entity's slice; a
 line with no channel placement is **unallocated** — the total column carries it,
 no channel does, and a filtered view leaves it out (it belongs to no slice).
 
@@ -40,7 +44,7 @@ never a cost.
 
 The amount is the **gross, VAT included** — what the invoice says, so a row
 matches the PO a person can open. The input VAT the buying entity reclaims on it
-(the PO branch's counter entity, as the VAT ledger books purchases) is its own
+(the PO's entity, as the VAT ledger books purchases) is its own
 figure, ``vat``, credited back on a line at the same level; net of that credit
 each level carries exactly the net cost. Zero where the entity cannot reclaim
 (the Barsha counter's entity is not VAT-registered).
@@ -67,6 +71,7 @@ from app.models.inventory import (
     PurchaseOrderStatusEnum,
     Supplier,
 )
+from app.models.legal_entity import LegalEntity
 from app.services.orders import tax_identity_service
 
 __all__ = [
@@ -92,9 +97,10 @@ RECEIVED_STATUSES = (
 DEFAULT_LEVEL = "pc4"
 
 #: The grain a cost is split to: (P&L channel, branch, legal entity) of the
-#: sales that carry it. Branch and entity are None on an equal split over named
-#: channels with no sales (there is no order to say which), so a branch or
-#: entity filter leaves that part out.
+#: sales that carry it. On an equal split over named channels with no sales
+#: there is no order to say which branch, so branch is None unless the
+#: placement names branches (a branch filter then leaves that part out); the
+#: entity is the PO's.
 Cell = tuple[str, uuid.UUID | None, uuid.UUID | None]
 
 
@@ -145,6 +151,9 @@ class MiscLine:
     gross: Decimal
     #: What it costs the buying entity: net when it reclaims the VAT, else gross.
     cost: Decimal
+    #: The PO's buying entity; only its own sales carry the line. None (a PO
+    #: with no entity, or a test) lets every entity's sales carry it.
+    legal_entity_id: uuid.UUID | None = None
 
 
 @dataclass
@@ -223,6 +232,8 @@ async def misc_lines(
             Supplier.misc_pnl_channels,
             Supplier.misc_pnl_branch_ids,
             PurchaseOrder.branch_id,
+            PurchaseOrder.legal_entity_id,
+            LegalEntity.vat_registered,
             (line.net_total * share).label("net"),
             (line.entered_total * share).label("gross"),
         )
@@ -230,6 +241,7 @@ async def misc_lines(
         .join(PurchaseOrder, PurchaseOrder.id == line.purchase_order_id)
         .join(Supplier, Supplier.id == PurchaseOrder.supplier_id)
         .join(category, category.id == line.category_id)
+        .outerjoin(LegalEntity, LegalEntity.id == PurchaseOrder.legal_entity_id)
         .where(
             PurchaseOrder.status.in_(RECEIVED_STATUSES),
             line.period_from <= hi,
@@ -240,13 +252,19 @@ async def misc_lines(
         stmt = stmt.where(category.admin_only.is_(False))
 
     out: list[MiscLine] = []
-    reclaims: dict[uuid.UUID | None, bool] = {}
+    # A PO with no entity (none after migration 309) resolves it from its
+    # branch's counter tax config — the rule the write paths freeze.
+    by_branch: dict[uuid.UUID | None, LegalEntity | None] = {}
     for row in (await db.execute(stmt)).all():
-        if row.branch_id not in reclaims:
-            entity = await tax_identity_service.resolve(
-                db, branch_id=row.branch_id, source="cashier"
-            )
-            reclaims[row.branch_id] = tax_identity_service.is_vat_registered(entity)
+        entity_id, reclaims = row.legal_entity_id, row.vat_registered
+        if entity_id is None:
+            if row.branch_id not in by_branch:
+                by_branch[row.branch_id] = await tax_identity_service.resolve(
+                    db, branch_id=row.branch_id, source="cashier"
+                )
+            entity = by_branch[row.branch_id]
+            entity_id = entity.id if entity is not None else None
+            reclaims = tax_identity_service.is_vat_registered(entity)
         gross = Decimal(str(row.gross or 0))
         out.append(
             MiscLine(
@@ -261,7 +279,8 @@ async def misc_lines(
                     supplier_branch_ids=row.misc_pnl_branch_ids,
                 ),
                 gross=gross,
-                cost=Decimal(str(row.net or 0)) if reclaims[row.branch_id] else gross,
+                cost=Decimal(str(row.net or 0)) if reclaims else gross,
+                legal_entity_id=entity_id,
             )
         )
     return out
@@ -275,14 +294,19 @@ _Key = tuple[str, Cell | None]
 def _split(amount: Decimal, line: MiscLine, gmv: Mapping[Cell, Decimal]):
     """`amount` of `line` per cell — unrounded; a None cell is unallocated."""
     placement = line.placement
-    targets = {c: w for c, w in gmv.items() if w > 0 and placement.covers(c)}
+    entity_id = line.legal_entity_id
+    targets = {
+        c: w
+        for c, w in gmv.items()
+        if w > 0 and placement.covers(c) and (entity_id is None or c[2] == entity_id)
+    }
     weight = sum(targets.values(), Decimal("0"))
     if weight > 0:
         return {c: amount * w / weight for c, w in targets.items()}
     if placement.channels:
         # Named channels that sold nothing still carry their cost, evenly.
         cells = [
-            (channel, branch_id, None)
+            (channel, branch_id, entity_id)
             for channel in placement.channels
             for branch_id in (placement.branch_ids or (None,))
         ]

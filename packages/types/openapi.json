@@ -33391,6 +33391,18 @@
             "title": "Items",
             "type": "array"
           },
+          "legal_entity_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Entity Id"
+          },
           "misc_items": {
             "default": [],
             "items": {

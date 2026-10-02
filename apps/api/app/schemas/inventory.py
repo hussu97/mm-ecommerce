@@ -760,6 +760,8 @@ class PurchaseOrderResponse(ORMModel):
     origin: str
     supplier_id: UUID
     branch_id: UUID
+    #: The buying entity, frozen from the branch's counter tax config.
+    legal_entity_id: UUID | None = None
     warehouse_id: UUID | None
     business_date: str
     delivery_date: date | None

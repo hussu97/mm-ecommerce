@@ -1606,13 +1606,16 @@ async def create_purchase_order(
         submitter_id=user.id,
         submitted_at=inventory_service.utcnow(),
     )
+    await inventory_service.stamp_po_entity(db, purchase_order)
     db.add(purchase_order)
     await db.flush()
     await inventory_service.build_po_lines(
         db,
         purchase_order,
         data.items,
-        is_vat_deductible=supplier.is_vat_deductible,
+        is_vat_deductible=await inventory_service.po_reclaims_vat(
+            db, purchase_order, supplier
+        ),
         misc_lines=data.misc_items,
         allows_misc=supplier.allows_misc_items,
         allow_gated=po_misc_service.can_see_gated(user),
@@ -1716,7 +1719,9 @@ async def update_purchase_order(
             db,
             purchase_order,
             items,
-            is_vat_deductible=supplier.is_vat_deductible,
+            is_vat_deductible=await inventory_service.po_reclaims_vat(
+                db, purchase_order, supplier
+            ),
             misc_lines=data.misc_items or [],
             allows_misc=supplier.allows_misc_items,
             allow_gated=sees_gated,

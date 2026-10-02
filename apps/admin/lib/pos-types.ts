@@ -499,6 +499,8 @@ export interface PurchaseOrder {
   supplier_id: string;
   supplier_name: string | null;
   branch_id: string;
+  /** The buying entity, frozen from the branch's counter tax config. */
+  legal_entity_id?: string | null;
   warehouse_id: string | null;
   business_date: string;
   delivery_date: string | null;

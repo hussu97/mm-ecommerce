@@ -535,9 +535,10 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
 
 
 async def test_misc_spend_placed_higher_moves_pc1_but_never_pc4(engine, world):
-    """A misc line split over the branch's sales by GMV: at PC4 by default, then
-    moved by its supplier to PC1 on two channels — PC1 falls by its net cost,
-    both channels carry the same % of their GMV, and PC4 does not move."""
+    """A misc line split over its buying entity's sales on the branch by GMV: at
+    PC4 by default — never on the other entity's counter sale — then moved by
+    its supplier to PC1 on two channels: PC1 falls by its net cost, both
+    channels carry the same % of their GMV, and PC4 does not move."""
     from datetime import date
 
     from app.models.inventory import (
@@ -563,6 +564,7 @@ async def test_misc_spend_placed_higher_moves_pc1_but_never_pc4(engine, world):
             status="closed",
             supplier_id=supplier.id,
             branch_id=world["branch"],
+            legal_entity_id=world["entities"][0],  # registered: every sale but C
             business_date=DAY,
         )
         db.add(po)
@@ -599,28 +601,30 @@ async def test_misc_spend_placed_higher_moves_pc1_but_never_pc4(engine, world):
         assert before.total.misc_pc4 == D("105.00")
         assert before.total.misc_pc4_vat == D("5.00")
         assert before.total.pc4 == before.total.pc3 - D("100.00")
-        # Spread over every channel the branch sold on, by GMV (397 in all).
+        # Spread over the registered entity's sales by GMV (347 = 397 less C's
+        # 50, which the unregistered entity sold and so never carries it).
         by_channel = dict(before.channels)
         assert by_channel["talabat"].gmv == D("42.00")
-        assert by_channel["talabat"].misc_pc4 == D("11.11")  # 105 × 42 / 397
+        assert by_channel["talabat"].misc_pc4 == D("12.71")  # 105 × 42 / 347
+        assert by_channel["counter"].misc_pc4 == D("0.00")
         assert sum(c.misc_pc4 for c in by_channel.values()) == D("105.00")
 
         supplier.misc_pnl_level = "pc1"
-        supplier.misc_pnl_channels = ["counter", "talabat"]
+        supplier.misc_pnl_channels = ["custom", "talabat"]
         await db.flush()
         after = await build()
         assert after.total.pc4 == before.total.pc4
         assert after.total.pc1 == before.total.pc1 - D("100.00")
         assert after.total.misc_pc4 == D("0.00")
         by_channel = dict(after.channels)
-        counter, talabat = by_channel["counter"], by_channel["talabat"]
-        assert counter.misc_pc1 + talabat.misc_pc1 == D("105.00")
+        custom, talabat = by_channel["custom"], by_channel["talabat"]
+        assert custom.misc_pc1 + talabat.misc_pc1 == D("105.00")
         # The same % of GMV, up to the fils each part is rounded to.
-        gap = counter.share(counter.misc_pc1) - talabat.share(talabat.misc_pc1)
+        gap = custom.share(custom.misc_pc1) - talabat.share(talabat.misc_pc1)
         assert abs(gap) < D("0.05")
         assert by_channel["website_delivery"].misc_pc1 == D("0.00")
         (row,) = [r for r in after.misc if r.category_id == category.id]
-        assert set(after.misc_amounts(row)) == {"counter", "talabat", "total"}
+        assert set(after.misc_amounts(row)) == {"custom", "talabat", "total"}
         assert after.misc_amounts(row)["total"] == (D("105.00"), D("5.00"))
         await db.rollback()
 

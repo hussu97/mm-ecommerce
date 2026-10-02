@@ -897,6 +897,16 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    #: The entity that buys — frozen at creation from the branch's counter tax
+    #: config (`inventory_service.resolve_po_entity`; migration 309). It decides
+    #: whether the PO's VAT is reclaimable, which entity's VAT ledger books it,
+    #: and which entity's sales carry its misc cost on the P&L.
+    legal_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("warehouses.id", ondelete="SET NULL"),

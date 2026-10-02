@@ -37,7 +37,15 @@ GMV = {
 }
 
 
-def _line(gross, cost=None, *, category="Salary", placement=Placement(), cat_id=None):
+def _line(
+    gross,
+    cost=None,
+    *,
+    category="Salary",
+    placement=Placement(),
+    cat_id=None,
+    entity=None,
+):
     return MiscLine(
         category_id=cat_id or uuid.uuid5(uuid.NAMESPACE_DNS, category),
         category=category,
@@ -45,6 +53,7 @@ def _line(gross, cost=None, *, category="Salary", placement=Placement(), cat_id=
         placement=placement,
         gross=D(gross),
         cost=D(cost if cost is not None else gross),
+        legal_entity_id=entity,
     )
 
 
@@ -119,6 +128,44 @@ def test_a_channel_placed_cost_with_no_sales_is_split_evenly_over_its_channels()
         ("website_pickup", None, None): (D("50.00"), D("0.00")),
     }
     assert row.unallocated == (D("0"), D("0"))
+
+
+def test_a_cost_lands_only_on_its_buying_entitys_sales():
+    """A Sharjah (Fatema) PO never lands on Barsha's counter (Najm) sales, and a
+    Barsha PO never on Fatema's — even unplaced, where it spreads over all."""
+    brs = uuid.uuid4()
+    najm = uuid.uuid4()
+    gmv = {
+        ("counter", SHJ, MM): D("1000.00"),
+        ("talabat", brs, MM): D("1000.00"),  # Barsha's marketplace: Fatema
+        ("counter", brs, najm): D("2000.00"),
+    }
+    (fatema_row,) = allocate([_line("300.00", entity=MM)], gmv)
+    assert fatema_row.cells == {
+        ("counter", SHJ, MM): (D("150.00"), D("0.00")),
+        ("talabat", brs, MM): (D("150.00"), D("0.00")),
+    }
+    (najm_row,) = allocate([_line("300.00", category="Rent", entity=najm)], gmv)
+    assert najm_row.cells == {("counter", brs, najm): (D("300.00"), D("0.00"))}
+
+
+def test_an_entity_with_no_sales_and_no_channel_placement_is_unallocated():
+    (row,) = allocate([_line("90.00", entity=uuid.uuid4())], GMV)
+    assert row.cells == {}
+    assert row.unallocated == (D("90.00"), D("0.00"))
+
+
+def test_an_even_split_with_no_sales_stays_in_its_entitys_slice():
+    """Cake supplies on custom orders in a month with none: the even split is
+    booked under the PO's entity, so the entity filter keeps it."""
+    supplies = Placement(level="pc1", channels=("custom",))
+    (row,) = allocate(
+        [_line("100.00", category="Cake Supplies", placement=supplies, entity=MM)],
+        {("counter", SHJ, MM): D("1000.00")},
+    )
+    assert row.cells == {("custom", None, MM): (D("100.00"), D("0.00"))}
+    kept = row.amounts(lambda cell: cell[2] == MM)
+    assert kept == {"custom": (D("100.00"), D("0.00"))}
 
 
 def test_a_branch_placed_cost_whose_branch_sold_nothing_is_unallocated():

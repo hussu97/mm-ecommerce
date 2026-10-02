@@ -759,13 +759,14 @@ async def _misc_po(db, supplier, branch_id, user_id, *, status, lines, allow_gat
         business_date="2026-09-20",
         creator_id=user_id,
     )
+    await inventory_service.stamp_po_entity(db, po)
     db.add(po)
     await db.flush()
     await inventory_service.build_po_lines(
         db,
         po,
         [],
-        is_vat_deductible=supplier.is_vat_deductible,
+        is_vat_deductible=await inventory_service.po_reclaims_vat(db, po, supplier),
         misc_lines=lines,
         allows_misc=True,
         allow_gated=allow_gated,
@@ -910,7 +911,7 @@ async def test_pnl_misc_expenses_spread_per_day_over_received_pos(engine, env):
             ),
         )
         year = (date(2026, 1, 1), date(2026, 12, 31))
-        await _misc_po(
+        po = await _misc_po(
             db,
             supplier,
             branch_id,
@@ -959,8 +960,11 @@ async def test_pnl_misc_expenses_spread_per_day_over_received_pos(engine, env):
                 allow_gated=True,
             )
 
-        # One cell of sales, so each category's row is its whole spend.
-        cell = ("counter", branch_id, None)
+        # One cell of the buying entity's sales, so each category's row is its
+        # whole spend.
+        entity_id = po.legal_entity_id
+        assert entity_id is not None
+        cell = ("counter", branch_id, entity_id)
         gmv = {cell: D("1000")}
 
         async def rows(date_from, date_to, *, gated=True):
@@ -1023,7 +1027,8 @@ async def test_pnl_misc_expenses_spread_per_day_over_received_pos(engine, env):
         assert placed.placement.branch_ids == (branch_id,)
         # No custom sales on the branch: split evenly over the named channel.
         (row,) = allocate([placed], gmv)
-        assert row.cells == {("custom", branch_id, None): (D("105.00"), D("5.00"))}
+        # Under the PO's entity, so an entity slice keeps it.
+        assert row.cells == {("custom", branch_id, entity_id): (D("105.00"), D("5.00"))}
         # An unknown channel or branch is refused.
         with pytest.raises(BadRequestError):
             await supplier_service.update_supplier(

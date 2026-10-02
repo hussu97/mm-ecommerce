@@ -11,10 +11,16 @@ import Link from 'next/link';
 
 import {
   inventoryApi,
+  legalEntitiesApi,
   type PurchaseOrderMiscCategory,
   type PurchaseOrderMiscPeriod,
 } from '@/lib/pos-api';
-import type { PurchaseOrder, PurchaseOrderMiscItem, PurchaseOrderStatus } from '@/lib/pos-types';
+import type {
+  LegalEntity,
+  PurchaseOrder,
+  PurchaseOrderMiscItem,
+  PurchaseOrderStatus,
+} from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
 import { Modal } from '@/components/pos/ResourcePage';
@@ -47,6 +53,7 @@ export default function PurchaseOrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingMisc, setEditingMisc] = useState<PurchaseOrderMiscItem | null>(null);
+  const [entities, setEntities] = useState<LegalEntity[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,6 +68,9 @@ export default function PurchaseOrderDetailPage() {
   }, [id]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void legalEntitiesApi.list().then(setEntities).catch(() => setEntities([]));
+  }, []);
 
   if (loading) return <div className="p-6"><Spinner /></div>;
   if (error || !po) return (
@@ -80,8 +90,12 @@ export default function PurchaseOrderDetailPage() {
         <Badge variant={STATUS_VARIANT[po.status]}>{po.status.replace(/_/g, ' ')}</Badge>
       </div>
 
-      <div className="grid gap-3 border border-gray-200 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 border border-gray-200 p-4 text-sm sm:grid-cols-2 lg:grid-cols-5">
         <Detail label="Supplier" value={po.supplier_name ?? '—'} />
+        <Detail
+          label="Legal entity"
+          value={entities.find(e => e.id === po.legal_entity_id)?.brand_name ?? '—'}
+        />
         <Detail label="Business date" value={po.business_date} />
         <Detail label="Delivery date" value={po.delivery_date ?? '—'} />
         <Detail label="Origin" value={po.origin} />

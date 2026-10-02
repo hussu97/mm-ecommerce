@@ -21010,6 +21010,8 @@ export interface components {
              * @default []
              */
             items: components["schemas"]["PurchaseOrderLineResponse"][];
+            /** Legal Entity Id */
+            legal_entity_id?: string | null;
             /**
              * Misc Items
              * @default []
