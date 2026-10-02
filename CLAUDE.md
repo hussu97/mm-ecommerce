@@ -215,6 +215,30 @@ Whenever you add, remove, or rename any event in `apps/web/lib/analytics.ts`, yo
 
 Failure to keep this file in sync means the Umami dashboard will be misconfigured in production.
 
+### W11. Prod Access From a Claude Cloud Session
+A Claude Code cloud session for this repo already has access to the prod VM,
+its Postgres and the GCS buckets. Use the helpers that setup installs, and
+nothing else:
+
+| Need | Command |
+|---|---|
+| Shell on the VM | `mm <cmd>` (use `sudo` for docker) |
+| SQL | `mmsql "<sql>"` (**read-write**, so run only SELECTs unless asked; `MMSQL_FLAGS=-At` for compact output) |
+| Container logs | `mmlogs <svc> [--since 1h]` (`api`, `pos-api`, `aggregator-worker`, `nginx`, …) |
+| GCS | `gcloud storage …` |
+| Access is broken | `mm-diag` |
+
+**Never** run `gcloud compute ssh`, generate a new SSH key, or edit the
+instance's `ssh-keys` metadata or OS Login settings to get in. The session's
+key is already authorised, and `gcloud compute ssh` would write a new key into
+prod's metadata. If a helper fails, run `mm-diag`, report what it says, and
+follow the troubleshooting table in
+[`docs/claude-cloud-env.md`](docs/claude-cloud-env.md). Don't improvise a
+different way in.
+
+The helpers exist only in cloud sessions. On a local machine, use the
+developer's own access.
+
 ## Task Management
 
 1. **Plan First**: Write plan to 'tasks/todo.md' with checkable items
