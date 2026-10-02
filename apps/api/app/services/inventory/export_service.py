@@ -625,7 +625,7 @@ PURCHASE_ORDER_EXPORT_HEADERS = [
     "supplier",
     "status",
     "business_date",
-    "delivery_date",
+    "invoice_date",
     "invoice_reference",
     "invoice_attached",
     "item_lines",
@@ -645,7 +645,7 @@ PURCHASE_ORDER_LINE_EXPORT_HEADERS = [
     "supplier",
     "status",
     "business_date",
-    "delivery_date",
+    "invoice_date",
     "invoice_reference",
     "invoice_attached",
     "line_type",
@@ -669,8 +669,8 @@ PURCHASE_ORDER_LINE_EXPORT_HEADERS = [
 
 
 def _po_sort_key(order: PurchaseOrder) -> tuple[date, str]:
-    """Delivery date ascending, undated last, then by reference for stability."""
-    return (order.delivery_date or date.max, order.reference or "")
+    """Invoice date ascending, undated last, then by reference for stability."""
+    return (order.invoice_date or date.max, order.reference or "")
 
 
 def export_purchase_orders_workbook(
@@ -682,7 +682,7 @@ def export_purchase_orders_workbook(
 ) -> bytes:
     """Two sheets: one row per purchase order, and one row per line.
 
-    Both are sorted by delivery date ascending (undated orders last). The lines
+    Both are sorted by invoice date ascending (undated orders last). The lines
     sheet splits inventory lines from miscellaneous (non-inventory) lines with a
     ``line_type`` column, and repeats the PO header fields and totals on each row
     so a line stands alone. Money columns are written as numbers so the operator
@@ -701,7 +701,7 @@ def export_purchase_orders_workbook(
         view = po_misc_service.visible_misc(order, sees_gated=sees_gated)
         supplier = supplier_names.get(order.supplier_id, "")
         status = order.status.replace("_", " ")
-        delivery = order.delivery_date.isoformat() if order.delivery_date else ""
+        invoiced = order.invoice_date.isoformat() if order.invoice_date else ""
         invoice_ref = order.supplier_reference or ""
         invoice_attached = "Yes" if order.invoice_object_key else "No"
         header_rows.append(
@@ -710,7 +710,7 @@ def export_purchase_orders_workbook(
                 supplier,
                 status,
                 order.business_date or "",
-                delivery,
+                invoiced,
                 invoice_ref,
                 invoice_attached,
                 len(order.items),
@@ -729,7 +729,7 @@ def export_purchase_orders_workbook(
             supplier,
             status,
             order.business_date or "",
-            delivery,
+            invoiced,
             invoice_ref,
             invoice_attached,
         ]

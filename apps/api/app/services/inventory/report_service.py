@@ -1125,7 +1125,7 @@ async def _purchase_order_overlap(
     ``received`` is every PO receipt of the item at this branch on the report's
     business date, in storage units (a receipt reversed since is left out).
     ``expected`` is every open PO for the item at the branch due by that date —
-    its delivery date, or the date it was raised when none was set — with the
+    its invoice date, or the date it was raised when none was set — with the
     quantity still to arrive. Informational only: nothing here blocks a report.
     """
     if not item_ids:
@@ -1174,7 +1174,7 @@ async def _purchase_order_overlap(
             select(
                 PurchaseOrderItem.item_id,
                 PurchaseOrder.reference,
-                PurchaseOrder.delivery_date,
+                PurchaseOrder.invoice_date,
                 PurchaseOrderItem.quantity,
                 PurchaseOrderItem.received_quantity,
                 PurchaseOrderItem.unit,
@@ -1187,9 +1187,9 @@ async def _purchase_order_overlap(
                 PurchaseOrder.branch_id == report.branch_id,
                 PurchaseOrder.status.in_(_OPEN_PURCHASE_ORDER_STATUSES),
                 or_(
-                    PurchaseOrder.delivery_date <= due_by,
+                    PurchaseOrder.invoice_date <= due_by,
                     and_(
-                        PurchaseOrder.delivery_date.is_(None),
+                        PurchaseOrder.invoice_date.is_(None),
                         PurchaseOrder.business_date <= report.business_date,
                     ),
                 ),
@@ -1209,7 +1209,7 @@ async def _purchase_order_overlap(
     for (
         item_id,
         reference,
-        delivery_date,
+        invoice_date,
         ordered,
         received,
         unit,
@@ -1226,7 +1226,7 @@ async def _purchase_order_overlap(
             {
                 "reference": reference,
                 "quantity": str(quantity(outstanding)),
-                "delivery_date": delivery_date.isoformat() if delivery_date else None,
+                "invoice_date": invoice_date.isoformat() if invoice_date else None,
             }
         )
     return overlap

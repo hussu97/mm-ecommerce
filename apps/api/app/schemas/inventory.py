@@ -645,7 +645,7 @@ class PurchaseOrderCreate(BaseModel):
     supplier_id: UUID
     branch_id: UUID
     warehouse_id: UUID | None = None
-    delivery_date: date | None = None
+    invoice_date: date | None = None
     supplier_reference: str | None = Field(None, max_length=100)
     additional_cost: Decimal = Field(Decimal("0"), ge=0)
     notes: str | None = None
@@ -662,7 +662,7 @@ class PurchaseOrderCreate(BaseModel):
 class PurchaseOrderUpdate(BaseModel):
     supplier_id: UUID | None = None
     warehouse_id: UUID | None = None
-    delivery_date: date | None = None
+    invoice_date: date | None = None
     supplier_reference: str | None = Field(None, max_length=100)
     additional_cost: Decimal | None = Field(None, ge=0)
     notes: str | None = None
@@ -764,7 +764,7 @@ class PurchaseOrderResponse(ORMModel):
     legal_entity_id: UUID | None = None
     warehouse_id: UUID | None
     business_date: str
-    delivery_date: date | None
+    invoice_date: date | None
     supplier_reference: str | None
     invoice_object_key: str | None
     additional_cost: Decimal

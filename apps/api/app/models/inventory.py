@@ -913,7 +913,9 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
         nullable=True,
     )
     business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
-    delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: The date on the supplier's invoice (migration 310; was ``delivery_date``).
+    #: An open PO counts as due on the shift report's Received warning from it.
+    invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     #: The supplier's own PO/invoice number, for reconciliation (optional).
     supplier_reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
     #: GCS object key of the uploaded invoice image in the private finance bucket

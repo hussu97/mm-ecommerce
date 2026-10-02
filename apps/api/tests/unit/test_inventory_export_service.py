@@ -175,7 +175,7 @@ def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery
         supplier_id=supplier_id,
         status="closed",
         business_date="2026-09-20",
-        delivery_date=datetime.date(2026, 9, 25),
+        invoice_date=datetime.date(2026, 9, 25),
         supplier_reference="INV9",
         invoice_object_key="k",
         subtotal_net=Decimal("100"),
@@ -217,7 +217,7 @@ def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery
         supplier_id=supplier_id,
         status="pending",
         business_date="2026-09-19",
-        delivery_date=datetime.date(2026, 9, 22),
+        invoice_date=datetime.date(2026, 9, 22),
         supplier_reference=None,
         invoice_object_key=None,
         subtotal_net=Decimal("50"),
@@ -233,7 +233,7 @@ def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery
         supplier_id=supplier_id,
         status="draft",
         business_date="2026-09-18",
-        delivery_date=None,
+        invoice_date=None,
         supplier_reference=None,
         invoice_object_key=None,
         subtotal_net=Decimal("0"),
@@ -252,7 +252,7 @@ def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery
     assert workbook.sheetnames == ["Purchase orders", "Lines"]
 
     header = workbook["Purchase orders"]
-    # Delivery date ascending; the undated PO sorts last.
+    # Invoice date ascending; the undated PO sorts last.
     assert [r[0] for r in header.iter_rows(min_row=2, values_only=True)] == [
         "PO-1",
         "PO-2",
@@ -330,7 +330,7 @@ def _rent_po():
         supplier_id=uuid.uuid4(),
         status="closed",
         business_date="2026-10-01",
-        delivery_date=None,
+        invoice_date=None,
         supplier_reference=None,
         invoice_object_key=None,
         subtotal_net=Decimal("1020"),

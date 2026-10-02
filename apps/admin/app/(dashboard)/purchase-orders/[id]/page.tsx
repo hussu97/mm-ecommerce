@@ -90,14 +90,13 @@ export default function PurchaseOrderDetailPage() {
         <Badge variant={STATUS_VARIANT[po.status]}>{po.status.replace(/_/g, ' ')}</Badge>
       </div>
 
-      <div className="grid gap-3 border border-gray-200 p-4 text-sm sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 border border-gray-200 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <Detail label="Supplier" value={po.supplier_name ?? '—'} />
         <Detail
           label="Legal entity"
           value={entities.find(e => e.id === po.legal_entity_id)?.brand_name ?? '—'}
         />
         <Detail label="Business date" value={po.business_date} />
-        <Detail label="Delivery date" value={po.delivery_date ?? '—'} />
         <Detail label="Origin" value={po.origin} />
       </div>
 
@@ -312,6 +311,7 @@ function EditMiscLine({
 
 function InvoicePanel({ po, onSaved }: { po: PurchaseOrder; onSaved: () => void | Promise<void> }) {
   const [reference, setReference] = useState(po.supplier_reference ?? '');
+  const [invoiceDate, setInvoiceDate] = useState(po.invoice_date ?? '');
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -321,9 +321,12 @@ function InvoicePanel({ po, onSaved }: { po: PurchaseOrder; onSaved: () => void 
     setSaving(true);
     setMsg('');
     try {
+      const changes: { supplier_reference?: string | null; invoice_date?: string | null } = {};
       if (reference.trim() !== (po.supplier_reference ?? '')) {
-        await inventoryApi.updatePurchaseOrder(po.id, { supplier_reference: reference.trim() || null });
+        changes.supplier_reference = reference.trim() || null;
       }
+      if (invoiceDate !== (po.invoice_date ?? '')) changes.invoice_date = invoiceDate || null;
+      if (Object.keys(changes).length) await inventoryApi.updatePurchaseOrder(po.id, changes);
       if (file) {
         await inventoryApi.uploadPurchaseOrderInvoice(po.id, file);
         setFile(null);
@@ -340,12 +343,18 @@ function InvoicePanel({ po, onSaved }: { po: PurchaseOrder; onSaved: () => void 
   return (
     <div className="border border-gray-200 p-4">
       <p className="mb-3 text-xs uppercase tracking-wider text-gray-400">Invoice</p>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-4">
         <Input
           label="Invoice / supplier reference"
           value={reference}
           onChange={(e) => setReference(e.target.value)}
           placeholder="Their PO / invoice no."
+        />
+        <Input
+          label="Invoice date"
+          type="date"
+          value={invoiceDate}
+          onChange={(e) => setInvoiceDate(e.target.value)}
         />
         <div className="text-xs font-body sm:col-span-2">
           <span className="mb-1 block text-gray-500">Invoice image</span>

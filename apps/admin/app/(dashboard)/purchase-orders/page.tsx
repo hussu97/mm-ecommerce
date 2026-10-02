@@ -351,8 +351,8 @@ export default function PurchaseOrdersPage() {
             {
               header: 'Delivery',
               sortable: true,
-              sortAccessor: (po) => po.delivery_date ?? null,
-              render: (po) => <span className="text-gray-500">{po.delivery_date ?? '—'}</span>,
+              sortAccessor: (po) => po.invoice_date ?? null,
+              render: (po) => <span className="text-gray-500">{po.invoice_date ?? '—'}</span>,
             },
           ]}
         />
@@ -508,7 +508,7 @@ function CreateOrder({
   const [branchId, setBranchId] = useState(
     () => branches.find((b) => b.name.toLowerCase().includes('sharjah'))?.id ?? branches[0]?.id ?? '',
   );
-  const [deliveryDate, setDeliveryDate] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState('');
   const [supplierReference, setSupplierReference] = useState('');
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [lines, setLines] = useState<DraftLine[]>([{ item_id: '', quantity: '1', entered_total: '0' }]);
@@ -635,7 +635,7 @@ function CreateOrder({
       po = await inventoryApi.createPurchaseOrder({
         supplier_id: supplierId,
         branch_id: branchId,
-        delivery_date: deliveryDate || null,
+        invoice_date: invoiceDate || null,
         supplier_reference: supplierReference.trim() || null,
         items: valid.map((l) => ({
           item_id: l.item_id,
@@ -690,10 +690,10 @@ function CreateOrder({
           placeholder="Choose…"
         />
         <Input
-          label="Delivery date"
+          label="Invoice date"
           type="date"
-          value={deliveryDate}
-          onChange={(e) => setDeliveryDate(e.target.value)}
+          value={invoiceDate}
+          onChange={(e) => setInvoiceDate(e.target.value)}
         />
         <Input
           label="Supplier reference"

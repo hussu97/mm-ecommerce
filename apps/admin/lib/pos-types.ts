@@ -503,7 +503,7 @@ export interface PurchaseOrder {
   legal_entity_id?: string | null;
   warehouse_id: string | null;
   business_date: string;
-  delivery_date: string | null;
+  invoice_date: string | null;
   supplier_reference: string | null;
   invoice_object_key: string | null;
   invoice_url: string | null;

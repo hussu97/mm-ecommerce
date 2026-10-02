@@ -109,7 +109,7 @@ async def _world(db):
 
 
 def _po(
-    branch, supplier, user, *, status, delivery_date=None, business_date=BUSINESS_DATE
+    branch, supplier, user, *, status, invoice_date=None, business_date=BUSINESS_DATE
 ):
     return PurchaseOrder(
         reference=f"PO-{MARKER}-{uuid.uuid4().hex[:8]}",
@@ -118,7 +118,7 @@ def _po(
         supplier_id=supplier.id,
         branch_id=branch.id,
         business_date=business_date,
-        delivery_date=delivery_date,
+        invoice_date=invoice_date,
         creator_id=user.id,
     )
 
@@ -174,14 +174,14 @@ async def test_a_line_knows_its_same_day_receipt_and_its_open_po(db):
         supplier,
         user,
         status=PurchaseOrderStatusEnum.APPROVED.value,
-        delivery_date=date(2026, 9, 25),
+        invoice_date=date(2026, 9, 25),
     )
     later_po = _po(
         branch,
         supplier,
         user,
         status=PurchaseOrderStatusEnum.APPROVED.value,
-        delivery_date=date(2026, 9, 30),
+        invoice_date=date(2026, 9, 30),
     )
     db.add_all([received_po, open_po, later_po])
     await db.flush()
@@ -230,7 +230,7 @@ async def test_a_line_knows_its_same_day_receipt_and_its_open_po(db):
         {
             "reference": open_po.reference,
             "quantity": "4500.0000",
-            "delivery_date": "2026-09-25",
+            "invoice_date": "2026-09-25",
         }
     ]
     assert flour.id not in overlap, "a PO due next week is not today's delivery"

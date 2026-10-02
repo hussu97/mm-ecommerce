@@ -32455,7 +32455,7 @@
             "title": "Branch Id",
             "type": "string"
           },
-          "delivery_date": {
+          "invoice_date": {
             "anyOf": [
               {
                 "format": "date",
@@ -32465,7 +32465,7 @@
                 "type": "null"
               }
             ],
-            "title": "Delivery Date"
+            "title": "Invoice Date"
           },
           "items": {
             "items": {
@@ -33339,18 +33339,6 @@
             ],
             "title": "Creator Id"
           },
-          "delivery_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Delivery Date"
-          },
           "has_invoice": {
             "default": false,
             "title": "Has Invoice",
@@ -33360,6 +33348,18 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "invoice_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Date"
           },
           "invoice_object_key": {
             "anyOf": [
@@ -33532,7 +33532,7 @@
           "branch_id",
           "warehouse_id",
           "business_date",
-          "delivery_date",
+          "invoice_date",
           "supplier_reference",
           "invoice_object_key",
           "additional_cost",
@@ -33570,7 +33570,7 @@
             ],
             "title": "Additional Cost"
           },
-          "delivery_date": {
+          "invoice_date": {
             "anyOf": [
               {
                 "format": "date",
@@ -33580,7 +33580,7 @@
                 "type": "null"
               }
             ],
-            "title": "Delivery Date"
+            "title": "Invoice Date"
           },
           "items": {
             "anyOf": [

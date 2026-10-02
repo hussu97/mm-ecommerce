@@ -20631,8 +20631,8 @@ export interface components {
              * Format: uuid
              */
             branch_id: string;
-            /** Delivery Date */
-            delivery_date?: string | null;
+            /** Invoice Date */
+            invoice_date?: string | null;
             /** Items */
             items?: components["schemas"]["PurchaseOrderLineInput"][];
             /** Misc Items */
@@ -20989,8 +20989,6 @@ export interface components {
             created_at: string;
             /** Creator Id */
             creator_id: string | null;
-            /** Delivery Date */
-            delivery_date: string | null;
             /**
              * Has Invoice
              * @default false
@@ -21001,6 +20999,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Invoice Date */
+            invoice_date: string | null;
             /** Invoice Object Key */
             invoice_object_key: string | null;
             /** Invoice Url */
@@ -21058,8 +21058,8 @@ export interface components {
         PurchaseOrderUpdate: {
             /** Additional Cost */
             additional_cost?: number | string | null;
-            /** Delivery Date */
-            delivery_date?: string | null;
+            /** Invoice Date */
+            invoice_date?: string | null;
             /** Items */
             items?: components["schemas"]["PurchaseOrderLineInput"][] | null;
             /** Misc Items */

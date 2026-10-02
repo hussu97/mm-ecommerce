@@ -1598,7 +1598,7 @@ async def create_purchase_order(
         branch_id=data.branch_id,
         warehouse_id=data.warehouse_id,
         business_date=business_date,
-        delivery_date=data.delivery_date,
+        invoice_date=data.invoice_date,
         supplier_reference=data.supplier_reference,
         additional_cost=data.additional_cost,
         notes=data.notes,
@@ -1664,10 +1664,10 @@ async def update_purchase_order(
     )
     if received:
         # Once stock has moved, the lines and quantities the ledger acted on are
-        # frozen — but the invoice details (the supplier's invoice/PO number and
-        # notes) can still be corrected, and the invoice image re-attached via its
-        # own endpoint. Anything else is refused.
-        editable_after_receipt = {"supplier_reference", "notes"}
+        # frozen — but the invoice details (the supplier's invoice/PO number, its
+        # date and notes) can still be corrected, and the invoice image
+        # re-attached via its own endpoint. Anything else is refused.
+        editable_after_receipt = {"supplier_reference", "invoice_date", "notes"}
         changed = set(
             data.model_dump(exclude_unset=True, exclude={"items", "misc_items"}).keys()
         )
