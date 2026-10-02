@@ -2050,6 +2050,39 @@ async def test_build_modifier_snapshot_prefers_product_option_over_shared_global
     assert snap[0]["modifier_option_id"] != str(red_velvet_opt)
 
 
+def test_pick_product_option_folds_plural_and_abbreviated_picks():
+    """Regression for the 2026-10-02 DSO count: mix-box picks spelled in the plural
+    ("Cookies and Cream Cookies", Noon/Deliveroo) and Careem's "3 Pcs" matched no
+    option, so those orders consumed nothing. Within the line's own options they
+    now fold onto the singular / "Pieces" option."""
+    cookies_cream, red_velvet, walnut = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    mix_box = [
+        (cookies_cream, "Cookies and Cream Cookie"),
+        (red_velvet, "Red Velvet and Nutella Cookie"),
+        (walnut, "Dark Chocolate and Walnut Brownie"),
+    ]
+    pick = promote._pick_product_option
+    assert pick(mix_box, "Cookies and Cream Cookies") == cookies_cream
+    assert pick(mix_box, "Red Velvet & Nutella Cookies") == red_velvet
+    assert pick(mix_box, "Dark Chocolate and Walnut Brownies") == walnut
+
+    three, six = uuid.uuid4(), uuid.uuid4()
+    sizes = [(three, "3 Pieces"), (six, "6 Pieces")]
+    assert pick(sizes, "3 Pcs") == three
+    assert pick(sizes, "6 pc") == six
+    assert pick(sizes, "9 Pcs") is None
+
+
+def test_pick_product_option_exact_wins_and_fold_ambiguity_is_refused():
+    exact, plural = uuid.uuid4(), uuid.uuid4()
+    both = [(exact, "Lindor Brownie"), (plural, "Lindor Brownies")]
+    # An exact spelling is never overridden by the fold...
+    assert promote._pick_product_option(both, "Lindor Brownie") == exact
+    # ...and when only the fold matches, two options collapsing together is refused.
+    assert promote._pick_product_option(both, "LINDOR BROWNIE!") is None
+    assert promote._pick_product_option(both, "") is None
+
+
 async def test_build_modifier_snapshot_keeps_verbatim_numeric_option_name():
     """ "3 Pieces" is a real option name — the count-strip must not fire when the
     verbatim name already matches, so it is never mangled to "Pieces"."""

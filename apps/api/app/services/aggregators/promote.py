@@ -82,6 +82,7 @@ from app.services.aggregators import (
     policy,
     reconcile,
 )
+from app.services.aggregators.catalog_diff import normalize_name
 from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle, tax_identity_service
@@ -719,8 +720,7 @@ async def _match_product_option(
     refused, not guessed — if two of the product's options normalise to the same
     name, return None (a curated map row is the escape hatch there).
     """
-    key = external_item_map_service.normalize_ref(name)
-    if key is None or product_id is None:
+    if external_item_map_service.normalize_ref(name) is None or product_id is None:
         return None
     rows = (
         await db.execute(
@@ -735,10 +735,42 @@ async def _match_product_option(
             )
         )
     ).all()
-    matches = {
-        row[0] for row in rows if external_item_map_service.normalize_ref(row[1]) == key
+    return _pick_product_option([(row[0], row[1]) for row in rows], name)
+
+
+def _option_fold(name: str | None) -> str:
+    """`catalog_diff.normalize_name` (`&`↔`and`, punctuation, plural) with "pc"/"pcs"
+    read as "piece", so "3 Pcs" folds equal to "3 Pieces"."""
+    return " ".join(
+        "piece" if token in ("pc", "pcs") else token
+        for token in normalize_name(name).split()
+    )
+
+
+def _pick_product_option(options: list[tuple[Any, str]], name: str | None) -> Any:
+    """The one option among a product's own `(id, name)` options that `name` means.
+
+    Exact normalised name first. Only when nothing matches exactly, a cosmetic fold
+    (`_option_fold`): channels spell a mix-box pick in the plural ("Cookies and
+    Cream Cookies" for MM's "Cookies and Cream Cookie") or abbreviate a size ("3
+    Pcs"), and an unmatched pick consumes nothing — the 2026-10-02 DSO count was
+    short 8 brownies and cookies from exactly these. The fold is safe here, unlike
+    in the global map, because it only ever chooses among options THIS product
+    offers; two of them folding together is refused, never guessed.
+    """
+    key = external_item_map_service.normalize_ref(name)
+    if key is None:
+        return None
+    exact = {
+        oid
+        for oid, opt in options
+        if external_item_map_service.normalize_ref(opt) == key
     }
-    return next(iter(matches)) if len(matches) == 1 else None
+    if exact:
+        return next(iter(exact)) if len(exact) == 1 else None
+    fold = _option_fold(name)
+    folded = {oid for oid, opt in options if _option_fold(opt) == fold}
+    return next(iter(folded)) if len(folded) == 1 else None
 
 
 async def _build_modifier_snapshot(
