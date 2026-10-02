@@ -19,6 +19,7 @@ env | grep -iE 'proxy|cloudsdk|token|_key|google|gcloud|ccr_|ca_|ssl|cert' | gre
   awk -F= '{v=substr($0,length($1)+2); if ($1 ~ /TOKEN|KEY|SECRET/ && v != "proxy-injected") v="<set, " length(v) " chars>"; print $1"="v}'
 echo "MM_VM_SSH_KEY_B64: ${MM_VM_SSH_KEY_B64:+set (${#MM_VM_SSH_KEY_B64} chars)}"
 echo "MM_GCS_SA_KEY_B64: ${MM_GCS_SA_KEY_B64:+set (${#MM_GCS_SA_KEY_B64} chars)}"
+echo "MM_VM_USER: ${MM_VM_USER:+set}${MM_VM_USER:-NOT SET}"; echo "MM_VM_NAME=${MM_VM_NAME:-<default>} MM_VM_ZONE=${MM_VM_ZONE:-<default>}"
 
 H "3. TLS interception: who signs storage.googleapis.com?"
 T 15 curl -sv -o /dev/null https://storage.googleapis.com/ 2>&1 | grep -E 'issuer:|subject:|SSL certificate verify|HTTP/' | head -5
@@ -53,31 +54,17 @@ T 15 curl -s -o /dev/null -w 'tunnel.cloudproxy.app upgrade -> HTTP %{http_code}
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
   -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' https://tunnel.cloudproxy.app/v4/connect
 
-H "7. preinstalled gcloud: what is it, and where does it hang?"
-which -a gcloud gsutil python3 2>/dev/null
-REAL=$(cat /etc/mm-gcloud-real 2>/dev/null); echo "recorded real launcher: $REAL"
-[ -n "$REAL" ] && { ls -l "$REAL"; file "$REAL" 2>/dev/null; head -3 "$REAL"; }
-SDK=$(cd "$(dirname "$REAL")/.." 2>/dev/null && pwd); echo "SDK=$SDK"
-BPY="$SDK/platform/bundledpythonunix/bin/python3"; ls -l "$BPY" 2>/dev/null || echo "no bundled python"
-echo "-- system python3:"; T 10 python3 -c 'import sys,ssl;print("ok",sys.version.split()[0],ssl.OPENSSL_VERSION)'
-echo "-- bundled python3:"; [ -x "$BPY" ] && T 10 "$BPY" -c 'import sys;print("ok",sys.version.split()[0])'
-echo "-- bundled python3 + ssl:"; [ -x "$BPY" ] && T 10 "$BPY" -c 'import ssl;print("ok",ssl.OPENSSL_VERSION)'
-echo "-- launcher trace (last lines before hang/exit):"
-[ -n "$REAL" ] && T 15 bash -x "$REAL" --version 2>&1 | tail -12
-echo "-- process state while the launcher hangs:"
-if [ -n "$REAL" ]; then
-  "$REAL" --version >/dev/null 2>&1 & LP=$!; sleep 6
-  for p in $LP $(pgrep -P $LP) $(pgrep -f 'gcloud.py' | grep -v $$); do
-    [ -d /proc/$p ] || continue
-    echo "pid $p: $(tr '\0' ' ' </proc/$p/cmdline | cut -c1-160)"
-    grep -E '^State' /proc/$p/status; echo "  wchan=$(cat /proc/$p/wchan 2>/dev/null) syscall=$(cat /proc/$p/syscall 2>/dev/null | cut -d' ' -f1)"
-    ls -l /proc/$p/fd 2>/dev/null | awk 'NR>1{print "  fd",$9,$10,$11}' | head -8
-  done
-  kill $LP 2>/dev/null; pkill -P $LP 2>/dev/null
+H "7. gcloud SDK layout (the wrapper must not have overwritten the SDK launcher)"
+cat /etc/mm-gcloud 2>/dev/null || echo "no /etc/mm-gcloud: setup did not finish"
+. /etc/mm-gcloud 2>/dev/null || true
+which -a gcloud gsutil 2>/dev/null | while read -r p; do echo "$p -> $(readlink -f "$p")"; done
+if [ -n "${SDK:-}" ]; then
+  grep -q 'mm-gcloud-wrapper' "$SDK/bin/gcloud" && echo "!! $SDK/bin/gcloud is the wrapper (clobbered)" || echo "SDK launcher intact: $(head -c 60 "$SDK/bin/gcloud" | head -1)"
+  echo "-- SDK python:"; T 15 "$PY" -c 'import sys,ssl;print("ok",sys.version.split()[0],ssl.OPENSSL_VERSION)'
+  echo "-- SDK's own launcher (should exit, not hang):"; T 30 env -u CLOUDSDK_AUTH_ACCESS_TOKEN "$SDK/bin/gcloud" --version 2>&1 | head -1
 fi
-command -v strace >/dev/null && { echo "-- strace (last syscalls):"; T 10 strace -f -tt "$REAL" --version 2>&1 | tail -8; }
 
-H "8. our wrapper (system python3 + SDK lib)"
+H "8. our wrapper (/usr/local/bin/gcloud)"
 time (T 40 gcloud --version 2>&1 | head -1)
 T 20 gcloud auth list 2>&1 | head -4
 T 20 gcloud config list 2>&1 | grep -vE 'token' | head -10

@@ -16,12 +16,22 @@ don't mention most of this.
 
 | | Behaviour | Consequence |
 |---|---|---|
-| Egress | Everything goes through a local HTTP CONNECT proxy (`https_proxy=http://127.0.0.1:<port>`). Direct TCP is blocked, and the proxy refuses `CONNECT` to anything other than 443. | **SSH on port 22 can't work.** SSH rides [IAP TCP forwarding](https://cloud.google.com/iap/docs/using-tcp-forwarding) instead, a WebSocket to `tunnel.cloudproxy.app:443`. |
+| Egress | Traffic goes through a local HTTP CONNECT proxy (`https_proxy=http://127.0.0.1:<port>`), with network access set to Full. Direct TCP to port 22 is blocked, but the proxy does accept `CONNECT host:22`. | SSH uses [IAP TCP forwarding](https://cloud.google.com/iap/docs/using-tcp-forwarding), a WebSocket to `tunnel.cloudproxy.app:443`. It doesn't depend on the proxy's port policy, and the VM never needs SSH open to the internet. |
 | Credentials | The sandbox sets `CLOUDSDK_AUTH_ACCESS_TOKEN=proxy-injected` (also `GH_TOKEN` and `AWS_*`). These are placeholders for the "API credentials" feature, which swaps in a real token at the proxy. It **isn't available on Team or Enterprise**. | gcloud prefers that variable over every account, so every call returns `401`. The gcloud wrapper unsets it. |
 | Environment variables | Readable by any command in the session (there are no hidden secrets on Team). Environments are personal unless an Owner shares one. | Use dedicated, narrowly scoped keys that are easy to revoke. Never use an Owner-shared environment for this. |
-| gcloud | The image ships an older gcloud SDK, which isn't in the docs' tool list. Its `bin/gcloud` launcher hangs at about 0 CPU before Python starts. Running `lib/gcloud.py` under the system `python3` works. | The wrapper always runs `python3 <sdk>/lib/gcloud.py`. Run `mm-diag` §7 to see which part hangs. |
-| TLS | The proxy re-signs TLS, and its CA is in the system store. | The wrapper sets `core/custom_ca_certs_file` to the system bundle. |
-| Order | The repo is cloned *before* the setup script runs. | The environment's setup script is a one-liner that runs the committed `setup.sh`. |
+| gcloud | The image ships a gcloud SDK in `/opt/google-cloud-sdk`, symlinked from `/usr/local/bin/gcloud`. It isn't in the docs' tool list, and it works. | `setup.sh` **replaces the symlink** and never writes through it (see the note below). The wrapper runs `<sdk>/lib/gcloud.py` with the SDK's bundled Python. |
+| TLS | The sandbox ships its proxy CAs in `/root/.ccr/ca-bundle.crt` and points `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE`, `SSL_CERT_FILE` and similar variables at it. | Nothing to do. |
+| Order | The repo is cloned *before* the setup script runs. The environment's variables may not be visible to it, and setup may be cached across sessions. | The environment's setup script is a one-liner that runs the committed `setup.sh`. Setup only installs tooling. The helpers read the `MM_*` variables **each time they run**. |
+
+> **Lesson from the first rollout (2026-10-02).** An early `setup.sh` wrote its
+> wrapper with `cat > /usr/local/bin/gcloud`. That followed the symlink and
+> overwrote the SDK's own launcher with the wrapper, and the wrapper then called
+> itself forever. It looked like "the image's gcloud hangs at 0 CPU". A second bug
+> wrote the SSH config once, using whatever variables existed at the time, so
+> `MM_VM_USER` added later never took effect. Both are fixed: files are written
+> with `mv` (which replaces a symlink rather than writing through it), the SSH
+> config is regenerated on every call, and setup repairs a launcher the old
+> version overwrote.
 
 ## What the session can do
 
@@ -95,10 +105,11 @@ Run `mm-diag` first. Each row below points at a section of its output.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `401 … CLOUDSDK_AUTH_ACCESS_TOKEN` | The image's gcloud was called directly, bypassing the wrapper | Use `/usr/local/bin/gcloud`, or `unset CLOUDSDK_AUTH_ACCESS_TOKEN` |
-| gcloud hangs at ~0 CPU | The image's launcher (§7) | Use the wrapper. Never call `/usr/bin/gcloud` |
+| gcloud hangs at ~0 CPU | The SDK launcher was overwritten by the wrapper, so it calls itself (§7 shows `clobbered`) | Start a new session. Setup repairs it |
 | `Connection timed out during banner exchange` | The IAP ProxyCommand failed (§8–§10) | Check the account is active (§8), the firewall rule exists, and the VM is up |
 | `could not fetch the VM host key` | Host keys aren't published, or `compute.viewer` is missing | Re-run the host-key publish step above |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` | The VM was rebuilt and its host keys changed | Re-publish the host keys, then `rm ~/.ssh/known_hosts_mm` |
+| `mm: not set in this session: …` | Those variables aren't in the environment | Add them, then start a new session |
 | `Permission denied (publickey)` | The key was rotated or `MM_VM_USER` is wrong | Re-add the key to instance metadata and update the variable |
 | §4 shows `CONNECT tunnel.cloudproxy.app:443 -> 403` | The network level isn't Full | Set Network access to Full |
 
