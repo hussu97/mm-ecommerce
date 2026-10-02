@@ -21,7 +21,7 @@ don't mention most of this.
 | Environment variables | Readable by any command in the session (there are no hidden secrets on Team). Environments are personal unless an Owner shares one. | Use dedicated, narrowly scoped keys that are easy to revoke. Never use an Owner-shared environment for this. |
 | gcloud | The image ships a gcloud SDK in `/opt/google-cloud-sdk`, symlinked from `/usr/local/bin/gcloud`. It isn't in the docs' tool list, and it works. | `setup.sh` **replaces the symlink** and never writes through it (see the note below). The wrapper runs `<sdk>/lib/gcloud.py` with the SDK's bundled Python. |
 | TLS | The sandbox ships its proxy CAs in `/root/.ccr/ca-bundle.crt` and points `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE`, `SSL_CERT_FILE` and similar variables at it. | Nothing to do. |
-| Order | The repo is cloned *before* the setup script runs. The environment's variables may not be visible to it, and setup may be cached across sessions. | The environment's setup script is a one-liner that runs the committed `setup.sh`. Setup only installs tooling. The helpers read the `MM_*` variables **each time they run**. |
+| Order and caching | The repo is cloned *before* the setup script runs, and is a fresh clone every session. After the first setup, the environment **snapshots the filesystem and later sessions skip the setup script**. The snapshot is rebuilt only when the setup-script text or the allowed network hosts change, or after about 7 days ([docs](https://code.claude.com/docs/en/cloud-environments)). The environment's variables may not be visible to setup. | Setup installs only tooling and thin stubs in `/usr/local/bin`. Each stub runs `scripts/claude-cloud/bin/<name>` from the session's own clone, and the scripts read the `MM_*` variables when they run. So a fix merged to `main` is live in the next session without re-running setup. To force a full re-setup, bump the `setup-rev` line in the environment's setup script. |
 
 > **Lesson from the first rollout (2026-10-02).** An early `setup.sh` wrote its
 > wrapper with `cat > /usr/local/bin/gcloud`. That followed the symlink and
@@ -96,7 +96,7 @@ rm vm_key vm_key.pub sa.json keys.txt
 | `mmsql "<sql>"` | Runs SQL in the Postgres container as its app user. **Read-write.** Set `MMSQL_FLAGS=-At` for compact output. |
 | `mmlogs <svc> [--since 1h]` | Shows container logs (`api`, `pos-api`, `aggregator-worker`, `nginx`, …). |
 | `gcloud storage …` | GCS, as the service account. |
-| `mm-diag` | Checks every layer in about 45 seconds and saves the result to `/tmp/mm-diag.txt`. It prints no secrets, but it does print hostnames and the account. Share it only privately. |
+| `mm-diag` | (`scripts/claude-cloud/bin/mm-diag`) Checks every layer in about 45 seconds and saves the result to `/tmp/mm-diag.txt`. It prints no secrets, but it does print hostnames and the account. Share it only privately. |
 
 ## Troubleshooting
 
@@ -105,7 +105,8 @@ Run `mm-diag` first. Each row below points at a section of its output.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `401 … CLOUDSDK_AUTH_ACCESS_TOKEN` | The image's gcloud was called directly, bypassing the wrapper | Use `/usr/local/bin/gcloud`, or `unset CLOUDSDK_AUTH_ACCESS_TOKEN` |
-| gcloud hangs at ~0 CPU | The SDK launcher was overwritten by the wrapper, so it calls itself (§7 shows `clobbered`) | Start a new session. Setup repairs it |
+| gcloud hangs at ~0 CPU | The SDK launcher was overwritten by the wrapper, so it calls itself (§7 shows `clobbered`) | Bump `setup-rev` in the environment's setup script. The re-setup repairs it |
+| A fix on `main` doesn't take effect | The session is still on old stubs from a snapshot taken before they existed | Bump `setup-rev` once |
 | `Connection timed out during banner exchange` | The IAP ProxyCommand failed (§8–§10) | Check the account is active (§8), the firewall rule exists, and the VM is up |
 | `could not fetch the VM host key` | Host keys aren't published, or `compute.viewer` is missing | Re-run the host-key publish step above |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` | The VM was rebuilt and its host keys changed | Re-publish the host keys, then `rm ~/.ssh/known_hosts_mm` |

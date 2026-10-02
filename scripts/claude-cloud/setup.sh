@@ -54,100 +54,37 @@ step "uv / pnpm"
 command -v uv >/dev/null || timeout 90 bash -c 'curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh' >/dev/null 2>&1 || step "uv install failed, continuing"
 command -v pnpm >/dev/null || timeout 90 npm install -g pnpm@9 >/dev/null 2>&1 || true
 
-# --- mm-auth: sync creds + ssh config from the CURRENT env, every call ---------
-put /usr/local/bin/mm-auth <<'EOF'
+# --- helpers: thin shims that run bin/ from the session's own checkout ----------
+# Cloud environments snapshot the filesystem after setup and skip this script in
+# later sessions (until the setup-script text changes or ~7 days pass), so
+# anything written here goes stale. The shims only locate scripts/claude-cloud/bin
+# in the session's fresh clone and exec it: a fix on main is live next session.
+echo "$(cd "$HERE/../.." && pwd)" > /etc/mm-cloud-repo
+put /usr/local/bin/mm-cloud-bin <<'EOF'
 #!/bin/bash
-set -euo pipefail
-d="$HOME/.config/mm"; mkdir -p "$HOME/.ssh" "$d"; chmod 700 "$HOME/.ssh" "$d"
-sync() {  # sync <b64 value> <file>: rewrite only when the value changed
-  [ -n "$1" ] || return 0
-  local t; t=$(mktemp "$2.XXXX"); echo "$1" | base64 -d > "$t"; chmod 600 "$t"
-  if cmp -s "$t" "$2"; then rm -f "$t"; else mv -f "$t" "$2"; fi
-}
-sync "${MM_VM_SSH_KEY_B64:-}" "$HOME/.ssh/mm_vm"
-sync "${MM_GCS_SA_KEY_B64:-}" "$d/sa.json"
-if [ -s "$d/sa.json" ]; then
-  python3 - "$d/sa.json" > "$d/env" <<'PY'
-import json, sys
-k = json.load(open(sys.argv[1]))
-print(f"MM_GCP_PROJECT={k['project_id']}\nMM_GCP_ACCOUNT={k['client_email']}")
-PY
-fi
-vm="${MM_VM_NAME:-mm-backend}"; zone="${MM_VM_ZONE:-me-central1-a}"
-cat > "$HOME/.ssh/mm_config" <<CFG
-Host mm $vm
-  HostName $vm
-  HostKeyAlias $vm
-  User ${MM_VM_USER:-}
-  IdentityFile $HOME/.ssh/mm_vm
-  IdentitiesOnly yes
-  UserKnownHostsFile $HOME/.ssh/known_hosts_mm
-  StrictHostKeyChecking yes
-  ServerAliveInterval 30
-  ConnectTimeout 30
-  ProxyCommand /usr/local/bin/gcloud compute start-iap-tunnel $vm 22 --listen-on-stdin --zone=$zone --verbosity=error
-CFG
+# Print the scripts/claude-cloud/bin dir of the current mm-ecommerce checkout.
+for d in "$(cat /etc/mm-cloud-repo 2>/dev/null)" "$PWD" /home/user/mm-ecommerce; do
+  [ -n "$d" ] && [ -d "$d/scripts/claude-cloud/bin" ] && { echo "$d/scripts/claude-cloud/bin"; exit 0; }
+done
+for d in "$PWD" "$HOME" /home/user /workspace; do
+  f=$(find "$d" -maxdepth 4 -type d -path '*/scripts/claude-cloud/bin' -not -path '*/node_modules/*' 2>/dev/null | head -1)
+  [ -n "$f" ] && { echo "$f"; exit 0; }
+done
+exit 1
 EOF
-
-# --- gcloud wrapper ------------------------------------------------------------
-# The sandbox sets CLOUDSDK_AUTH_ACCESS_TOKEN=proxy-injected (a placeholder for the
-# API-credentials feature, which Team plans lack); gcloud prefers it over any
-# account, so every call 401s. Drop it and pin the service account.
+for n in mm mmsql mmlogs mm-auth mm-diag; do
+  printf '#!/bin/bash\n# mm-cloud-shim\nb=$(mm-cloud-bin) || { echo "%s: no mm-ecommerce checkout found; start the session on that repo" >&2; exit 1; }\nexec bash "$b/%s" "$@"\n' "$n" "$n" | put "/usr/local/bin/$n"
+done
+# gcloud has to work even without the checkout, so its fallback is inline:
+# drop the sandbox's placeholder token and run the SDK directly.
 put /usr/local/bin/gcloud <<'EOF'
 #!/bin/bash
-# mm-gcloud-wrapper
+# mm-gcloud-wrapper (shim)
+if b=$(mm-cloud-bin 2>/dev/null); then exec bash "$b/gcloud" "$@"; fi
 unset CLOUDSDK_AUTH_ACCESS_TOKEN CLOUDSDK_AUTH_ACCESS_TOKEN_FILE
-. /etc/mm-gcloud
-mm-auth
-d="$HOME/.config/mm"
-if [ -s "$d/env" ]; then
-  . "$d/env"
-  export CLOUDSDK_CORE_ACCOUNT="$MM_GCP_ACCOUNT" CLOUDSDK_CORE_PROJECT="$MM_GCP_PROJECT"
-  mark="$d/.activated-$(sha256sum "$d/sa.json" | cut -c1-12)"
-  if [ ! -f "$mark" ]; then
-    timeout 30 "$PY" "$SDK/lib/gcloud.py" auth activate-service-account \
-      --key-file="$d/sa.json" -q >/dev/null 2>&1 && touch "$mark"
-  fi
-fi
-export CLOUDSDK_CORE_CHECK_GCE_METADATA=false CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=true
-export CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true CLOUDSDK_CORE_DISABLE_PROMPTS=1
-exec "$PY" "$SDK/lib/gcloud.py" "$@"
+. /etc/mm-gcloud; exec "$PY" "$SDK/lib/gcloud.py" "$@"
 EOF
-
-# --- helpers ------------------------------------------------------------------
-# mm <cmd>        run a command on the VM (sudo for docker)
-# mmsql "<sql>"   SQL against the prod Postgres container, as its app user (READ-WRITE)
-# mmlogs <svc>    a container's logs, e.g. mmlogs api --since 1h
-put /usr/local/bin/mm <<'EOF'
-#!/bin/bash
-set -euo pipefail
-mm-auth
-miss=""
-for v in MM_VM_USER MM_VM_SSH_KEY_B64 MM_GCS_SA_KEY_B64; do [ -n "${!v:-}" ] || miss="$miss $v"; done
-if [ -n "$miss" ]; then
-  echo "mm: not set in this session:$miss. Add them to the environment's variables, then start a new session." >&2
-  exit 2
-fi
-kh="$HOME/.ssh/known_hosts_mm"; vm="${MM_VM_NAME:-mm-backend}"
-if [ ! -s "$kh" ]; then
-  # host key comes from Google's guest attributes, so it is verified, not trusted on first use
-  gcloud compute instances get-guest-attributes "$vm" --zone="${MM_VM_ZONE:-me-central1-a}" \
-    --query-path=hostkeys/ --format='value(key,value)' | awk -v h="$vm" '{print h, $1, $2}' > "$kh.tmp"
-  [ -s "$kh.tmp" ] && mv "$kh.tmp" "$kh" || { echo "mm: could not fetch the VM host key" >&2; exit 1; }
-fi
-exec ssh -F "$HOME/.ssh/mm_config" mm "$@"
-EOF
-put /usr/local/bin/mmsql <<'EOF'
-#!/bin/bash
-exec mm "c=\$(sudo docker ps --format '{{.Names}}' | grep -E '[-_]postgres[-_]1\$' | head -1); sudo docker exec -i \"\$c\" sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -v ON_ERROR_STOP=1 ${MMSQL_FLAGS:--x}'" <<< "$*"
-EOF
-put /usr/local/bin/mmlogs <<'EOF'
-#!/bin/bash
-svc="${1:?service, e.g. api|pos-api|aggregator-worker|nginx}"; shift
-exec mm "c=\$(sudo docker ps --format '{{.Names}}' | grep -E '[-_]${svc}(-(blue|green))?[-_]1\$' | head -1); sudo docker logs ${*:---since 1h} \"\$c\" 2>&1"
-EOF
-put /usr/local/bin/mm-diag < "$HERE/mm-diag.sh"
 
 seen=""; for v in MM_VM_USER MM_VM_SSH_KEY_B64 MM_GCS_SA_KEY_B64; do [ -n "${!v:-}" ] && seen="$seen $v"; done
 step "env vars visible to setup:${seen:- none} (the helpers read them at run time either way)"
-step "done: mm, mmsql, mmlogs, mm-diag"
+step "done: mm, mmsql, mmlogs, mm-diag -> $(mm-cloud-bin || echo "checkout not found")"

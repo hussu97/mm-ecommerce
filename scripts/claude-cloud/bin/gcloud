@@ -1,0 +1,18 @@
+#!/bin/bash
+# mm-gcloud-wrapper (repo copy; /usr/local/bin/gcloud is the shim)
+unset CLOUDSDK_AUTH_ACCESS_TOKEN CLOUDSDK_AUTH_ACCESS_TOKEN_FILE
+. /etc/mm-gcloud
+mm-auth
+d="$HOME/.config/mm"
+if [ -s "$d/env" ]; then
+  . "$d/env"
+  export CLOUDSDK_CORE_ACCOUNT="$MM_GCP_ACCOUNT" CLOUDSDK_CORE_PROJECT="$MM_GCP_PROJECT"
+  mark="$d/.activated-$(sha256sum "$d/sa.json" | cut -c1-12)"
+  if [ ! -f "$mark" ]; then
+    timeout 30 "$PY" "$SDK/lib/gcloud.py" auth activate-service-account \
+      --key-file="$d/sa.json" -q >/dev/null 2>&1 && touch "$mark"
+  fi
+fi
+export CLOUDSDK_CORE_CHECK_GCE_METADATA=false CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=true
+export CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true CLOUDSDK_CORE_DISABLE_PROMPTS=1
+exec "$PY" "$SDK/lib/gcloud.py" "$@"

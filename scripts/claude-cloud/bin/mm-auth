@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+d="$HOME/.config/mm"; mkdir -p "$HOME/.ssh" "$d"; chmod 700 "$HOME/.ssh" "$d"
+sync() {  # sync <b64 value> <file>: rewrite only when the value changed
+  [ -n "$1" ] || return 0
+  local t; t=$(mktemp "$2.XXXX"); echo "$1" | base64 -d > "$t"; chmod 600 "$t"
+  if cmp -s "$t" "$2"; then rm -f "$t"; else mv -f "$t" "$2"; fi
+}
+sync "${MM_VM_SSH_KEY_B64:-}" "$HOME/.ssh/mm_vm"
+sync "${MM_GCS_SA_KEY_B64:-}" "$d/sa.json"
+if [ -s "$d/sa.json" ]; then
+  python3 - "$d/sa.json" > "$d/env" <<'PY'
+import json, sys
+k = json.load(open(sys.argv[1]))
+print(f"MM_GCP_PROJECT={k['project_id']}\nMM_GCP_ACCOUNT={k['client_email']}")
+PY
+fi
+vm="${MM_VM_NAME:-mm-backend}"; zone="${MM_VM_ZONE:-me-central1-a}"
+cat > "$HOME/.ssh/mm_config" <<CFG
+Host mm $vm
+  HostName $vm
+  HostKeyAlias $vm
+  User ${MM_VM_USER:-}
+  IdentityFile $HOME/.ssh/mm_vm
+  IdentitiesOnly yes
+  UserKnownHostsFile $HOME/.ssh/known_hosts_mm
+  StrictHostKeyChecking yes
+  ServerAliveInterval 30
+  ConnectTimeout 30
+  ProxyCommand /usr/local/bin/gcloud compute start-iap-tunnel $vm 22 --listen-on-stdin --zone=$zone --verbosity=error
+CFG
