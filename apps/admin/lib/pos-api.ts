@@ -301,6 +301,7 @@ export const inventoryApi = {
     date_from?: string;
     date_to?: string;
     item_id?: string;
+    misc_category_id?: string;
   }) => api.get<PurchaseOrder[]>(`/inventory/purchase-orders${buildQs(params)}`),
   purchaseOrderItemOptions: (params?: { branch_id?: string }) =>
     api.get<PurchaseOrderItemOption[]>(
@@ -314,6 +315,7 @@ export const inventoryApi = {
     date_from?: string;
     date_to?: string;
     item_id?: string;
+    misc_category_id?: string;
   }): Promise<Blob> =>
     requestBlob(`/inventory/purchase-orders/export${buildQs(params)}`),
   purchaseOrder: (id: string) => api.get<PurchaseOrder>(`/inventory/purchase-orders/${id}`),

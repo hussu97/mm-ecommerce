@@ -1153,3 +1153,86 @@ async def test_the_console_create_route_honours_the_restricted_permission(engine
         with pytest.raises(BadRequestError, match="not available"):
             await create_purchase_order(body, db=db, user=owner)
         await db.rollback()
+
+
+async def test_po_list_filters_by_supplier_and_misc_category(engine, env):
+    """The PO list/export filter: a misc category keeps whole POs with a line in
+    it, combines with the supplier filter, and never matches an admin-only line
+    for a viewer who may not see it (their Rent filter finds nothing)."""
+    from app.api.v1.inventory import _apply_po_filters
+    from app.services.inventory import po_misc_service
+
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        a, b = [
+            await supplier_service.create_supplier(
+                db,
+                SupplierCreate(
+                    name=f"{MARKER} filter {name}",
+                    is_vat_deductible=True,
+                    allows_misc_items=True,
+                ),
+            )
+            for name in ("A", "B")
+        ]
+
+        def line(name, cat):
+            return PurchaseOrderMiscLineInput(
+                name=name,
+                quantity=D("1"),
+                storage_unit="pc",
+                entered_total=D("10"),
+                **cat,
+            )
+
+        cake, rent = await _cat(db, "Cake Supplies"), await _cat(db, "Rent")
+        closed = PurchaseOrderStatusEnum.CLOSED.value
+        mixed = await _misc_po(
+            db,
+            a,
+            branch_id,
+            user_id,
+            status=closed,
+            lines=[line("Boxes", cake), line("Shop rent", rent)],
+            allow_gated=True,
+        )
+        rent_only = await _misc_po(
+            db,
+            a,
+            branch_id,
+            user_id,
+            status=closed,
+            lines=[line("Shop rent", rent)],
+            allow_gated=True,
+        )
+        other = await _misc_po(
+            db,
+            b,
+            branch_id,
+            user_id,
+            status=closed,
+            lines=[line("Boxes", cake)],
+            allow_gated=True,
+        )
+        names = {mixed.id: "mixed", rent_only.id: "rent_only", other.id: "other"}
+
+        async def found(*, gated=True, **filters):
+            stmt = select(PurchaseOrder.id).where(PurchaseOrder.id.in_(names))
+            if not gated:
+                stmt = stmt.where(po_misc_service.visible_po_clause())
+            stmt = _apply_po_filters(stmt, sees_gated=gated, **filters)
+            return {names[i] for i in (await db.execute(stmt)).scalars()}
+
+        cake_id, rent_id = cake["category_id"], rent["category_id"]
+        assert await found(misc_category_id=cake_id) == {"mixed", "other"}
+        assert await found(misc_category_id=rent_id) == {"mixed", "rent_only"}
+        assert await found(supplier_id=a.id, misc_category_id=cake_id) == {"mixed"}
+        assert await found(supplier_id=b.id) == {"other"}
+        # Blind to admin-only categories: the hidden rent line never matches.
+        assert await found(gated=False, misc_category_id=rent_id) == set()
+        assert await found(gated=False, misc_category_id=cake_id) == {
+            "mixed",
+            "other",
+        }
+        await db.rollback()

@@ -32529,6 +32529,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 item_id?: string | null;
+                misc_category_id?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -32599,6 +32600,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 item_id?: string | null;
+                misc_category_id?: string | null;
             };
             header?: never;
             path?: never;
