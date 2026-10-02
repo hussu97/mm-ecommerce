@@ -1492,3 +1492,17 @@ would have hidden history and changed the meaning of issued reports.
 number as identity. Display names may repeat across revisions. Append the new
 row, keep old snapshots intact, and select the latest revision before checking
 whether it is active so deactivation never silently revives an older config.
+
+### A stock reconciliation starts from the shop's last count, and a data fix is not a code change (2026-10-03)
+
+Auditing DSO's end-of-day count, I measured variance against the live ledger
+without first naming the baseline. The owner had to point out that only orders
+after their manual count (2026-09-20) should move stock. I had also pushed a
+code change alongside the production data fix without being asked, and was
+told to keep that turn to one-time scripts.
+
+**Rule:** before reconciling a physical count, find the last manual count or
+adjustment for that branch and state it. Only consumption that happened after
+it counts; anything dated before it but posted after (a backfill, a late post)
+is the error. When asked to fix data, fix data with one-time scripts. Propose
+code changes and wait for a yes; don't bundle them in.
