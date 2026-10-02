@@ -30,6 +30,12 @@ themselves live in [`../CLAUDE.md`](../CLAUDE.md).
 | [`performance-audit-2026-08-08.md`](performance-audit-2026-08-08.md) | Storefront performance audit. Findings, not a plan of record. |
 | [`cart-abandonment-email.md`](cart-abandonment-email.md) | Design for the abandoned-cart nudge. |
 
+## Operations
+
+| Doc | What it is |
+|---|---|
+| [`claude-cloud-env.md`](claude-cloud-env.md) | Claude Code cloud environment for debugging prod from a phone: how the sandbox behaves, SSH over IAP, the GCP setup, troubleshooting. |
+
 ## Design
 
 | Doc | What it is |
