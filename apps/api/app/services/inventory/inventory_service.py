@@ -71,9 +71,11 @@ from app.models.inventory_v2 import (
     InventoryItemKindEnum,
     InventoryTrackingModeEnum,
 )
+from app.models.legal_entity import LegalEntity
 from app.models.order import Order
 from app.models.user import User
 from app.services.inventory import costing_service, po_misc_service, supplier_service
+from app.services.orders import tax_identity_service
 from app.services.pos import business_day_service
 
 __all__ = [
@@ -920,6 +922,38 @@ async def _assert_misc_names_not_inventory(db: AsyncSession, misc_lines) -> None
             )
 
 
+async def stamp_po_entity(
+    db: AsyncSession, purchase_order: PurchaseOrder
+) -> LegalEntity | None:
+    """Freeze the buying entity onto a new PO: its branch's counter entity, from
+    the same ``branch_channel_tax_configs`` row that decides the branch's counter
+    VAT (Barsha → Najm, not registered; the others → Fatema). A PO's branch never
+    changes after creation, so neither does this."""
+    entity = await tax_identity_service.resolve(
+        db, branch_id=purchase_order.branch_id, source="cashier"
+    )
+    tax_identity_service.stamp(purchase_order, entity)
+    return entity
+
+
+async def po_reclaims_vat(
+    db: AsyncSession, purchase_order: PurchaseOrder, supplier: Supplier
+) -> bool:
+    """Whether the PO's lines carry a recoverable VAT slice: the supplier
+    charges deductible VAT *and* the buying entity is VAT-registered. An
+    unregistered entity (Barsha's Najm) reclaims nothing, so its lines are net =
+    gross — the stock cost is the gross either way."""
+    if not supplier.is_vat_deductible:
+        return False
+    if purchase_order.legal_entity_id is not None:
+        entity = await db.get(LegalEntity, purchase_order.legal_entity_id)
+    else:
+        entity = await tax_identity_service.resolve(
+            db, branch_id=purchase_order.branch_id, source="cashier"
+        )
+    return tax_identity_service.is_vat_registered(entity)
+
+
 async def build_po_lines(
     db: AsyncSession,
     purchase_order: PurchaseOrder,
@@ -948,6 +982,9 @@ async def build_po_lines(
     admin-only lines of an editor who cannot see them, so saving the lines they
     can see never deletes the ones they cannot. Their money is re-split with
     the current supplier's VAT setting and stays in the totals.
+
+    ``is_vat_deductible`` is ``po_reclaims_vat`` — the supplier's VAT setting
+    and the buying entity's registration together.
     """
     misc_lines = misc_lines or []
     if (misc_lines or keep_misc) and not allows_misc:
@@ -1088,13 +1125,14 @@ async def create_pos_purchase_order(
         submitted_at=utcnow(),
         approved_at=utcnow(),
     )
+    await stamp_po_entity(db, purchase_order)
     db.add(purchase_order)
     await db.flush()
     await build_po_lines(
         db,
         purchase_order,
         data.items,
-        is_vat_deductible=supplier.is_vat_deductible,
+        is_vat_deductible=await po_reclaims_vat(db, purchase_order, supplier),
         misc_lines=getattr(data, "misc_items", None),
         allows_misc=supplier.allows_misc_items,
     )

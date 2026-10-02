@@ -238,9 +238,11 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         g.count += int(count)
 
     # --- Input: raw goods from received purchase orders --------------------
-    # POs carry only a branch; the legal entity is resolved from the branch's
-    # counter tax config (Barsha → Najm → non-recoverable), falling back to
-    # Fatema. `vat_total` is already zero for a non-deductible supplier. A
+    # Booked under the PO's own legal entity, frozen at creation from the
+    # branch's counter tax config (Barsha → Najm → non-recoverable); a PO from
+    # before migration 309 that somehow has none resolves the same way.
+    # `vat_total` is already zero for a non-deductible supplier or an
+    # unregistered entity (`inventory_service.po_reclaims_vat`). A
     # partially-received PO carries its full ordered VAT here — a known v1 timing
     # nuance; most POS-origin POs auto-receive and close same day.
     #
@@ -249,6 +251,7 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         select(
             PurchaseOrder.business_date,
             PurchaseOrder.branch_id,
+            PurchaseOrder.legal_entity_id,
             PurchaseOrder.supplier_id,
             func.coalesce(func.sum(PurchaseOrder.subtotal_net), 0),
             func.coalesce(func.sum(PurchaseOrder.vat_total), 0),
@@ -268,14 +271,17 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         .group_by(
             PurchaseOrder.business_date,
             PurchaseOrder.branch_id,
+            PurchaseOrder.legal_entity_id,
             PurchaseOrder.supplier_id,
         )
     )
-    for bdate, branch_id, supplier_id, net, vat, gross, count in pos:
-        entity = await tax_identity_service.resolve(
-            db, branch_id=branch_id, source="cashier"
-        )
-        entity_id = entity.id if entity is not None else default_entity
+    for bdate, branch_id, po_entity_id, supplier_id, net, vat, gross, count in pos:
+        entity_id = po_entity_id
+        if entity_id is None:
+            entity = await tax_identity_service.resolve(
+                db, branch_id=branch_id, source="cashier"
+            )
+            entity_id = entity.id if entity is not None else default_entity
         g = cell(
             bdate,
             entity_id,
