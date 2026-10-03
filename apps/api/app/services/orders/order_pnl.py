@@ -5,7 +5,8 @@ The shop asked for three contribution margins on every order and on any slice of
 the book (a date range, a channel, a branch):
 
     GMV (pre-discount, incl. VAT)   the goods the customer was billed for
-  − Refunds                         partial refunds on an order that still stood
+  − Refunds                         partial refunds, and the goods refunded on a
+                                    cancellation that kept its fees
   − VAT on sales                    the output VAT owed to the FTA
   = Net revenue
   − COGS (net of VAT)               the FIFO ingredient + packaging cost consumed
@@ -52,13 +53,15 @@ grouped by channel. Each is rounded per order before it is summed, so a P&L
 total is exactly the sum of the rows it stands for, to the fils.
 
 **Which orders count.** A sale that stands (`pos_reports._COMPLETED_SALE`, the
-predicate the sales reports and the VAT ledger share), plus a terminal order
-the shop was nonetheless charged for — a marketplace cancellation fee, or a
-marketplace statement that bills the shop for a cancelled order (net payable
-below zero). A cancelled or fully refunded order with no charge is not in the
-P&L at all. On a charged cancellation there is no revenue, and everything the
-marketplace billed is booked as a cancellation charge rather than scattered
-over commission and payment lines, because that is what it is.
+predicate the sales reports and the VAT ledger share), plus a cancelled order
+that refunded only the goods and kept its fees (`_kept_after_refund`, booked as
+a sale with its refund as a line), plus a terminal order the shop was
+nonetheless charged for — a marketplace cancellation fee, or a marketplace
+statement that bills the shop for a cancelled order (net payable below zero).
+A cancelled or fully refunded order with no charge is not in the P&L at all.
+On a charged cancellation there is no revenue, and everything the marketplace
+billed is booked as a cancellation charge rather than scattered over commission
+and payment lines, because that is what it is.
 
 **COGS is blank, not zero, when no stock was drawn.** Consumption only exists
 from each branch's inventory go-live, and an order that never posted a
@@ -100,7 +103,7 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import InventoryItemKindEnum
 from app.models.legal_entity import LegalEntity
-from app.models.order import DeliveryMethodEnum, Order
+from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.pos_order import OrderSourceEnum
 from app.services.orders import order_surcharges
@@ -215,10 +218,38 @@ def channel_expression():
     return case(*whens, else_=literal("other"))
 
 
+def _kept_after_refund():
+    """
+    A cancelled or refunded order that gave back only part of what it took.
+
+    `payment_service.refundable_amount` returns the goods and keeps the fees: a
+    website delivery cancelled after packing refunds the cake and keeps the
+    delivery fee, because the van was booked (MM-20261003-002: 139.50 charged,
+    59.50 back, 80.00 kept). That money stayed in the shop — so did the card
+    fee and the courier fare against it — and leaving the order out of the P&L
+    because its status reads `cancelled` dropped all of it. It counts as a sale
+    whose refund is a line, exactly like a partial refund on an order that
+    stood: the goods and their refund cancel out, and the fees remain.
+
+    Only once something was actually refunded: a cancellation whose automatic
+    refund failed holds the whole charge until a person sorts it out, and
+    booking that as revenue would be a guess. `disputed` is not here — that
+    money is the bank's to decide.
+    """
+    refunded = func.coalesce(Order.refunded_amount, 0)
+    return and_(
+        Order.status.in_(
+            (OrderStatusEnum.CANCELLED.value, OrderStatusEnum.REFUNDED.value)
+        ),
+        refunded > 0,
+        refunded < Order.total,
+    )
+
+
 def _is_sale():
     # `case`, not the bare clause: the counter arm compares a nullable
     # `pos_status`, and a NULL there must read as "not a sale", not propagate.
-    return case((_COMPLETED_SALE, true()), else_=false())
+    return case((or_(_COMPLETED_SALE, _kept_after_refund()), true()), else_=false())
 
 
 _billing_row = aliased(AggregatorOrder)
@@ -257,9 +288,15 @@ def _settled_cancellation():
 
 
 def in_pnl_clause():
-    """The orders the P&L counts: a sale that stands, a charged cancellation, or
-    a cancellation the marketplace paid for."""
-    return or_(_COMPLETED_SALE, _billed_after_cancel(), _settled_cancellation())
+    """The orders the P&L counts: a sale that stands, a cancellation that kept
+    part of the money, a charged cancellation, or a cancellation the marketplace
+    paid for."""
+    return or_(
+        _COMPLETED_SALE,
+        _kept_after_refund(),
+        _billed_after_cancel(),
+        _settled_cancellation(),
+    )
 
 
 def _cogs_lateral():
