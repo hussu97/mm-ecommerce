@@ -1144,4 +1144,12 @@ async def cancel_order(
             db, order.order_number, OrderStatusEnum.CANCELLED
         )
 
-    return _serialise(await _load(db, order_id))
+    # The cancellation email, which is also the refund notice — the refund was
+    # just made inside `update_status`, so the reload carries its amount. This
+    # was missing, and a website order cancelled at the counter refunded the
+    # card and told the customer nothing (MM-20261003-002). Inline and awaited
+    # like `mark_packed`; it never raises, and `notify_order` stays silent for
+    # an aggregator order, whose customer belongs to the marketplace.
+    reloaded = await _load(db, order_id)
+    await email_service.notify_order(db, reloaded)
+    return _serialise(reloaded)

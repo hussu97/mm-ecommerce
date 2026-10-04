@@ -748,3 +748,92 @@ async def test_a_cancellation_the_marketplace_settled_books_what_it_settled(engi
     assert c.pc3 == D("-47.14")
 
     assert await _pnl(engine, unknown.id) is None
+
+
+async def test_a_cancellation_that_kept_its_fees_books_what_it_kept(engine):
+    """MM-20261003-002, as it happened. A website delivery cancelled at the
+    counter after packing: 139.50 charged (70 of cake, 10.50 coupon, 80 of
+    delivery), the goods refunded (59.50) and the delivery fee kept, because
+    `refundable_amount` keeps the fees. It used to be absent from the P&L
+    altogether — `cancelled`, and charged nothing by a marketplace — so the 80
+    kept, the card fee and the courier fare were all invisible.
+
+    It reads as a sale whose refund is a line: the goods and their refund net
+    to nothing, the fees remain. A cancellation refunded in full, and one whose
+    automatic refund failed (nothing back yet), stay out.
+    """
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    async with Session() as db:
+        branch = Branch(name=f"pnl-kept {tag}", reference=f"pnlk-{tag}")
+        db.add(branch)
+        await db.flush()
+        db.add(Warehouse(branch_id=branch.id, name="Default", is_default=True))
+
+        def cancelled(suffix, refunded):
+            return Order(
+                order_number=f"PNK-{tag}-{suffix}",
+                email="pnl@example.com",
+                branch_id=branch.id,
+                source="online",
+                status=OrderStatusEnum.CANCELLED,
+                delivery_method=DeliveryMethodEnum.DELIVERY,
+                subtotal=D("70.00"),
+                discount_amount=D("10.50"),
+                delivery_fee=D("80.00"),
+                total=D("139.50"),
+                vat_rate=D("0.05"),
+                vat_amount=D("2.83"),
+                total_excl_vat=D("56.67"),
+                payment_method="card",
+                payment_fee=D("5.30"),
+                refunded_amount=refunded,
+                created_at=AT,
+            )
+
+        kept = cancelled("L", D("59.50"))
+        full = cancelled("M", D("139.50"))
+        failed = cancelled("N", D("0"))
+        db.add_all([kept, full, failed])
+        await db.flush()
+        db.add(
+            OrderDelivery(
+                order_id=kept.id,
+                provider="third_party",
+                zone_name="Sharjah · Al Dhaid",
+                quoted_cost=D("49.00"),
+            )
+        )
+        await db.commit()
+
+    try:
+        p = await _pnl(engine, kept.id)
+        assert p is not None and p.is_sale
+        assert p.channel == "website_delivery"
+        assert p.gmv == D("70.00")  # 139.50 + 10.50 coupon − 80.00 delivery
+        assert p.refunds == D("59.50")
+        assert p.output_vat == D("0.00")  # 2.83 − 59.50 × 5/105, all handed back
+        assert p.net_revenue == D("10.50")
+        assert p.delivery_fees == D("80.00")
+        assert p.payment_fees == D("5.30")
+        assert p.delivery_cost == D("49.00")
+        assert p.fees_vat == D("2.59")  # (5.30 + 49.00) × 5/105
+        assert p.discounts == D("10.50")
+        # 80 kept − 5.30 card − 49.00 courier + 2.59 VAT back: the goods and
+        # their refund cancel out, coupon and all.
+        assert p.pc3 == D("28.29")
+
+        assert await _pnl(engine, full.id) is None
+        assert await _pnl(engine, failed.id) is None
+    finally:
+        async with Session() as db:
+            ids = [kept.id, full.id, failed.id]
+            await db.execute(
+                OrderDelivery.__table__.delete().where(OrderDelivery.order_id.in_(ids))
+            )
+            await db.execute(Order.__table__.delete().where(Order.id.in_(ids)))
+            await db.execute(
+                Warehouse.__table__.delete().where(Warehouse.branch_id == branch.id)
+            )
+            await db.execute(Branch.__table__.delete().where(Branch.id == branch.id))
+            await db.commit()

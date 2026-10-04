@@ -59,6 +59,7 @@ def wiring(monkeypatch):
     """The endpoint's collaborators, replaced so the test is about the endpoint."""
     update_status = AsyncMock()
     monkeypatch.setattr(pos_orders.order_service, "update_status", update_status)
+    monkeypatch.setattr(pos_orders.email_service, "notify_order", AsyncMock())
     monkeypatch.setattr(pos_orders, "_serialise", lambda order: order)
     return update_status
 
@@ -92,6 +93,27 @@ async def test_a_website_delivery_order_can_be_cancelled_even_from_packed(
 
     update_status.assert_awaited_once()
     assert update_status.await_args.args[2] == OrderStatusEnum.CANCELLED
+
+
+async def test_cancelling_tells_the_customer(monkeypatch, wiring):
+    """MM-20261003-002: a website order cancelled at the counter was refunded
+    and the customer heard nothing — the endpoint never asked the mailer. The
+    cancellation email (which carries the refund) goes out once the status has
+    moved, from the reloaded row, so it sees the refund the transition made."""
+    update_status = wiring
+    before = _order("online", delivery_method="delivery")
+    after = _order("online", status=OrderStatusEnum.CANCELLED)
+    load = AsyncMock(side_effect=[before, after])
+    monkeypatch.setattr(pos_orders, "_load", load)
+    db = object()
+
+    result = await pos_orders.cancel_order(
+        before.id, db=db, user=_user("pos.orders.void")
+    )
+
+    update_status.assert_awaited_once()
+    pos_orders.email_service.notify_order.assert_awaited_once_with(db, after)
+    assert result is after
 
 
 async def test_an_aggregator_order_can_still_be_cancelled(monkeypatch, wiring):
@@ -133,6 +155,8 @@ async def test_cancelling_twice_is_not_an_error(monkeypatch, wiring):
 
     assert result is order
     update_status.assert_not_awaited()
+    # The second press must not send the customer a second email.
+    pos_orders.email_service.notify_order.assert_not_awaited()
 
 
 async def test_it_takes_the_void_permission():
