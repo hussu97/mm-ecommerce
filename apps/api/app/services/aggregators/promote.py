@@ -1621,7 +1621,15 @@ async def promote_order(
         gmap = await reconcile._find_grubops_map(
             db, agg.channel, agg.external_order_id, agg.display_ref
         )
-        if gmap is not None:
+        # The exception is an order GrubOps listed but never served the detail of
+        # (`detail_never_served`): GrubOps cannot make it, and deferring to it for
+        # ever lost Talabat 3930593079 (80.00, 2026-10-02) from the books. Past the
+        # same adopt grace as an order GrubOps never listed, file it here; should
+        # GrubOps serve it after all, its create adopts this order (same channel,
+        # branch, day and externalId) instead of filing a second.
+        if gmap is not None and not (
+            gmap.detail_never_served and _grubops_adopt_grace_elapsed(agg)
+        ):
             logger.warning(
                 "promote %s %s: GrubOps owns this order (map row %s) but has no MM "
                 "order yet (last_push_error=%r) — deferring rather than filing a "

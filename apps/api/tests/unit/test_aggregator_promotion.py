@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.models.grubops_order import DETAIL_UNAVAILABLE, GrubOpsOrderMap
 from app.models.order import OrderStatusEnum
 from app.services.aggregators import promote
 from app.services.aggregators.normalized import StandardModifier
@@ -1036,7 +1037,7 @@ async def test_grubops_branch_defers_when_a_map_row_exists_even_past_grace(monke
         return None  # no MM order yet (the create failed)
 
     async def fake_find_map(db, channel, ext, display_ref=None):
-        return SimpleNamespace(
+        return GrubOpsOrderMap(
             grubops_order_id="G9", last_push_error="no branch map for location"
         )
 
@@ -1056,6 +1057,68 @@ async def test_grubops_branch_defers_when_a_map_row_exists_even_past_grace(monke
     assert out is None  # deferred to GrubOps
     assert build_calls["n"] == 0  # no duplicate standalone filed
     assert agg.promoted_at is None  # cursor stays open
+
+
+def _detail_never_served_promotion(monkeypatch):
+    """Talabat 3930593079: GrubOps listed the order (a map row, no MM order) but
+    `getOrderInfo` 404'd for good, so neither side ever filed it."""
+    built = SimpleNamespace(id=uuid.uuid4())
+    build_calls = {"n": 0}
+
+    async def fake_has_grubops(db, branch_id):
+        return True
+
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
+        return None
+
+    async def fake_find_map(db, channel, ext, display_ref=None):
+        return GrubOpsOrderMap(grubops_order_id="1423280932803649536", raw=None)
+
+    async def fake_find_conv(db, ext):
+        return None
+
+    async def fake_build(db, agg, label, *, draw_stock=True):
+        build_calls["n"] += 1
+        return built
+
+    monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
+    monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
+    monkeypatch.setattr(promote.reconcile, "_find_grubops_map", fake_find_map)
+    monkeypatch.setattr(promote, "_find_convergence_order", fake_find_conv)
+    monkeypatch.setattr(promote, "_build_order", fake_build)
+    return built, build_calls
+
+
+async def test_an_order_grubops_never_served_is_filed_past_grace(monkeypatch):
+    built, build_calls = _detail_never_served_promotion(monkeypatch)
+    agg = _agg(placed_at=datetime.now(timezone.utc) - timedelta(days=2))
+    out = await promote.promote_order(_FakeDB(), agg)
+    assert out is built
+    assert build_calls["n"] == 1  # recovered, not deferred for ever
+
+
+async def test_an_order_grubops_has_not_served_yet_still_waits(monkeypatch):
+    _, build_calls = _detail_never_served_promotion(monkeypatch)
+    agg = _agg(placed_at=datetime.now(timezone.utc) - timedelta(minutes=30))
+    out = await promote.promote_order(_FakeDB(), agg)
+    assert out is None  # GrubOps may still serve it within the grace
+    assert build_calls["n"] == 0
+
+
+def test_detail_never_served_is_not_a_failed_create():
+    listed = GrubOpsOrderMap(grubops_order_id="1")
+    assert listed.detail_never_served
+    waiting = GrubOpsOrderMap(grubops_order_id="2", last_push_error=DETAIL_UNAVAILABLE)
+    assert waiting.detail_never_served
+    # A create that failed for a reason a person fixes still defers (F-AGG-10).
+    unmapped = GrubOpsOrderMap(
+        grubops_order_id="3", last_push_error="no branch map for location"
+    )
+    assert not unmapped.detail_never_served
+    fetched = GrubOpsOrderMap(grubops_order_id="4", raw={"orderHeader": {}})
+    assert not fetched.detail_never_served
+    made = GrubOpsOrderMap(grubops_order_id="5", mm_order_id=uuid.uuid4())
+    assert not made.detail_never_served
 
 
 async def test_grubops_branch_gap_is_filled_past_grace(monkeypatch):

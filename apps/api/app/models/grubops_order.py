@@ -24,6 +24,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin
 
+#: `last_push_error` while GrubOps lists an order but `getOrderInfo` answers 404.
+#: Without the detail there are no lines or money, so no MM order can be made.
+DETAIL_UNAVAILABLE = "GrubOps lists this order but has not served its detail"
+
 
 class GrubOpsOrderMap(Base, UUIDMixin, TimestampMixin):
     """One aggregator order as GrubOps holds it, and the MM order it became."""
@@ -75,6 +79,18 @@ class GrubOpsOrderMap(Base, UUIDMixin, TimestampMixin):
     #: The last full `getOrderInfo` payload — audit, debugging, and the fields
     #: we do not model (driver, delivery, payment settlements).
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    @property
+    def detail_never_served(self) -> bool:
+        """GrubOps listed this order but never served its detail, so ingest could
+        not even try to create it. Unlike a failed create (a missing branch map
+        records its own `last_push_error`), nothing a person fixes here will make
+        GrubOps produce the order: `raw` is only written by a fetch that worked."""
+        return (
+            self.mm_order_id is None
+            and self.raw is None
+            and self.last_push_error in (None, DETAIL_UNAVAILABLE)
+        )
 
     def __repr__(self) -> str:
         return (
