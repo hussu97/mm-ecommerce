@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.grubops_order import DETAIL_UNAVAILABLE, GrubOpsOrderMap
 from app.models.order import OrderStatusEnum
 from app.services.grubops import grubops_orders as loop
 from app.services.grubops import grubops_orders_service as g
@@ -1122,3 +1123,69 @@ async def test_sweep_skips_transactions_for_unchanged_summaries(monkeypatch):
     assert db.savepoints == 0
     assert db.commits == 3, "only the three housekeeping sweeps commit"
     ingest.assert_not_awaited()
+
+
+# ── a listed order whose detail GrubOps has not served yet ────────────────────
+
+
+_SUMMARY = {
+    "orderId": "1423998966577422336",
+    "externalId": "3935163482",
+    "source": {"channel": "Talabat"},
+    "createdAt": "2026-10-04T11:43:30Z",
+}
+
+
+@pytest.mark.asyncio
+async def test_a_missing_detail_is_not_counted_handled_and_is_flagged_once(caplog):
+    """AGG-20261004-027: `getOrderInfo` 404'd for 11 minutes and every tick was
+    logged as a handled order. It is now a not-handled tick, flagged on the
+    ledger row and warned about once rather than every 30 seconds."""
+    order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=None))
+    ingest = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", ingest),
+        caplog.at_level("WARNING", logger=loop.__name__),
+    ):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is False
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is False
+
+    assert order_map.last_push_error == DETAIL_UNAVAILABLE
+    ingest.assert_not_awaited()
+    warnings = [r for r in caplog.records if "detail is not available" in r.message]
+    assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_flag_clears_when_the_detail_finally_arrives():
+    order_map = GrubOpsOrderMap(
+        grubops_order_id=_SUMMARY["orderId"], last_push_error=DETAIL_UNAVAILABLE
+    )
+    info = {"orderHeader": {"orderStatus": "OrderStarted"}}
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=info))
+    ingest = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", ingest),
+    ):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is True
+
+    assert order_map.last_push_error is None
+    ingest.assert_awaited_once_with(None, info, order_map)
+
+
+@pytest.mark.asyncio
+async def test_a_missing_detail_on_a_made_order_leaves_its_error_alone():
+    # An order already made (a re-poll of its status) is not "waiting for detail";
+    # a 404 there must not overwrite a write-back error recorded on the row.
+    order_map = GrubOpsOrderMap(
+        grubops_order_id=_SUMMARY["orderId"],
+        mm_order_id=uuid.uuid4(),
+        last_push_error="foodics dispatch failed",
+    )
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=None))
+    with patch.object(loop, "provider", fake_provider):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is False
+    assert order_map.last_push_error == "foodics dispatch failed"

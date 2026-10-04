@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core import advisory_lock, background, heartbeat
 from app.core.config import settings
-from app.models.grubops_order import GrubOpsOrderMap
+from app.models.grubops_order import DETAIL_UNAVAILABLE, GrubOpsOrderMap
 from app.services.foodics import foodics_orders_service
 from app.services.grubops import grubops_orders_service
 from app.services.providers.grubops_provider import GrubOpsError, provider
@@ -125,7 +125,32 @@ async def _ingest_one(db, summary: dict, order_map: GrubOpsOrderMap) -> bool:
 
     info = await provider.get_order(grubops_order_id)
     if info is None:
-        return True
+        # GrubOps listed the order but `getOrderInfo` 404s. This used to return as
+        # "handled", so an order GrubOps took 11 minutes to serve (AGG-20261004-027,
+        # rider already waiting) reached the register late with nothing logged, and
+        # one it never served (Talabat 3930593079) was simply never made. Retry each
+        # tick as before, but say so once and leave the mark on the ledger row.
+        if (
+            order_map.mm_order_id is None
+            and order_map.last_push_error != DETAIL_UNAVAILABLE
+        ):
+            logger.warning(
+                "GrubOps lists order %s (%s %s, created %s) but its detail is not "
+                "available yet; the MM order waits for it",
+                grubops_order_id,
+                (summary.get("source") or {}).get("channel"),
+                summary.get("externalId"),
+                summary.get("createdAt"),
+            )
+            order_map.last_push_error = DETAIL_UNAVAILABLE
+        return False
+    if order_map.last_push_error == DETAIL_UNAVAILABLE:
+        logger.info(
+            "GrubOps served the detail for order %s (created %s) after a delay",
+            grubops_order_id,
+            summary.get("createdAt"),
+        )
+        order_map.last_push_error = None
     await grubops_orders_service.ingest(db, info, order_map)
     return True
 
