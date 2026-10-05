@@ -94,6 +94,7 @@ from sqlalchemy.orm import aliased
 from app.core.exceptions import NotFoundError
 from app.core.money import money
 from app.models.aggregator import AggregatorOrder
+from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.inventory import (
     MISC_PNL_LEVELS,
     InventoryItem,
@@ -382,15 +383,29 @@ def with_cogs(stmt):
     return stmt.outerjoin(_COGS, true())
 
 
+def _third_party_delivery():
+    """Whether the order went out with a third party (no per-order invoice)."""
+    return (
+        select(OrderDelivery.id)
+        .where(
+            OrderDelivery.order_id == Order.id,
+            OrderDelivery.provider == FulfilmentProviderEnum.THIRD_PARTY.value,
+        )
+        .correlate(Order)
+        .exists()
+    )
+
+
 def _courier_cost_subquery():
     """
-    What our own courier charged: the invoice (`cost_total`), else the quote.
+    What our own courier charged (`OrderDelivery.courier_cost`): the invoice,
+    else the quote; for a third party, only the cost entered after delivery.
 
-    Null where no delivery row exists (a counter sale, a pickup) and where a
-    third-party zone bills nothing per order.
+    Null where no delivery row exists (a counter sale, a pickup) and on a
+    third-party delivery nobody has entered a cost for.
     """
     return (
-        select(func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost))
+        select(OrderDelivery.courier_cost)
         .where(OrderDelivery.order_id == Order.id)
         .correlate(Order)
         .limit(1)
@@ -558,6 +573,9 @@ def line_columns() -> dict[str, object]:
                     Order.source == OrderSourceEnum.ONLINE.value,
                     Order.delivery_method == DeliveryMethodEnum.DELIVERY,
                     _courier_cost_subquery().is_(None),
+                    # A third party's cost is optional: nothing entered is no
+                    # cost, not one still on its way.
+                    ~_third_party_delivery(),
                 ),
                 true(),
             ),

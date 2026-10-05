@@ -1,3 +1,21 @@
+# Third-party courier cost: entered by hand, never the quote
+
+Owner ask (2026-10-05): MM-20261003-002 went out with a third party and the P&L
+booked its 49.00 checkout quote as courier cost. Remove it for third parties;
+instead let a person enter what was paid once delivered (VAT inclusive by
+default), counted as courier charges in the P&L.
+
+- [x] `OrderDelivery.courier_cost` (hybrid): third party → `cost_total` only; others unchanged (invoice, else quote).
+- [x] P&L, economics, delivery response, dashboard (fee total, confirmed/pending, per-courier), daily sales email, custom orders read it; a third party with no entry is not "fees pending".
+- [x] Reassigning to a third party clears the previous courier's fare; migration 312 clears the two already left (guarded to exact rows/values).
+- [x] `PUT /orders/{n}/delivery/courier-cost` (`orders.manage`, delivered third-party only, `vat_inclusive` grosses up 5%), audited.
+- [x] Admin delivery panel: renders the API's `courier_cost`; optional editor on a delivered third-party order.
+- [x] Types regenerated; tests (unit + integration on Postgres).
+
+## Review
+- Full API suite on a local Postgres: 5,093 passed. Admin type-check, lint (no new warnings), 143 tests pass.
+- MM-20261003-002's P&L moves from courier 49.00 / PC3 28.29 to courier 0 / PC3 74.95 until a cost is entered.
+
 # Foodics as the fallback when GrubOps lists an order but won't serve its detail
 
 Owner ask (2026-10-05): a GrubTech-branch order GrubOps lists but 404s on

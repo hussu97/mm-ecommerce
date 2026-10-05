@@ -52,6 +52,7 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.category import Category
+from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.legal_entity import LegalEntity
 from app.models.order import OrderItem
 from app.models.order_delivery import OrderDelivery
@@ -352,7 +353,7 @@ async def _fee_totals(
     to its quote. A missing marketplace commission or courier amount is not zero;
     it means the displayed total is a floor, and is surfaced as such to the user.
     """
-    courier_cost = func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost, 0)
+    courier_cost = func.coalesce(OrderDelivery.courier_cost, 0)
     fee_total = func.coalesce(
         func.sum(
             func.coalesce(Order.aggregator_fee, 0)
@@ -371,8 +372,11 @@ async def _fee_totals(
         and_(
             Order.source == OrderSourceEnum.ONLINE.value,
             Order.delivery_method == DeliveryMethodEnum.DELIVERY.value,
-            OrderDelivery.cost_total.is_(None),
-            OrderDelivery.quoted_cost.is_(None),
+            OrderDelivery.courier_cost.is_(None),
+            # A third party's cost is optional; nothing entered is no cost. (No
+            # delivery row at all is still missing, hence the coalesce.)
+            func.coalesce(OrderDelivery.provider, "")
+            != FulfilmentProviderEnum.THIRD_PARTY.value,
         ),
     )
     result = (
@@ -436,6 +440,9 @@ async def _courier_fee_totals(
                     and_(
                         OrderDelivery.cost_total.is_(None),
                         OrderDelivery.quoted_cost.is_not(None),
+                        # A third party's quote is never a cost to come.
+                        OrderDelivery.provider
+                        != FulfilmentProviderEnum.THIRD_PARTY.value,
                     ),
                     OrderDelivery.quoted_cost,
                 ),
@@ -750,9 +757,9 @@ async def _by_courier(
     # invoice, `quoted_cost` until then. This is the website courier's fee, and
     # it is NOT `Order.delivery_fee`: that column is the delivery charge the
     # customer paid us (revenue), and summing it here billed the shop its own
-    # takings. Null on a third-party zone that never invoices per order.
+    # takings. Null on a third-party delivery nobody entered a cost for.
     courier_cost = (
-        select(func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost))
+        select(OrderDelivery.courier_cost)
         .where(OrderDelivery.order_id == Order.id)
         .limit(1)
         .scalar_subquery()

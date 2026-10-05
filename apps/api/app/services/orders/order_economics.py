@@ -255,18 +255,12 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
             select(OrderDelivery).where(OrderDelivery.order_id == order.id)
         )
     ).scalar_one_or_none()
-    # `cost_total` is what the courier actually charged; `quoted_cost` is what
-    # they said they would. The first is the truth and arrives late, so the
-    # second stands in until it does. Null on a third-party zone, where nobody
-    # invoices us per order, and that is a genuine "we do not know" rather than
-    # a zero — a third party's van is not free, it is just not itemised here.
+    # The invoice, else the quote until it lands; for a third party only the
+    # cost entered after delivery (`OrderDelivery.courier_cost`). Null when a
+    # third party's cost was never entered.
     courier_cost = None
     if delivery is not None:
-        raw = (
-            delivery.cost_total
-            if delivery.cost_total is not None
-            else delivery.quoted_cost
-        )
+        raw = delivery.courier_cost
         courier_cost = to_decimal(raw) if raw is not None else None
 
     # ── The two fees, preferring what was written down ───────────────────────

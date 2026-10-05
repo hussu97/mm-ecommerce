@@ -530,6 +530,26 @@ async def test_moving_to_a_third_party_books_nothing_and_clears_the_dead_status(
 
 
 @pytest.mark.asyncio
+async def test_moving_to_a_third_party_drops_the_old_couriers_fare(quiet):
+    """MM-20260821-001: a rejected Lalamove booking's 59.00 stayed on
+    `cost_total` after the move and was booked as courier cost. A third party's
+    cost is only what a person enters after delivery."""
+    delivery = _delivery(
+        provider=LALAMOVE,
+        courier_order_id="L-OLD",
+        quoted_cost=Decimal("59.00"),
+        cost_total=Decimal("59.00"),
+        price_breakdown={"total": "59.00"},
+    )
+    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
+    result = await reassign.move(db, _order(), target=THIRD_PARTY)
+
+    assert result.cost_total is None
+    assert result.price_breakdown is None
+    assert result.courier_cost is None
+
+
+@pytest.mark.asyncio
 async def test_the_customers_delivery_fee_never_moves(quiet):
     """They paid their zone's published fee. Only our cost changes."""
     delivery = _delivery(provider=THIRD_PARTY, fee_charged=Decimal("30.00"))

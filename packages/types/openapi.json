@@ -21987,6 +21987,22 @@
               }
             ]
           },
+          "courier_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courier Cost"
+          },
+          "courier_cost_editable": {
+            "default": false,
+            "title": "Courier Cost Editable",
+            "type": "boolean"
+          },
           "courier_order_id": {
             "anyOf": [
               {
@@ -40136,6 +40152,35 @@
           "devices"
         ],
         "title": "TerminalsDashboard",
+        "type": "object"
+      },
+      "ThirdPartyCourierCostUpdate": {
+        "description": "What a third-party courier charged for a delivered order, entered by hand.\n\n`cost: null` clears it. VAT inclusive unless `vat_inclusive` is false, in\nwhich case 5% is added before it is stored.",
+        "properties": {
+          "cost": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "vat_inclusive": {
+            "default": true,
+            "title": "Vat Inclusive",
+            "type": "boolean"
+          }
+        },
+        "title": "ThirdPartyCourierCostUpdate",
         "type": "object"
       },
       "TillCloseRequest": {
@@ -64280,6 +64325,64 @@
           }
         ],
         "summary": "Abandon Order Booking",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_number}/delivery/courier-cost": {
+      "put": {
+        "description": "Record what a third-party courier charged for a delivered order.\n\nA third party invoices nobody per order through us, so its cost is only ever\nwhat a person enters here, once the order is delivered. It is what the P&L\nbooks as this order's courier cost (VAT inclusive, the VAT reclaimed like\nany courier invoice). Send `cost: null` to clear it. `vat_inclusive: false`\ntakes an amount before VAT and stores it with 5% added.",
+        "operationId": "set_third_party_courier_cost_api_v1_orders__order_number__delivery_courier_cost_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThirdPartyCourierCostUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDeliveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Third Party Courier Cost",
         "tags": [
           "Orders"
         ]

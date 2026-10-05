@@ -218,6 +218,17 @@ class OrderStatusUpdate(BaseModel):
     admin_notes: str | None = None
 
 
+class ThirdPartyCourierCostUpdate(BaseModel):
+    """What a third-party courier charged for a delivered order, entered by hand.
+
+    `cost: null` clears it. VAT inclusive unless `vat_inclusive` is false, in
+    which case 5% is added before it is stored.
+    """
+
+    cost: Decimal | None = Field(default=None, ge=0, le=10000, decimal_places=2)
+    vat_inclusive: bool = True
+
+
 class OrderRefundRequest(BaseModel):
     """An admin-initiated refund of one slice of a delivered website order."""
 
