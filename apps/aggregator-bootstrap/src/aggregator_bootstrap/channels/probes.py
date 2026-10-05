@@ -33,6 +33,11 @@ class ChannelProbe:
     token_from_header: dict[str, str] = field(default_factory=dict)
     #: cookie names to lift into tokens as well (kept in cookies too).
     token_from_cookie: dict[str, str] = field(default_factory=dict)
+    #: tokens keys whose JWT expiry is the session's `token_expires_at`. Empty
+    #: means every harvested token counts. Name them when the provider replays
+    #: only some of what is captured, so an unused stale token cannot mark a
+    #: working session dead.
+    liveness_tokens: tuple[str, ...] = ()
 
 
 _COMMON_UA = (
@@ -73,6 +78,13 @@ CHANNEL_PROBES: dict[str, ChannelProbe] = {
         header_keys=_COMMON_UA + ("authorization", "x-global-entity-id"),
         token_from_header={"authorization": "authorization"},
         token_from_cookie={"accessToken": "accessToken"},
+        # The provider sends the `accessToken` cookie as the bearer on every call
+        # and overwrites the captured Authorization header (`build_headers`). The
+        # portal's own XHR can still carry an older bearer: on 2026-10-05 the
+        # header expired 18:54 while the cookie ran to 00:14, the min stamped the
+        # session dead, and each "already authenticated" re-login re-pushed that
+        # stamp, leaving Talabat in `needs_bootstrap` with a valid cookie.
+        liveness_tokens=("accessToken",),
     ),
     "noon": ChannelProbe(
         # The console SPA root — an HTML page. It MUST NOT be a bare API path:
