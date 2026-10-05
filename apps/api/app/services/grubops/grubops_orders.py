@@ -7,6 +7,10 @@ hands it to `grubops_orders_service.ingest`. That service creates the MM order
 the first time (and rings the register), and mirrors GrubOps's status onto ours
 thereafter.
 
+An order GrubOps lists but will not serve the detail of is built from the same
+order in Foodics instead, after a short grace (`grubops_foodics_fallback`), so it
+still reaches the register and Packed / Cancel still write back to it.
+
 Shaped like `grubops_reconcile`: `run_forever`/`sweep_once`, its own advisory
 lock so a second worker does nothing rather than double-ingesting, gated on
 `GRUBOPS_ORDERS_ENABLED`, started only where the storefront app runs its
@@ -26,7 +30,7 @@ from app.core import advisory_lock, background, heartbeat
 from app.core.config import settings
 from app.models.grubops_order import DETAIL_UNAVAILABLE, GrubOpsOrderMap
 from app.services.foodics import foodics_orders_service
-from app.services.grubops import grubops_orders_service
+from app.services.grubops import grubops_foodics_fallback, grubops_orders_service
 from app.services.providers.grubops_provider import GrubOpsError, provider
 
 logger = logging.getLogger(__name__)
@@ -143,6 +147,29 @@ async def _ingest_one(db, summary: dict, order_map: GrubOpsOrderMap) -> bool:
                 summary.get("createdAt"),
             )
             order_map.last_push_error = DETAIL_UNAVAILABLE
+        # Past a short grace, build it from the same order in Foodics instead, so
+        # it reaches the register and Packed / Cancel can write back to it.
+        if order_map.mm_order_id is None:
+            info = await grubops_foodics_fallback.build_from_foodics(
+                db, summary, order_map
+            )
+            if info is None:
+                return False
+            order_map.last_push_error = None
+            await grubops_orders_service.ingest(db, info, order_map)
+            return True
+        # An order made from Foodics whose listing has moved (a marketplace
+        # cancel, say) while GrubOps still withholds the detail: carry the
+        # listing's status, as the detail would have.
+        if grubops_foodics_fallback.is_fallback_raw(order_map.raw):
+            await grubops_orders_service.ingest(
+                db,
+                grubops_foodics_fallback.with_status(
+                    order_map.raw, summary.get("status")
+                ),
+                order_map,
+            )
+            return True
         return False
     if order_map.last_push_error == DETAIL_UNAVAILABLE:
         logger.info(

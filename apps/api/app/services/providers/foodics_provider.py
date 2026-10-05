@@ -360,6 +360,16 @@ def _fields(*names: str) -> dict[str, str]:
 #: The order fields the write-back reads back to reason about live state.
 _ORDER_FIELDS = _fields("id", "status", "delivery_status", "reference")
 
+#: The relations `list_recent_orders` needs to rebuild an order's lines: each
+#: product and modifier option carries its Foodics id and name only when included.
+_RECENT_ORDER_INCLUDES = {
+    "include[0]": "products",
+    "include[1]": "products.product",
+    "include[2]": "products.options",
+    "include[3]": "products.options.modifier_option",
+    "include[4]": "branch",
+}
+
 
 class FoodicsClient:
     """Every console endpoint this write-back uses, one method each."""
@@ -605,6 +615,25 @@ class FoodicsClient:
             "url": "/orders",
             "filters[original_order_id]": original_order_id,
             **_ORDER_FIELDS,
+        }
+        payload = await self._call("GET", _LISTING, params=params)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        return data if isinstance(data, list) else []
+
+    async def list_recent_orders(self, *, branch_id: str, page: int = 1) -> list[dict]:
+        """One page (30, newest first) of a branch's orders, with their lines.
+
+        For the GrubOps detail fallback (`grubops_foodics_fallback`): GrubTech
+        publishes every aggregator order here within a second of GrubOps listing
+        it, with the product and modifier-option ids GrubOps' own lines carry as
+        `externalId`. `branch` is included so a caller can confirm the filter held
+        rather than trust it.
+        """
+        params = {
+            "url": "/orders",
+            "filters[branch_id]": branch_id,
+            "page": page,
+            **_RECENT_ORDER_INCLUDES,
         }
         payload = await self._call("GET", _LISTING, params=params)
         data = payload.get("data") if isinstance(payload, dict) else None
