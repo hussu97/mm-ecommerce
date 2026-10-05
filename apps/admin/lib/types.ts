@@ -1173,6 +1173,11 @@ export interface OrderDelivery {
   quoted_currency: string | null;
   quoted_distance_m: number | null;
   cost_total: number | null;
+  /** What this delivery cost us, VAT inclusive — the P&L's courier cost. Render
+   * this rather than re-deriving it: a third party's quote is never a cost. */
+  courier_cost: number | null;
+  /** A third party carried it and it is delivered: the cost may be entered. */
+  courier_cost_editable: boolean;
   /** The other fees the customer paid alongside delivery (small order fee). */
   surcharges: Surcharge[];
   /** Fee charged plus `surcharges`, minus what the courier cost. Negative loses money. */

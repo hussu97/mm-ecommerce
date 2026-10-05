@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 import type { OrderDelivery } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
 import { CourierLogo } from '@/components/orders/CourierLogo';
@@ -24,6 +26,7 @@ export function DeliveryPanel({
   canChangeFulfilment,
   canRedispatch = true,
   isSettled,
+  onSaveCourierCost,
 }: {
   delivery: OrderDelivery;
   busy: boolean;
@@ -51,8 +54,12 @@ export function DeliveryPanel({
    * screen offering a button whose single possible outcome is a 409.
    */
   isSettled: boolean;
+  /** Records a third party's charge (`courier_cost_editable`); resolves once saved. */
+  onSaveCourierCost?: (cost: number | null, vatInclusive: boolean) => Promise<void>;
 }) {
-  const cost = delivery.cost_total ?? delivery.quoted_cost;
+  // The API's figure, the one the P&L books. Not `cost_total ?? quoted_cost`:
+  // a third party's quote is a backup estimate, never a cost.
+  const cost = delivery.courier_cost;
   // A marketplace rider (Careem/Talabat/…) is a fulfilment courier we only
   // OBSERVE: the aggregator dispatches and controls it, so this panel shows its
   // driver and status but offers none of the courier controls — the same "we did
@@ -163,7 +170,11 @@ export function DeliveryPanel({
             Courier cost{costIsEstimate && ' (est.)'}
           </dt>
           <dd className="text-gray-800">
-            {cost !== null ? formatCurrency(cost) : '—'}
+            {cost !== null
+              ? formatCurrency(cost)
+              : delivery.courier_cost_editable
+                ? 'Not entered'
+                : '—'}
             {delivery.quoted_distance_m !== null && (
               <span className="text-gray-400">
                 {' '}
@@ -274,6 +285,10 @@ export function DeliveryPanel({
         )}
       </dl>
 
+      {delivery.courier_cost_editable && onSaveCourierCost && (
+        <ThirdPartyCostEditor saved={cost} busy={busy} onSave={onSaveCourierCost} />
+      )}
+
       {(isCourier || delivery.pod_image_url) && (
         <div className="flex flex-wrap items-center gap-2 px-4 pb-4">
           {delivery.share_link && (
@@ -333,6 +348,93 @@ export function DeliveryPanel({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+
+/**
+ * What a third-party courier charged, entered after delivery.
+ *
+ * No invoice reaches us for a third party, so the P&L books exactly what is
+ * entered here as the order's courier cost — and nothing when it is left empty.
+ * VAT inclusive by default, like every courier figure; untick for a pre-VAT
+ * amount and the API adds the 5%.
+ */
+function ThirdPartyCostEditor({
+  saved,
+  busy,
+  onSave,
+}: {
+  saved: number | null;
+  busy: boolean;
+  onSave: (cost: number | null, vatInclusive: boolean) => Promise<void>;
+}) {
+  const [value, setValue] = useState(saved !== null ? saved.toFixed(2) : '');
+  const [vatInclusive, setVatInclusive] = useState(true);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setValue(saved !== null ? saved.toFixed(2) : '');
+  }, [saved]);
+
+  const trimmed = value.trim();
+  const amount = trimmed === '' ? null : Number(trimmed);
+  const invalid = amount !== null && (!Number.isFinite(amount) || amount < 0 || amount > 10000);
+  const unchanged = vatInclusive && (amount === null ? saved === null : amount === saved);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await onSave(amount, vatInclusive);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mx-4 mb-4 px-3 py-3 bg-gray-50 border border-gray-200 text-xs font-body">
+      <p className="text-gray-600 mb-2">
+        Third-party courier charge <span className="text-gray-400">(optional)</span> — counted as
+        this order&apos;s courier cost in the P&amp;L.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5">
+          <span className="text-gray-500">AED</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            max={10000}
+            step="0.01"
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            placeholder="0.00"
+            aria-label="Third-party courier charge"
+            className={cn(
+              'w-28 border px-2 py-1 text-sm text-gray-900',
+              invalid ? 'border-red-400' : 'border-gray-300',
+            )}
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-gray-600">
+          <input
+            type="checkbox"
+            checked={vatInclusive}
+            onChange={e => setVatInclusive(e.target.checked)}
+          />
+          Includes VAT
+        </label>
+        <Button
+          size="sm"
+          variant="secondary"
+          loading={saving}
+          disabled={busy || saving || invalid || unchanged}
+          onClick={save}
+        >
+          {amount === null && saved !== null ? 'Clear' : 'Save'}
+        </Button>
+      </div>
+      {invalid && <p className="mt-1 text-red-600">Enter an amount between 0 and 10,000.</p>}
     </div>
   );
 }

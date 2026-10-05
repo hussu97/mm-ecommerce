@@ -994,13 +994,9 @@ async def to_response(
                 provider=delivery.provider,
                 courier_status=delivery.courier_status,
                 cost=(
-                    to_decimal(delivery.cost_total)
-                    if delivery.cost_total is not None
-                    else (
-                        to_decimal(delivery.quoted_cost)
-                        if delivery.quoted_cost is not None
-                        else None
-                    )
+                    to_decimal(delivery.courier_cost)
+                    if delivery.courier_cost is not None
+                    else None
                 ),
                 share_link=delivery.share_link,
                 driver_name=delivery.driver_name,

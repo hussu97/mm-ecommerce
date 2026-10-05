@@ -14,11 +14,15 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    case,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
+from .delivery_polygon import FulfilmentProviderEnum
 
 if TYPE_CHECKING:
     from .order import Order
@@ -551,6 +555,34 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     )
 
     order: Mapped[Order] = relationship("Order", back_populates="delivery")
+
+    @hybrid_property
+    def courier_cost(self) -> Decimal | None:
+        """What this delivery cost us, VAT inclusive: the one definition every
+        P&L, dashboard and report reads.
+
+        For an integrated courier, the invoice (`cost_total`), else the quote
+        taken at checkout until the invoice lands. For a **third party** — a
+        courier we use outside any integration — only what a person entered
+        after delivery (`cost_total`, from the order page). Its quote is the
+        checkout's backup estimate, or a previous courier's price left behind
+        by a reassignment, and was being booked as a cost nobody paid: 49.00 on
+        MM-20261003-002. Nothing entered is no courier cost, not an estimate.
+        """
+        if self.provider == FulfilmentProviderEnum.THIRD_PARTY.value:
+            return self.cost_total
+        return self.cost_total if self.cost_total is not None else self.quoted_cost
+
+    @courier_cost.inplace.expression
+    @classmethod
+    def _courier_cost_expression(cls):
+        return case(
+            (
+                cls.provider == FulfilmentProviderEnum.THIRD_PARTY.value,
+                cls.cost_total,
+            ),
+            else_=func.coalesce(cls.cost_total, cls.quoted_cost),
+        )
 
     @property
     def is_booked(self) -> bool:

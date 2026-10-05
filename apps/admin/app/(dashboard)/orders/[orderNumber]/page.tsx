@@ -472,6 +472,17 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function saveCourierCost(cost: number | null, vatInclusive: boolean) {
+    try {
+      setDelivery(await ordersApi.setCourierCost(orderNumber, cost, vatInclusive));
+      toast.success(cost === null ? 'Courier cost cleared' : 'Courier cost saved');
+      // The P&L and economics read the new cost.
+      reloadOrder();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
   async function refreshCourier() {
     setActionLoading(true);
     try {
@@ -1163,6 +1174,7 @@ export default function OrderDetailPage() {
           canRedispatch={!isCustom}
           isSettled={isSettled(order)}
           onRefresh={refreshCourier}
+          onSaveCourierCost={saveCourierCost}
         />
       )}
 

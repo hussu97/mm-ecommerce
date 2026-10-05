@@ -816,12 +816,30 @@ async def test_a_cancellation_that_kept_its_fees_books_what_it_kept(engine):
         assert p.net_revenue == D("10.50")
         assert p.delivery_fees == D("80.00")
         assert p.payment_fees == D("5.30")
-        assert p.delivery_cost == D("49.00")
-        assert p.fees_vat == D("2.59")  # (5.30 + 49.00) × 5/105
+        # A third party's 49.00 is its checkout quote, a backup estimate nobody
+        # billed: no courier cost until someone enters one, and not pending.
+        assert p.delivery_cost == D("0.00")
+        assert not p.fees_pending
+        assert p.fees_vat == D("0.25")  # 5.30 × 5/105
         assert p.discounts == D("10.50")
-        # 80 kept − 5.30 card − 49.00 courier + 2.59 VAT back: the goods and
-        # their refund cancel out, coupon and all.
-        assert p.pc3 == D("28.29")
+        # 80 kept − 5.30 card + 0.25 VAT back: the goods and their refund cancel
+        # out, coupon and all.
+        assert p.pc3 == D("74.95")
+
+        # Once somebody enters what the third party charged, that is the cost,
+        # VAT inclusive with its VAT reclaimed like any courier invoice.
+        async with Session() as db:
+            await db.execute(
+                OrderDelivery.__table__.update()
+                .where(OrderDelivery.order_id == kept.id)
+                .values(cost_total=D("35.00"))
+            )
+            await db.commit()
+        p = await _pnl(engine, kept.id)
+        assert p.delivery_cost == D("35.00")
+        assert p.fees_vat == D("1.92")  # (5.30 + 35.00) × 5/105
+        assert p.pc3 == D("41.62")  # 80 − 5.30 − 35.00 + 1.92
+        assert not p.fees_pending
 
         assert await _pnl(engine, full.id) is None
         assert await _pnl(engine, failed.id) is None

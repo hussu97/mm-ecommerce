@@ -193,10 +193,10 @@ def _column_for(
 async def _fetch(
     db: AsyncSession, date_from: str, date_to: str, branch_id=None
 ) -> list:
-    # `cost_total` is what the courier actually billed; `quoted_cost` stands in
-    # until it lands — the same order `order_economics` prefers them in. The
-    # delivery join cannot fan out: `order_deliveries` is unique on order_id.
-    courier_cost = func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost)
+    # What the courier cost us (`OrderDelivery.courier_cost`, the definition
+    # `order_economics` and the P&L read). The delivery join cannot fan out:
+    # `order_deliveries` is unique on order_id.
+    courier_cost = OrderDelivery.courier_cost
     stmt = (
         select(
             Order.business_date,
@@ -338,7 +338,7 @@ async def build_detail(
     `transfer_date` falls in it — and the statements those lines roll up to, so
     the finance tabs show what settled on the day rather than the whole ledger.
     """
-    courier_cost = func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost)
+    courier_cost = OrderDelivery.courier_cost
     order_stmt = (
         select(
             Order.business_date,

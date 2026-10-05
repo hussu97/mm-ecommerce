@@ -564,6 +564,13 @@ export const ordersApi = {
    */
   refreshDelivery: (orderNumber: string) =>
     api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/refresh`),
+  /** What a third-party courier charged for a delivered order — the P&L's
+   *  courier cost. `cost: null` clears it; VAT inclusive unless told otherwise. */
+  setCourierCost: (orderNumber: string, cost: number | null, vat_inclusive: boolean) =>
+    api.put<OrderDelivery>(`/orders/${orderNumber}/delivery/courier-cost`, {
+      cost,
+      vat_inclusive,
+    }),
 
   /**
    * What Lalamove would charge to carry this packed third-party order.

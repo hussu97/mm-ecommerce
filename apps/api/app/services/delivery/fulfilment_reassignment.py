@@ -814,7 +814,13 @@ async def move(
 
     if target == THIRD_PARTY:
         # Nothing to book. The box is ready, somebody we already use collects
-        # it, and the next thing anybody hears is that it arrived.
+        # it, and the next thing anybody hears is that it arrived. The previous
+        # courier's price goes with its booking: a third party's cost is only
+        # what a person enters after delivery (`OrderDelivery.courier_cost`), and
+        # a cancelled Lalamove fare left here was read as one (MM-20260821-001,
+        # MM-20260912-001).
+        delivery.cost_total = None
+        delivery.price_breakdown = None
         logger.info(
             "Order %s moved from %s to a third party by hand",
             order.order_number,

@@ -5929,6 +5929,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orders/{order_number}/delivery/courier-cost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Third Party Courier Cost
+         * @description Record what a third-party courier charged for a delivered order.
+         *
+         *     A third party invoices nobody per order through us, so its cost is only ever
+         *     what a person enters here, once the order is delivered. It is what the P&L
+         *     books as this order's courier cost (VAT inclusive, the VAT reclaimed like
+         *     any courier invoice). Send `cost: null` to clear it. `vat_inclusive: false`
+         *     takes an amount before VAT and stores it with 5% added.
+         */
+        put: operations["set_third_party_courier_cost_api_v1_orders__order_number__delivery_courier_cost_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders/{order_number}/delivery/dispatch": {
         parameters: {
             query?: never;
@@ -17153,6 +17179,13 @@ export interface components {
             /** Cost Total */
             cost_total: number | null;
             courier?: components["schemas"]["CourierBadge"] | null;
+            /** Courier Cost */
+            courier_cost?: number | null;
+            /**
+             * Courier Cost Editable
+             * @default false
+             */
+            courier_cost_editable: boolean;
             /** Courier Order Id */
             courier_order_id: string | null;
             /** Courier Reference */
@@ -23276,6 +23309,22 @@ export interface components {
             sales_today: string;
             /** Terminals */
             terminals: number;
+        };
+        /**
+         * ThirdPartyCourierCostUpdate
+         * @description What a third-party courier charged for a delivered order, entered by hand.
+         *
+         *     `cost: null` clears it. VAT inclusive unless `vat_inclusive` is false, in
+         *     which case 5% is added before it is stored.
+         */
+        ThirdPartyCourierCostUpdate: {
+            /** Cost */
+            cost?: number | string | null;
+            /**
+             * Vat Inclusive
+             * @default true
+             */
+            vat_inclusive: boolean;
         };
         /** TillCloseRequest */
         TillCloseRequest: {
@@ -35968,6 +36017,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AbandonBookingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderDeliveryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_third_party_courier_cost_api_v1_orders__order_number__delivery_courier_cost_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThirdPartyCourierCostUpdate"];
             };
         };
         responses: {

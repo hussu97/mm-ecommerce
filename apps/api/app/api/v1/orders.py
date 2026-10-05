@@ -60,6 +60,7 @@ from app.schemas.order import (
     OrderStatusUpdate,
     OrderTenderView,
     OrderTimelineEntry,
+    ThirdPartyCourierCostUpdate,
 )
 from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
 from app.schemas.pnl import OrderPnlResponse
@@ -75,6 +76,10 @@ from app.services.delivery import (
     driver_proximity,
     fulfilment_reassignment,
     fulfilment_service,
+)
+from app.services.delivery.third_party_cost import (
+    third_party_cost_editable,
+    third_party_cost_gross,
 )
 from app.services.orders import (
     channels,
@@ -130,6 +135,12 @@ class OrderDeliveryResponse(BaseModel):
     quoted_currency: str | None
     quoted_distance_m: int | None
     cost_total: float | None
+    #: What this delivery cost us, VAT inclusive — `OrderDelivery.courier_cost`,
+    #: the figure the P&L books. Render this; do not re-derive it.
+    courier_cost: float | None = None
+    #: Whether a person may enter `courier_cost` from the order page: a third
+    #: party carried it (no invoice reaches us) and it has been delivered.
+    courier_cost_editable: bool = False
     #: The other fees the customer paid alongside delivery — today the
     #: small-basket fee — from `order_surcharges`. Empty on most orders.
     surcharges: list["SurchargeLine"] = []
@@ -211,7 +222,7 @@ class OrderDeliveryResponse(BaseModel):
         not failing. So is *order*, whose surcharges count towards the margin."""
         reached = reached or {}
         proximity = driver_proximity.to_pickup(d, branch)
-        cost = d.cost_total if d.cost_total is not None else d.quoted_cost
+        cost = d.courier_cost
         surcharges = SurchargeLine.surcharges_of(order)
         margin = (
             float(
@@ -233,6 +244,8 @@ class OrderDeliveryResponse(BaseModel):
             quoted_currency=d.quoted_currency,
             quoted_distance_m=d.quoted_distance_m,
             cost_total=float(d.cost_total) if d.cost_total is not None else None,
+            courier_cost=float(cost) if cost is not None else None,
+            courier_cost_editable=third_party_cost_editable(d, order),
             surcharges=surcharges,
             margin=margin,
             courier_reference=d.courier_reference,
@@ -1369,6 +1382,58 @@ async def reassign_order_fulfilment(
             ),
             "courier_reference": delivery.courier_reference,
             "courier_order_id": delivery.courier_order_id,
+        },
+        request=request,
+    )
+    return await _delivery_payload(db, order, delivery)
+
+
+@router.put(
+    "/{order_number}/delivery/courier-cost", response_model=OrderDeliveryResponse
+)
+async def set_third_party_courier_cost(
+    order_number: str,
+    data: ThirdPartyCourierCostUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("orders.manage")),
+):
+    """
+    Record what a third-party courier charged for a delivered order.
+
+    A third party invoices nobody per order through us, so its cost is only ever
+    what a person enters here, once the order is delivered. It is what the P&L
+    books as this order's courier cost (VAT inclusive, the VAT reclaimed like
+    any courier invoice). Send `cost: null` to clear it. `vat_inclusive: false`
+    takes an amount before VAT and stores it with 5% added.
+    """
+    order = await _load_order(db, order_number)
+    delivery = await _load_delivery(db, order_number)
+    if not third_party_cost_editable(delivery, order):
+        raise ConflictError(
+            "A courier cost can only be entered for a delivered third-party order"
+        )
+    before = delivery.cost_total
+    delivery.cost_total = third_party_cost_gross(data.cost, data.vat_inclusive)
+    await db.flush()
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="order_delivery",
+        entity_id=order_number,
+        entity_label=order_number,
+        admin=admin,
+        changes={
+            "cost_total": {
+                "from": float(before) if before is not None else None,
+                "to": (
+                    float(delivery.cost_total)
+                    if delivery.cost_total is not None
+                    else None
+                ),
+            },
+            "vat_inclusive": data.vat_inclusive,
         },
         request=request,
     )
