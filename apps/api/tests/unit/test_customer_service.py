@@ -3,11 +3,14 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 from app.services.customer_service import (
     _components,
+    _order_name,
     _Source,
     _uae_coordinates,
+    _unmasked,
     normalise_customer_name,
 )
 
@@ -132,3 +135,26 @@ def test_delivery_area_cache_accepts_both_website_and_marketplace_coordinate_spe
         Decimal("55.1324881"),
     )
     assert _uae_coordinates({"latitude": 51.5072, "longitude": -0.1276}) is None
+
+
+def test_a_masked_marketplace_contact_is_no_identity():
+    """Keeta's July–September feed masked every customer: name ``***``, number
+    ``52*****98``. Those must not become customers or merge strangers."""
+    assert _unmasked("***") is None
+    assert _unmasked("52*****98") is None
+    assert _unmasked(" +971501234567 ") == "+971501234567"
+    assert _unmasked(None) is None
+
+    masked = SimpleNamespace(customer_name="***", shipping_address_snapshot={})
+    assert _order_name(masked) is None
+    # A masked header falls back to a real name on the delivery snapshot.
+    named = SimpleNamespace(
+        customer_name="***",
+        shipping_address_snapshot={"first_name": "aisha", "last_name": "khan"},
+    )
+    assert _order_name(named) == "Aisha Khan"
+    hidden = SimpleNamespace(
+        customer_name=None,
+        shipping_address_snapshot={"first_name": "A***", "last_name": "K***"},
+    )
+    assert _order_name(hidden) is None
