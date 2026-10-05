@@ -64,14 +64,30 @@ def _email(value: str | None) -> str | None:
     return value.casefold() if value and "@" in value and " " not in value else None
 
 
+def _unmasked(value: str | None) -> str | None:
+    """A contact value, or None when a marketplace masked it.
+
+    Keeta sent ``***`` for the name and ``52*****98`` for the number on every
+    order from July to early September 2026. A masked value identifies nobody: as
+    a name + phone key it merged unrelated people whose four visible digits
+    matched, and it filled the directory with 534 ``***`` "customers". Read as
+    absent, such an order has no identity and is left out like an anonymous
+    counter sale.
+    """
+    value = _clean(value)
+    return None if value and "*" in value else value
+
+
 def _order_name(order: Order) -> str | None:
     """Use the delivery snapshot when checkout has no pickup contact."""
-    name = normalise_customer_name(order.customer_name)
+    name = normalise_customer_name(_unmasked(order.customer_name))
     if name:
         return name
     snapshot = order.shipping_address_snapshot or {}
     return normalise_customer_name(
-        " ".join(str(snapshot.get(k) or "") for k in ("first_name", "last_name"))
+        _unmasked(
+            " ".join(str(snapshot.get(k) or "") for k in ("first_name", "last_name"))
+        )
     )
 
 
@@ -223,9 +239,10 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
 
     for order in orders:
         name = _order_name(order)
-        email = _email(order.email)
-        phone_parts = describe_phone(order.customer_phone)
-        phone = phone_parts.e164 or _clean(order.customer_phone)
+        email = _email(_unmasked(order.email))
+        raw_phone = _unmasked(order.customer_phone)
+        phone_parts = describe_phone(raw_phone)
+        phone = phone_parts.e164 or raw_phone
         # An anonymous counter check has neither a name nor an identity. Do not
         # let it manufacture a row full of dashes in the customer directory.
         if not name and not email and not phone:
