@@ -1189,3 +1189,145 @@ async def test_a_missing_detail_on_a_made_order_leaves_its_error_alone():
     with patch.object(loop, "provider", fake_provider):
         assert await loop._ingest_one(None, _SUMMARY, order_map) is False
     assert order_map.last_push_error == "foodics dispatch failed"
+
+
+# ── the Foodics fallback for a detail GrubOps withholds ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_withheld_detail_is_built_from_foodics_and_ingested():
+    """Talabat 3937792428 (Barsha, 2026-10-05) was listed and never served. Past
+    the grace, the same order is read from Foodics and goes through the
+    unchanged ingest, so it reaches the register with its Foodics id."""
+    order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
+    built = {"orderHeader": {"orderStatus": "OrderStarted"}, "_fallback": {}}
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=None))
+    ingest = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", ingest),
+        patch.object(
+            loop.grubops_foodics_fallback,
+            "build_from_foodics",
+            AsyncMock(return_value=built),
+        ),
+    ):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is True
+
+    ingest.assert_awaited_once_with(None, built, order_map)
+    assert order_map.last_push_error is None
+
+
+@pytest.mark.asyncio
+async def test_without_a_foodics_match_the_order_keeps_waiting_flagged():
+    order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=None))
+    ingest = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", ingest),
+        patch.object(
+            loop.grubops_foodics_fallback,
+            "build_from_foodics",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is False
+
+    ingest.assert_not_awaited()
+    assert order_map.last_push_error == DETAIL_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_a_foodics_built_order_follows_its_listing_while_detail_is_withheld():
+    # A marketplace cancel reaches the listing; the detail still 404s.
+    raw = {
+        "orderHeader": {"orderStatus": "OrderStarted", "totalPrice": 55.0},
+        "orderLines": [],
+        "_fallback": {"source": "foodics"},
+    }
+    order_map = GrubOpsOrderMap(
+        grubops_order_id=_SUMMARY["orderId"], mm_order_id=uuid.uuid4(), raw=raw
+    )
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=None))
+    ingest = AsyncMock()
+    build = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", ingest),
+        patch.object(loop.grubops_foodics_fallback, "build_from_foodics", build),
+    ):
+        summary = {**_SUMMARY, "status": "OrderCanceled"}
+        assert await loop._ingest_one(None, summary, order_map) is True
+
+    build.assert_not_awaited()
+    (_db, info, _map), _ = ingest.await_args
+    assert info["orderHeader"]["orderStatus"] == "OrderCanceled"
+    assert info["orderHeader"]["totalPrice"] == 55.0
+
+
+@pytest.mark.asyncio
+async def test_a_served_order_never_touches_foodics():
+    order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
+    info = {"orderHeader": {"orderStatus": "OrderStarted"}}
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=info))
+    build = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", AsyncMock()),
+        patch.object(loop.grubops_foodics_fallback, "build_from_foodics", build),
+    ):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is True
+    build.assert_not_awaited()
+
+
+def _made_order(**kwargs):
+    defaults = dict(
+        customer_name="Hana Unknown",
+        customer_phone="+97144451555",
+        customer_phone_country="AE",
+        customer_phone_type="landline",
+        customer_phone_access_code=None,
+        email="",
+        total=Decimal("55.00"),
+        order_number="AGG-20261005-070",
+    )
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+def test_the_served_detail_fills_only_what_the_listing_lacked(caplog):
+    order = _made_order()
+    order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
+    info = {
+        "orderHeader": {"totalPrice": 55.0},
+        "customer": {
+            "customerName": "Someone Else",
+            "customerMobile": "+971501234567",
+            "customerEmail": "hana@example.com",
+        },
+    }
+    with caplog.at_level("WARNING", logger=g.__name__):
+        g._upgrade_from_detail(order, info, order_map)
+
+    assert order.customer_name == "Hana Unknown"
+    assert order.customer_phone == "+97144451555"
+    assert order.email == "hana@example.com"
+    assert not [r for r in caplog.records if "keeps its total" in r.message]
+
+
+def test_a_served_total_that_disagrees_is_reported_not_rewritten(caplog):
+    order = _made_order()
+    order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
+    info = {"orderHeader": {"totalPrice": 60.0}, "customer": {}}
+    with caplog.at_level("WARNING", logger=g.__name__):
+        g._upgrade_from_detail(order, info, order_map)
+
+    assert order.total == Decimal("55.00")
+    assert [r for r in caplog.records if "keeps its total" in r.message]
+
+
+def test_only_a_foodics_payload_reads_as_built_from_foodics():
+    assert g._built_from_foodics({"_fallback": {"source": "foodics"}})
+    assert not g._built_from_foodics({"orderHeader": {}})
+    assert not g._built_from_foodics(None)

@@ -1,3 +1,30 @@
+# Foodics as the fallback when GrubOps lists an order but won't serve its detail
+
+Owner ask (2026-10-05): a GrubTech-branch order GrubOps lists but 404s on
+`getOrderInfo` must still reach the register and still be Packed/Cancelled from
+it, exactly as today. Failsafe, all edge cases, no regression.
+
+Facts established on prod data: every GrubOps-listed order is also a Foodics
+order (GrubTech publishes it within a second); GrubOps line `externalId` IS the
+Foodics product / modifier-option id (1:1, 43 items + 127 options over 3,218
+orders, zero conflicts); Σ Foodics product totals − Foodics discount == GrubOps
+`totalPrice` (incl. discounted Noon orders); Foodics `total_price` adds the
+marketplace delivery charge and its `customer` is a GrubTech placeholder — use
+neither. The summary carries customer name/phone, payment method and status.
+
+- [x] Foodics client: `list_recent_orders(branch_id, page)` with products/options/branch includes.
+- [x] `grubops/grubops_foodics_fallback.py`: find the one Foodics order matching the summary (mapped Foodics branch, canonical channel, exact external id, ±30 min), refuse on 0 / >1 / money disagreement / no live lines; translate Foodics ids → GrubOps recipe/modifier ids (order history, then unique exact-name on approved map); build a GrubOps-shaped `info` (publish history carries the Foodics id) marked `_fallback`.
+- [x] `_ingest_one`: on 404, after a 90 s grace and within 12 h, build the info and run the unchanged `ingest` (create/adopt, register, push, stock, Foodics id). A fallback order whose summary status moves while detail still 404s re-applies status. When the real detail lands, it replaces the raw and fills any customer field the summary lacked.
+- [x] Gate on `foodics_orders_service.is_enabled()`; any Foodics error → today's behaviour (wait, retry next tick).
+- [x] Tests: matcher, translation, money refusal, loop wiring (grace, gate, status re-apply, detail upgrade), no change for the served-detail path.
+- [x] ruff + full API unit suite; dry-run the builder against prod for Barsha 3937792428 (read-only).
+
+## Review
+- 4,500 unit tests pass (12 skipped); ruff clean. New: 33 fallback tests + 7 loop/upgrade tests.
+- Read-only prod dry run, Barsha 3937792428: matched Foodics #20485, 55.00, box + 3 options all resolve to MM product/options, rider code 2663, note "No cutlery.", Foodics id cached.
+- Rebuilt all 55 GrubOps-served orders of 2026-10-05 from Foodics: 55/55 identical match, total and lines (recipe + modifier ids). Only Careem's driver code differs from GrubOps' sequence number, and the stored Careem codes are already last-4, which is what the fallback produces.
+- Not covered (separate): a GrubOps *listing* outage (500s, 18:53–19:37 on 2026-10-05) — no summary, so nothing to fall back from.
+
 # Barsha Heights menu PDF → "Melting Moments Cafe" + modifier grouping
 
 Scope confirmed with owner: **menu PDF only** (receipts stay "Attibassi Coffee" — do NOT touch the `najm` legal-entity row / no migration).

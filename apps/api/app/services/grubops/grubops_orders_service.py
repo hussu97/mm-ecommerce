@@ -627,6 +627,9 @@ async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
     # Refresh the rider details each tick — they arrive after the order does.
     _apply_driver_info(order, info)
 
+    if _built_from_foodics(order_map.raw) and not _built_from_foodics(info):
+        _upgrade_from_detail(order, info, order_map)
+
     if target is not None:
         reason = _cancel_reason(info) if target == OrderStatusEnum.CANCELLED else None
         await _apply_status(
@@ -642,6 +645,50 @@ async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
         if foodics_id is not None:
             order_map.foodics_order_id = foodics_id
     await db.flush()
+
+
+def _built_from_foodics(raw: Any) -> bool:
+    """Whether a payload is the Foodics fallback's (`grubops_foodics_fallback`),
+    spelled here so this module does not import the one that imports it."""
+    return isinstance(raw, dict) and isinstance(raw.get("_fallback"), dict)
+
+
+def _upgrade_from_detail(order: Order, info: dict, order_map: GrubOpsOrderMap) -> None:
+    """GrubOps finally served the detail of an order built from Foodics.
+
+    Only the customer contact the listing could not carry is filled in (an
+    email, a Deliveroo access code), and only where empty. The lines, money and
+    stock stay as built: they came from the same order, and rewriting them now
+    would re-run consequences already applied. A total that disagrees is logged
+    for a person to look at rather than silently rewritten.
+    """
+    name, phone, phone_country, phone_type, phone_code, email = _customer_fields(
+        info.get("customer") or {}
+    )
+    if not order.customer_name and name:
+        order.customer_name = name
+    if not order.customer_phone and phone:
+        order.customer_phone = phone
+        order.customer_phone_country = phone_country
+        order.customer_phone_type = phone_type
+    if not order.customer_phone_access_code and phone_code:
+        order.customer_phone_access_code = phone_code
+    if not order.email and email:
+        order.email = email
+    served_total = money(_num((info.get("orderHeader") or {}).get("totalPrice")))
+    if served_total != money(_num(order.total)):
+        logger.warning(
+            "GrubOps order %s was built from Foodics at %s but GrubOps now reports "
+            "%s; the order keeps its total for a person to check",
+            order_map.grubops_order_id,
+            order.total,
+            served_total,
+        )
+    logger.info(
+        "GrubOps served the detail of order %s, built from Foodics as %s",
+        order_map.grubops_order_id,
+        order.order_number,
+    )
 
 
 def money_fields_from_info(
