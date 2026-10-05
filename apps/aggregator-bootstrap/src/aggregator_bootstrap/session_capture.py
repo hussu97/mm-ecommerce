@@ -247,9 +247,11 @@ def build_session(
         extra_session_storage=extra_session_storage,
     )
 
-    token_exp = earliest_token_expiry(
-        {k: v for k, v in tokens.items() if isinstance(v, str)}
-    )
+    string_tokens = {k: v for k, v in tokens.items() if isinstance(v, str)}
+    gating = {k: v for k, v in string_tokens.items() if k in probe.liveness_tokens}
+    # A channel that names its gating tokens is judged on those alone; if none
+    # of them was captured, fall back to every token rather than to "no expiry".
+    token_exp = earliest_token_expiry(gating) or earliest_token_expiry(string_tokens)
     cookie_exp = cookie_expiry_from_playwright(state)
     # Careem's `session` cookie dies in 60 min regardless of the ~24h persistent
     # cookie Playwright sees; take the soonest so liveness reflects the real death.

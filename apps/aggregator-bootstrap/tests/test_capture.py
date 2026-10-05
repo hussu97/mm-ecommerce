@@ -81,6 +81,52 @@ def test_talabat_lifts_accesstoken_from_the_cookie():
     assert s["cookies"]["_px3"] == "p"  # the anti-bot cookie is carried
 
 
+def _jwt(exp: int) -> str:
+    import base64
+    import json
+
+    body = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode()
+    return f"h.{body.rstrip('=')}.s"
+
+
+def test_talabat_expiry_follows_the_cookie_not_a_stale_captured_bearer():
+    """2026-10-05: the portal's XHR carried a bearer that expired at 18:54 while
+    the `accessToken` cookie the provider actually sends ran to 00:14. Taking the
+    min stamped a working session dead and Talabat sat in `needs_bootstrap`."""
+    now = int(datetime.now(timezone.utc).timestamp())
+    stale, fresh = now - 3600, now + 4 * 3600
+    s = build_session(
+        "talabat",
+        [{"name": "accessToken", "value": _jwt(fresh)}],
+        {"authorization": f"Bearer {_jwt(stale)}", "user-agent": "C"},
+    )
+    stamped = datetime.fromisoformat(s["token_expires_at"]).timestamp()
+    assert abs(stamped - (fresh - 120)) < 2
+    # The stale bearer is still captured; it just does not gate liveness.
+    assert s["tokens"]["authorization"] == f"Bearer {_jwt(stale)}"
+
+
+def test_talabat_expired_cookie_still_reads_as_expired():
+    now = int(datetime.now(timezone.utc).timestamp())
+    s = build_session(
+        "talabat",
+        [{"name": "accessToken", "value": _jwt(now - 60)}],
+        {"authorization": f"Bearer {_jwt(now + 3600)}", "user-agent": "C"},
+    )
+    stamped = datetime.fromisoformat(s["token_expires_at"]).timestamp()
+    assert stamped < now
+
+
+def test_talabat_without_the_cookie_falls_back_to_every_token():
+    now = int(datetime.now(timezone.utc).timestamp())
+    s = build_session(
+        "talabat",
+        [],
+        {"authorization": f"Bearer {_jwt(now - 60)}", "user-agent": "C"},
+    )
+    assert datetime.fromisoformat(s["token_expires_at"]).timestamp() < now
+
+
 def test_noon_lifts_restaurant_code_and_project_from_headers():
     cookies = [{"name": "bm_sv", "value": "c"}]
     headers = {
