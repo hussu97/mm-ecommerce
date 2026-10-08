@@ -392,10 +392,16 @@ export default function PurchaseOrdersPage() {
               render: (po) => formatCurrency(po.total_cost),
             },
             {
-              header: 'Delivery',
+              header: 'Invoice date',
               sortable: true,
               sortAccessor: (po) => po.invoice_date ?? null,
               render: (po) => <span className="text-gray-500">{po.invoice_date ?? '—'}</span>,
+            },
+            {
+              header: 'Business date',
+              sortable: true,
+              sortAccessor: (po) => po.business_date,
+              render: (po) => <span className="text-gray-500">{po.business_date}</span>,
             },
           ]}
         />
