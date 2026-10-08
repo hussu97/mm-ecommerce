@@ -120,17 +120,26 @@ export function ListPage<T>({
           {description && <p className="text-xs text-gray-500 font-body mt-1">{description}</p>}
         </div>
         {hasControls && (
-          <div className="flex items-center gap-2">
+          // Below `sm` the filters get their own full-width row and search +
+          // primary action share the next one. On one unwrapped line, a screen
+          // with many filters (Inventory Items has six) squeezed the search box
+          // to a sliver and pushed "New" past the right edge, widening the page.
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             {toolbar}
-            {search && (
-              <Input
-                placeholder={search.placeholder ?? 'Search…'}
-                value={search.value}
-                onChange={(e) => search.onChange(e.target.value)}
-                className="w-full sm:w-48"
-              />
+            {(search || primaryAction) && (
+              <div className="flex items-center gap-2">
+                {search && (
+                  <div className="min-w-0 flex-1 sm:w-48 sm:flex-none">
+                    <Input
+                      placeholder={search.placeholder ?? 'Search…'}
+                      value={search.value}
+                      onChange={(e) => search.onChange(e.target.value)}
+                    />
+                  </div>
+                )}
+                {primaryAction}
+              </div>
             )}
-            {primaryAction}
           </div>
         )}
       </header>
