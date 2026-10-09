@@ -20,7 +20,7 @@ concurrency:
 jobs:
   changes:
     name: Detect -changed paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       # A manual run has no previous commit to diff against, so the filter
       # would find nothing changed and deploy nothing at all — which is the
@@ -113,7 +113,7 @@ jobs:
       needs.changes.outputs.web == 'true' &&
       (needs.test-api.result == 'success' || needs.test-api.result == 'skipped') &&
       (needs.changes.outputs.api == 'false' || needs.deploy-gcp.result == 'success')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: production
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -195,7 +195,7 @@ jobs:
       always() &&
       needs.changes.outputs.admin == 'true' &&
       (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: production
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -283,7 +283,7 @@ jobs:
     name: Test API
     needs: changes
     if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     # A real database, because the bugs that reached production were a lazy
@@ -394,7 +394,7 @@ jobs:
     name: Build API image
     needs: changes
     if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -429,7 +429,7 @@ jobs:
     name: Build aggregator-bootstrap image
     needs: changes
     if: needs.changes.outputs.bootstrap == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -470,7 +470,7 @@ jobs:
       needs.test-api.result == 'success' &&
       needs.build-api.result == 'success' &&
       (needs.build-bootstrap.result == 'success' || needs.build-bootstrap.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: production
     permissions:
       contents: read

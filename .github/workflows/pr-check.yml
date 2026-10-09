@@ -14,7 +14,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       web: ${{ steps.filter.outputs.web }}
       admin: ${{ steps.filter.outputs.admin }}
@@ -32,12 +32,14 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
+              - '.github/workflows/pr-check.yml'
             admin:
               - 'apps/admin/**'
               - 'packages/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
+              - '.github/workflows/pr-check.yml'
             api:
               - 'apps/api/**'
               - 'nginx/**'
@@ -52,12 +54,13 @@ jobs:
             aggregator:
               - 'apps/aggregator-bootstrap/**'
               - 'apps/api/**'
+              - '.github/workflows/pr-check.yml'
 
   lint-web:
     name: Lint, Test & Build (Web)
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
@@ -119,7 +122,7 @@ jobs:
     name: Lint, Test & Build (Admin)
     needs: changes
     if: needs.changes.outputs.admin == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
@@ -163,7 +166,7 @@ jobs:
     name: Lint & Test (Python)
     needs: changes
     if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A real database, mirroring deploy.yml's Test API job. Without it the ~40
     # DB-gated integration tests skip here and first run at the deploy gate,
     # where a broken one blocks the release instead of the PR (F-TST-3).
@@ -272,7 +275,7 @@ jobs:
     name: Migrations upgrade/downgrade/upgrade cleanly
     needs: changes
     if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     services:
       postgres:
         image: postgres:16
@@ -332,7 +335,7 @@ jobs:
     name: Lint & Test (Aggregator Bootstrap)
     needs: changes
     if: needs.changes.outputs.aggregator == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
 
