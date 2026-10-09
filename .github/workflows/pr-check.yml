@@ -215,7 +215,13 @@ jobs:
       - name: Install dependencies
         run: |
           cd apps/api
-          uv pip install --system -e ".[dev]"
+          # From uv.lock, like the production image (Dockerfile F-OPS-17) — not a
+          # fresh resolve. A fresh resolve tested a stack prod never runs: pydantic
+          # 2.14 (2026-10) changed the OpenAPI output and failed the types gate
+          # while the image still shipped 2.13; SQLAlchemy 2.1 did the same before.
+          uv export --locked --extra dev --no-emit-project --no-hashes -o /tmp/requirements.lock.txt
+          uv pip install --system -r /tmp/requirements.lock.txt
+          uv pip install --system --no-deps -e .
 
       - name: Ruff check
         run: |
@@ -304,7 +310,9 @@ jobs:
       - name: Install dependencies
         run: |
           cd apps/api
-          uv pip install --system .
+          uv export --locked --no-dev --no-emit-project --no-hashes -o /tmp/requirements.lock.txt
+          uv pip install --system -r /tmp/requirements.lock.txt
+          uv pip install --system --no-deps .
 
       # F-OPS-29: this is the whole point. `downgrade base` walks EVERY
       # migration's downgrade() in reverse, including 210_fk_indexes'
