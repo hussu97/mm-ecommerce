@@ -15,7 +15,7 @@ on:
 jobs:
   rollback:
     name: Rollback via SSH
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: production
     permissions:
       contents: read
