@@ -19,6 +19,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func, select, text
@@ -102,6 +103,12 @@ async def _product(db, name: str, *, stock: int = 100) -> uuid.UUID:
     db.add(p)
     await db.flush()
     return p.id
+
+
+#: An in-window business date. A fixed date ("2026-09-06") aged out of
+#: `promote_channel`'s 30-day lookback on 2026-10-06 and the poison-order test
+#: started promoting nothing — so derive it from today, as promote does.
+_IN_WINDOW = datetime.now(ZoneInfo("Asia/Dubai")).date().isoformat()
 
 
 async def _agg_order(
@@ -284,7 +291,7 @@ async def test_a_cancelled_in_window_order_does_restock(db, monkeypatch):
         branch_id=branch_id,
         gross="40.00",
         status="50",
-        business_date="2026-09-06",
+        business_date=_IN_WINDOW,
     )
     await _add_line(db, agg, name="Cookie", gross="40.00", qty=2)
 
@@ -300,9 +307,27 @@ async def test_a_cancelled_in_window_order_does_restock(db, monkeypatch):
 # ── F-AGG-5: one poison order does not abort the whole promote batch ────────────
 async def test_a_poison_order_is_isolated_and_the_rest_commit(db, monkeypatch):
     branch_id = await _branch(db)
-    a1 = await _agg_order(db, channel="keeta", branch_id=branch_id, gross="10.00")
-    poison = await _agg_order(db, channel="keeta", branch_id=branch_id, gross="20.00")
-    a3 = await _agg_order(db, channel="keeta", branch_id=branch_id, gross="30.00")
+    a1 = await _agg_order(
+        db,
+        channel="keeta",
+        branch_id=branch_id,
+        gross="10.00",
+        business_date=_IN_WINDOW,
+    )
+    poison = await _agg_order(
+        db,
+        channel="keeta",
+        branch_id=branch_id,
+        gross="20.00",
+        business_date=_IN_WINDOW,
+    )
+    a3 = await _agg_order(
+        db,
+        channel="keeta",
+        branch_id=branch_id,
+        gross="30.00",
+        business_date=_IN_WINDOW,
+    )
 
     real_promote_order = promote.promote_order
 
