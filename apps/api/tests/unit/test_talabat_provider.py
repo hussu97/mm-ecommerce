@@ -26,6 +26,7 @@ from app.services.providers.talabat_provider import (
     _parse_items_text,
     _split_balanced,
     _status_events_from_row,
+    _status_word,
 )
 
 # ── 1. _split_balanced ────────────────────────────────────────────────────────
@@ -395,6 +396,43 @@ def test_orders_from_csv_delivered_order_has_full_status_events():
     assert order.payment_fee == Decimal("1.00")
     # A present "0.00" is a real zero, not unknown.
     assert order.cancellation_fee == Decimal("0.00")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Delivered", "Delivered"),
+        ("Picked up", "Picked up"),
+        ("  Cancelled ", "Cancelled"),
+        ("", None),
+        (None, None),
+        # Untranslated label key leaked by the Report Builder (prod, 2026-10-09).
+        (
+            "plugins.reports.order_details_report.displayed_at_vendor",
+            "Displayed at vendor",
+        ),
+    ],
+)
+def test_status_word_decodes_leaked_i18n_key(raw, expected):
+    assert _status_word(raw) == expected
+
+
+def test_orders_from_csv_i18n_status_key_fits_the_column():
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "3946101752",
+                "Store ID": "728173",
+                "Order status": "plugins.reports.order_details_report.displayed_at_vendor",
+                "Subtotal": "40.00",
+                "Order received at": "2026-10-09 15:43",
+            }
+        ]
+    )
+    (order,) = client._orders_from_csv(csv_text)
+    assert order.status == "Displayed at vendor"
+    assert len(order.status) <= 40
 
 
 def test_orders_from_csv_cancelled_order_sets_cancellation_fee():

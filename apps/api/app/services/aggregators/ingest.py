@@ -479,6 +479,30 @@ async def _address_for_upsert(
     )
 
 
+def _fit_word(
+    channel: str, order_id: str, column: Any, value: str | None
+) -> str | None:
+    """A provider-verbatim status word, clipped to its column's width.
+
+    These columns hold whatever word the marketplace sends, and a marketplace
+    can send something nobody planned for (Talabat once shipped an untranslated
+    i18n key as `Order status`). Overflowing the column fails the whole upsert —
+    the order never lands, every sweep — so keep the order and log the word.
+    """
+    width = getattr(column.type, "length", None)
+    if value is None or width is None or len(value) <= width:
+        return value
+    logger.warning(
+        "aggregator %s order %s: %s %r exceeds %d chars — stored clipped",
+        channel,
+        order_id,
+        column.key,
+        value,
+        width,
+    )
+    return value[:width]
+
+
 async def upsert_order(
     db: AsyncSession,
     channel: str,
@@ -542,7 +566,9 @@ async def upsert_order(
         "accepted_at": _aware_business(order.accepted_at),
         "delivered_at": _aware_business(order.delivered_at),
         "cancelled_at": _aware_business(order.cancelled_at),
-        "status": order.status,
+        "status": _fit_word(
+            channel, order.external_order_id, AggregatorOrder.status, order.status
+        ),
         "currency": order.currency,
         "customer_name": order.customer_name,
         "customer_phone": customer_phone.e164 or order.customer_phone,
@@ -551,7 +577,12 @@ async def upsert_order(
         "address_geocode_status": geocode_status,
         "driver_name": order.driver_name,
         "driver_phone": order.driver_phone,
-        "driver_status": order.driver_status,
+        "driver_status": _fit_word(
+            channel,
+            order.external_order_id,
+            AggregatorOrder.driver_status,
+            order.driver_status,
+        ),
         "gross_sales": order.gross_sales,
         "net_sales": order.net_sales,
         "commission_amount": order.commission_amount,

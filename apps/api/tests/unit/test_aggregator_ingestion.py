@@ -2431,3 +2431,15 @@ async def test_range_run_loads_the_marketplace_session_on_its_own_session(
     # Loaded (and possibly minted) on a short-lived session that was committed.
     assert [s.name for s in opened] == ["load0"]
     assert opened[0].commits == 1 and not opened[0].in_transaction
+
+
+def test_fit_word_clips_an_overlong_status_to_the_column():
+    """An unplanned provider word must not overflow varchar(40) and sink the row."""
+    from app.models.aggregator import AggregatorOrder
+    from app.services.aggregators.ingest import _fit_word
+
+    long_word = "plugins.reports.order_details_report.displayed_at_vendor"
+    clipped = _fit_word("talabat", "X", AggregatorOrder.status, long_word)
+    assert clipped == long_word[:40]
+    assert _fit_word("talabat", "X", AggregatorOrder.status, "Delivered") == "Delivered"
+    assert _fit_word("talabat", "X", AggregatorOrder.driver_status, None) is None

@@ -474,6 +474,25 @@ def _graphql_errors_are_auth(errors: Any) -> bool:
     return any(marker in blob for marker in _GRAPHQL_AUTH_MARKERS)
 
 
+#: Talabat's Report Builder sometimes ships an untranslated label key instead of
+#: the status word — `plugins.reports.order_details_report.displayed_at_vendor`
+#: (order 3946101752, 2026-10-09: a fresh order not yet accepted). Stored
+#: verbatim it overflowed `aggregator_order.status` (varchar 40) and the upsert
+#: failed every sweep until the order moved on. Keep the word the key names.
+_I18N_STATUS_KEY_RE = re.compile(r"^(?:[a-z0-9_]+\.)+([a-z0-9_]+)$")
+
+
+def _status_word(value: Any) -> str | None:
+    """The CSV's `Order status`, with a leaked i18n key decoded to its word."""
+    status = str(value or "").strip()
+    if not status:
+        return None
+    key = _I18N_STATUS_KEY_RE.match(status)
+    if key:
+        return key.group(1).replace("_", " ").capitalize()
+    return status
+
+
 def _parse_dt(value: Any) -> datetime | None:
     """The CSV's `Order received at` (`YYYY-MM-DD HH:MM[:SS]`) as a datetime."""
     if not value or not isinstance(value, str):
@@ -496,7 +515,7 @@ def is_return_candidate_row(row: dict) -> bool:
     delivered — a cancellation *after* delivery is a refund the customer kept the
     food for. Matched the portal's timeline on every return in prod (2026-09-29).
     """
-    status = str(row.get("Order status") or "").strip().lower()
+    status = (_status_word(row.get("Order status")) or "").lower()
     return (
         status == "cancelled"
         and _parse_dt(row.get("In delivery at")) is not None
@@ -1964,7 +1983,7 @@ class TalabatClient(BaseAggregatorClient):
             if not external:
                 continue
             placed_at = _parse_dt(row.get("Order received at"))
-            status = (row.get("Order status") or "").strip() or None
+            status = _status_word(row.get("Order status"))
             subtotal = _money(row.get("Subtotal"))
             # Item-level reversal on a delivered order: when the customer reports a
             # missing/wrong item, Talabat refunds them and bills it back to the
