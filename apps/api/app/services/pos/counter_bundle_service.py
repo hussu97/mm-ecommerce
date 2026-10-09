@@ -487,6 +487,9 @@ async def persist(
     Idempotent (`ON CONFLICT DO NOTHING`); `last_served_at` is refreshed at
     most hourly. A brand-new bundle also prunes the long-unserved ones.
     """
+    # Stamp from the same clock `prune` compares against. Leaving
+    # `last_served_at` to the column's `now()` mixed the DB clock with the app's.
+    now = utcnow()
     inserted = (
         await db.execute(
             pg_insert(PosConfigBundle)
@@ -495,12 +498,12 @@ async def persist(
                 branch_id=branch_id,
                 engine_version=int(payload.get("engine_version") or 0),
                 payload=payload,
+                last_served_at=now,
             )
             .on_conflict_do_nothing(index_elements=["hash"])
             .returning(PosConfigBundle.hash)
         )
     ).scalar_one_or_none()
-    now = utcnow()
     if inserted is None:
         await db.execute(
             update(PosConfigBundle)

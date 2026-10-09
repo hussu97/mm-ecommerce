@@ -1,11 +1,38 @@
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 TEST_SECRET = "test-secret-key-for-testing-purposes-only-xyz123"
+
+#: Date-drift check. `MM_TEST_SHIFT_DAYS=90 pytest tests/` runs the whole suite
+#: with the wall clock moved forward, so a test that only passes because a
+#: hard-coded fixture date is still "recent" fails months before it would have
+#: blocked a deploy. The poison-order test pinned business_date 2026-09-06, fell
+#: out of promote's 30-day window on 2026-10-06, and stopped the deploy gate.
+#: The weekly `date-drift.yml` workflow runs this; unset, it does nothing.
+#: Postgres `now()` is NOT shifted — code must stamp times from one clock.
+_clock_shift = None
+
+
+def pytest_configure(config):
+    global _clock_shift
+    days = int(os.environ.get("MM_TEST_SHIFT_DAYS") or 0)
+    if days:
+        import time_machine
+
+        dest = datetime.now(UTC) + timedelta(days=days)
+        _clock_shift = time_machine.travel(dest, tick=True)
+        _clock_shift.start()
+
+
+def pytest_unconfigure(config):
+    if _clock_shift is not None:
+        _clock_shift.stop()
 
 
 @pytest.fixture(autouse=True)
