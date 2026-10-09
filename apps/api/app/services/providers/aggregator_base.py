@@ -43,7 +43,7 @@ from app.services.aggregators.session_store import LoadedSession
 logger = logging.getLogger(__name__)
 
 try:  # optional — only the anti-bot channels need it
-    from curl_cffi import CurlMime  # type: ignore
+    from curl_cffi import CurlError, CurlMime  # type: ignore
     from curl_cffi import requests as curl_requests  # type: ignore
 
     _HAS_CURL_CFFI = True
@@ -51,6 +51,10 @@ except Exception:  # noqa: BLE001 - absence is a supported state, not an error
     curl_requests = None  # type: ignore
     CurlMime = None  # type: ignore
     _HAS_CURL_CFFI = False
+
+    class CurlError(Exception):  # type: ignore[no-redef]
+        """Stand-in so the transport `except` below compiles without curl_cffi."""
+
 
 _warned_no_curl = False
 
@@ -307,7 +311,11 @@ class BaseAggregatorClient(ABC):
                     continue
                 return last_response
             return last_response
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
+        # curl_cffi's timeouts and connection failures are `CurlError`, not
+        # httpx's. Untranslated, a noon/Talabat/Careem timeout escaped as a raw
+        # transport exception, so every caller's transient handling (the hours
+        # sync's retry, the ingest's "unavailable" run status) missed it.
+        except (httpx.TimeoutException, httpx.TransportError, CurlError) as exc:
             raise AggregatorUnavailableError(
                 f"{self.channel} unreachable: {exc}"
             ) from exc

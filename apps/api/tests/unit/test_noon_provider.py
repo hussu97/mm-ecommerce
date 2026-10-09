@@ -297,3 +297,28 @@ def test_statement_lines_book_a_per_order_long_distance_fee():
     }
     assert cats["long_distance_fee"] == Decimal("-4.20")
     assert cats["commission"] == Decimal("-10.50")  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_curl_timeout_surfaces_as_unavailable(monkeypatch):
+    """A curl_cffi timeout (noon hours save, prod 2026-10-09) must reach callers as
+    `AggregatorUnavailableError` so their transient retry handles it — not as a raw
+    transport exception that skips it."""
+    from curl_cffi.requests.exceptions import Timeout
+
+    from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers import aggregator_base
+    from app.services.providers.aggregator_base import AggregatorUnavailableError
+
+    async def _timeout(*a, **k):
+        raise Timeout("curl: (28) Operation timed out after 20000 milliseconds")
+
+    monkeypatch.setattr(aggregator_base, "_HAS_CURL_CFFI", True)
+    monkeypatch.setattr(type(provider), "_curl_request", _timeout)
+    session = LoadedSession(
+        channel="noon",
+        account_ref="acct",
+        tokens={"restaurant_code": "R1", "project": "P1"},
+    )
+    with pytest.raises(AggregatorUnavailableError, match="unreachable"):
+        await provider.save_outlet_schedule(session, "OUT1", {"periods": {}})
