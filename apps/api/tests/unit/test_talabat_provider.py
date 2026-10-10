@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1321,6 +1321,57 @@ async def test_fetch_statements_sets_truncation_note_on_bundle_failure():
     # The metadata statement is still returned — the failure did not drop it.
     assert len(result.statements) == 1
     assert result.statements[0].statement_id == "TUAE-02049097"
+
+
+@pytest.mark.asyncio
+async def test_nightly_finance_pass_asks_for_back_dated_statements():
+    """The nightly pass hands over a 1-day window (yesterday). Talabat back-dates
+    its statements and payout invoices, so asking only about yesterday found
+    "No files available" every night from 2026-09-01 to 2026-10-09 and the
+    September statement never arrived. Statements, the bundle and payouts must
+    all be asked about the last `_FINANCE_LOOKBACK_DAYS`, ending yesterday."""
+    from app.services.providers.talabat_provider import _FINANCE_LOOKBACK_DAYS
+
+    client = TalabatClient()
+    session = MagicMock()
+    since, until = datetime(2026, 10, 9), datetime(2026, 10, 9, 23, 59)
+    expected_from = date(2026, 10, 9) - timedelta(days=_FINANCE_LOOKBACK_DAYS)
+    assert expected_from <= date(2026, 9, 1)  # a whole prior month is in reach
+
+    paginate = AsyncMock(return_value=[])
+    bundle = AsyncMock(return_value=[])
+    with (
+        patch.object(client, "_finance_accounts", return_value=[{"grid": "g1"}]),
+        patch.object(client, "_paginate_finance", new=paginate),
+        patch.object(client, "_fetch_bundle_statements", new=bundle),
+        patch.object(
+            client,
+            "_enrich_statements_with_attachment_lines",
+            new=AsyncMock(side_effect=lambda _s, stmts: stmts),
+        ),
+    ):
+        await client.fetch_statements(session, since=since, until=until)
+        await client.fetch_payouts(session, since=since, until=until)
+
+    windows = [
+        (c.kwargs["from_date"], c.kwargs["to_date"]) for c in paginate.call_args_list
+    ]
+    windows += [
+        (c.kwargs["from_date"], c.kwargs["to_date"]) for c in bundle.call_args_list
+    ]
+    assert len(windows) == 4  # statements, payout invoices, payouts, bundle
+    assert set(windows) == {(expected_from, date(2026, 10, 9))}
+
+    # An explicit range that already reaches further back is not narrowed.
+    paginate.reset_mock()
+    with (
+        patch.object(client, "_finance_accounts", return_value=[{"grid": "g1"}]),
+        patch.object(client, "_paginate_finance", new=paginate),
+    ):
+        await client.fetch_payouts(
+            session, since=datetime(2026, 6, 1), until=datetime(2026, 10, 9)
+        )
+    assert paginate.call_args.kwargs["from_date"] == date(2026, 6, 1)
 
 
 # ── global entity id from account extras (vs the TB_AE fallback) ───────────────

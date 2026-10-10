@@ -783,6 +783,23 @@ def _bundle_money(
     return _money(_bundle_cell(row, headers, col)) or Decimal("0")
 
 
+#: How far back the finance discovery looks, whatever the sweep's own window.
+#: Talabat back-dates what it publishes: the August detailed statement and each
+#: payout's invoice carry a statement date days before they become downloadable,
+#: so the nightly 1-day pass asked about "yesterday" every night and was told
+#: "No files available" every night (2026-09-01 → 2026-10-09). August arrived only
+#: because somebody ran a 15-day window by hand; September and the 23–30 Sep
+#: payouts never did. 45 days covers a calendar month plus the lag before its
+#: statement lands. Writes are idempotent, so a re-read costs nothing but time.
+_FINANCE_LOOKBACK_DAYS = 45
+
+
+def _finance_from(since: datetime, until: datetime) -> date:
+    """The first statement date a finance listing asks about (see
+    `_FINANCE_LOOKBACK_DAYS`); never later than the sweep's own start."""
+    return min(since.date(), until.date() - timedelta(days=_FINANCE_LOOKBACK_DAYS))
+
+
 def _month_windows(from_date: date, to_date: date) -> list[tuple[date, date]]:
     """Monthly sub-windows covering `[from_date, to_date]` inclusive.
 
@@ -2175,7 +2192,7 @@ class TalabatClient(BaseAggregatorClient):
                 f"{self.channel} session carries no finance accounts "
                 "(tokens.finance_accounts) — cannot query statements"
             )
-        from_date = since.date()
+        from_date = _finance_from(since, until)
         to_date = until.date()
         statement_rows = await self._paginate_finance(
             session,
@@ -2312,7 +2329,7 @@ class TalabatClient(BaseAggregatorClient):
                 f"{self.channel} session carries no finance accounts "
                 "(tokens.finance_accounts) — cannot query payouts"
             )
-        from_date = since.date()
+        from_date = _finance_from(since, until)
         to_date = until.date()
         payout_rows = await self._paginate_finance(
             session,
