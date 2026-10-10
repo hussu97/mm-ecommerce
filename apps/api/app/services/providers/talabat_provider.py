@@ -411,6 +411,21 @@ query ListAdditionalStatements($params: ListAdditionalStatementsRequest!) {
 }
 """.strip()
 
+#: One statement's attachments → a signed `downloadUrl`. The listing hands back
+#: bare storage paths (`TB/2026-10-08/TB_AE/files/additional_statements/…pdf`)
+#: that 404 on every host; the portal's own download button exchanges them
+#: through this query first (portalPluginFinance `AdditionalStatements` chunk,
+#: captured 2026-10-10 and accepted live: TUAE-02161086 → its 92 KB PDF).
+_STATEMENT_DOWNLOAD_QUERY = """
+query RequestStatements($params: DownloadAdditionalStatementsRequest!) {
+  finances {
+    downloadAdditionalStatements(input: $params) {
+      downloadUrl
+    }
+  }
+}
+""".strip()
+
 _BULK_STATEMENT_COUNTS_QUERY = """
 query GetBulkAdditionalStatementDownloadCounts($params: GetBulkAdditionalStatementDownloadCountsRequest!) {
   finances {
@@ -2674,35 +2689,150 @@ class TalabatClient(BaseAggregatorClient):
             archive.writestr("Detailed_attachment.xlsx", body)
         return buf.getvalue()
 
+    async def _attachment_download_url(
+        self, session: LoadedSession, raw: dict[str, Any] | None, path: str
+    ) -> str:
+        """A downloadable URL for one attachment of a statement row.
+
+        An absolute URL is used as given. A bare storage path is exchanged
+        through `RequestStatements`, the way the portal's download button does
+        it — fetching the path directly is what 404'd on every tax invoice,
+        credit note and statement of account. Raises
+        `AggregatorUnavailableError` when the row cannot be exchanged.
+        """
+        value = (path or "").strip()
+        if value.startswith(("http://", "https://", "//")):
+            return self._resolve_download_url(value)
+        row = raw if isinstance(raw, dict) else {}
+        statement_id = str(row.get("statementId") or "").strip()
+        statement_type = str(row.get("statementType") or "").strip()
+        day = _date_str(row.get("statementDate"))
+        if not (statement_id and statement_type and day):
+            raise AggregatorUnavailableError(
+                f"{self.channel} attachment {value} has no statement to request it by"
+            )
+        data = await self._graphql(
+            session,
+            endpoint=_FINANCE_GRAPHQL,
+            query=_STATEMENT_DOWNLOAD_QUERY,
+            variables={
+                "params": {
+                    "statements": [
+                        {"statementId": statement_id, "statementType": statement_type}
+                    ],
+                    "attachmentPaths": [value],
+                    "globalEntityId": str(
+                        row.get("globalEntityId") or self._global_entity_id(session)
+                    ),
+                    "statementDateFrom": day,
+                    "statementDateTo": day,
+                }
+            },
+            operation_name="RequestStatements",
+        )
+        url = str(
+            (
+                (data.get("finances") or {}).get("downloadAdditionalStatements") or {}
+            ).get("downloadUrl")
+            or ""
+        ).strip()
+        if not url:
+            raise AggregatorUnavailableError(
+                f"{self.channel} attachment {value}: no downloadUrl returned"
+            )
+        return self._resolve_download_url(url)
+
+    def _archive_attachments(
+        self, stmt: StandardStatement, documents: list[tuple[str, bytes, str]]
+    ) -> StandardStatement:
+        """Archive a statement's downloaded documents (its tax invoice, credit
+        note, statement of account) as its invoice, the first as the primary and
+        the rest as extras. Best-effort, like `_archive_bundle`: a failure keeps
+        the statement without a document rather than dropping it."""
+        if not documents or stmt.invoice_object_key:
+            return stmt
+        from app.services.aggregators import statement_docs
+
+        (name, body, content_type), *extras = documents
+        try:
+            stored = statement_docs.store_statement_invoice(
+                channel=self.channel,
+                statement_id=stmt.statement_id,
+                filename=name,
+                body=body,
+                content_type=content_type,
+                extra_files=extras,
+            )
+        except Exception:  # noqa: BLE001 - an archive failure must not drop the row
+            logger.warning(
+                "%s statement %s attachment archive failed",
+                self.channel,
+                stmt.statement_id,
+                exc_info=True,
+            )
+            return stmt
+        if stored is None:
+            return stmt
+        return replace(
+            stmt,
+            invoice_object_key=stored.object_key,
+            invoice_content_type=stored.content_type,
+            invoice_original_filename=stored.original_filename,
+            invoice_fetched_at=stored.fetched_at,
+            invoice_attachments=stored.attachments,
+        )
+
     async def _enrich_statements_with_attachment_lines(
         self, session: LoadedSession, statements: list[StandardStatement]
     ) -> list[StandardStatement]:
-        """Fill empty `lines` from each statement's own xlsx attachment.
+        """Fetch each statement's own attachments: archive its documents, and
+        fill empty `lines` from a Detailed xlsx.
 
-        Idempotent: statements that already have lines (the bulk bundle) are
-        left alone. A failed attachment is skipped so one bad file cannot drop
-        the metadata row.
+        A Detailed xlsx is the same per-order data the bulk bundle carries, under
+        a different statement id, so it is parsed only when the bundle produced
+        no lines in this pull — otherwise every order would be counted twice.
+        Statements that already have lines are left alone. A failed attachment
+        is skipped so one bad file cannot drop the metadata row.
         """
+        bundle_has_lines = any(stmt.lines for stmt in statements)
         out: list[StandardStatement] = []
         for stmt in statements:
             if stmt.lines:
                 out.append(stmt)
                 continue
             lines: list[StandardStatementLine] = []
-            for url in self._attachment_urls(stmt.raw):
+            documents: list[tuple[str, bytes, str]] = []
+            for path in self._attachment_urls(stmt.raw):
+                is_sheet = path.lower().split("?")[0].endswith((".xlsx", ".zip"))
+                if is_sheet and bundle_has_lines:
+                    continue
                 try:
+                    url = await self._attachment_download_url(session, stmt.raw, path)
                     body = await self._download_bundle(session, url)
-                    parsed = self._parse_bundle_bytes(self._as_bundle_zip(body))
+                    parsed = (
+                        self._parse_bundle_bytes(self._as_bundle_zip(body))
+                        if is_sheet
+                        else []
+                    )
                 except AggregatorAuthError:
                     raise
                 except AggregatorUnavailableError as exc:
                     logger.warning(
                         "%s attachment %s for %s skipped (%s)",
                         self.channel,
-                        url,
+                        path,
                         stmt.statement_id,
                         exc,
                     )
+                    continue
+                if not is_sheet:
+                    name = path.rsplit("/", 1)[-1] or f"{stmt.statement_id}.pdf"
+                    kind = (
+                        "application/pdf"
+                        if body[:4] == b"%PDF"
+                        else "application/octet-stream"
+                    )
+                    documents.append((name, body, kind))
                     continue
                 for parsed_stmt in parsed:
                     for line in parsed_stmt.lines:
@@ -2713,7 +2843,8 @@ class TalabatClient(BaseAggregatorClient):
                                 source_key=(f"{stmt.statement_id}:{line.source_key}"),
                             )
                         )
-            out.append(replace(stmt, lines=lines) if lines else stmt)
+            enriched = replace(stmt, lines=lines) if lines else stmt
+            out.append(self._archive_attachments(enriched, documents))
         return out
 
     @staticmethod

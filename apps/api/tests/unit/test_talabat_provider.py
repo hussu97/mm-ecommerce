@@ -1549,22 +1549,146 @@ async def test_enrich_attaches_attachment_lines_to_existing_statement():
             }
         ]
     )
+    path = "TB/2026-09-08/TB_AE/files/additional_statements/Detailed_August.xlsx"
     stmt = StandardStatement(
         statement_id="TUAE-EXISTING",
         lines=[],
-        raw={"attachments": ["/files/Detailed_August.xlsx"]},
+        raw=_statement_row("TUAE-EXISTING", "2026-08-31", path),
     )
+    signed = "https://vos-streaming-proxy.eu.prd.portal.restaurant/v1/download/x.xlsx"
 
     async def fake_download(self, session, url):
-        assert url == "/files/Detailed_August.xlsx"
+        assert url == signed  # never the bare path: that 404s
         return bundle
 
-    with patch.object(TalabatClient, "_download_bundle", fake_download):
+    with (
+        patch.object(TalabatClient, "_download_bundle", fake_download),
+        patch.object(TalabatClient, "_graphql", _signed_url(signed)),
+    ):
         out = await client._enrich_statements_with_attachment_lines(MagicMock(), [stmt])
     assert len(out) == 1
     assert out[0].statement_id == "TUAE-EXISTING"
     assert out[0].lines
     assert all(line.statement_id == "TUAE-EXISTING" for line in out[0].lines)
+
+
+def _statement_row(statement_id: str, day: str, *paths: str) -> dict:
+    """A `ListAdditionalStatements` row as Talabat returns it."""
+    return {
+        "statementId": statement_id,
+        "statementType": "COMMISSION_REVENUE",
+        "statementDate": day,
+        "globalEntityId": "TB_AE",
+        "attachments": [{"path": p, "type": "PDF", "__typename": "X"} for p in paths],
+    }
+
+
+def _signed_url(url: str, calls: list | None = None):
+    async def fake_graphql(
+        self, session, *, endpoint, query, variables, operation_name
+    ):
+        if calls is not None:
+            calls.append((operation_name, variables))
+        return {"finances": {"downloadAdditionalStatements": {"downloadUrl": url}}}
+
+    return fake_graphql
+
+
+@pytest.mark.asyncio
+async def test_statement_attachments_are_exchanged_for_a_signed_url_and_archived():
+    """Every tax invoice, credit note and statement of account 404'd: the bare
+    storage path was GET from the vendor-api host. The portal exchanges it
+    through `RequestStatements` first (TUAE-02161086 → its 92 KB PDF, live
+    2026-10-10). The PDFs are then archived as the statement's documents."""
+    from app.services.aggregators import statement_docs
+    from app.services.aggregators.normalized import StandardStatement
+
+    client = TalabatClient()
+    invoice = "TB/2026-10-08/TB_AE/files/additional_statements/TUAE-02161086-a.pdf"
+    soa = "TB/2026-10-08/TB_AE/files/additional_statements/SOA_4462911_715778.pdf"
+    stmt = StandardStatement(
+        statement_id="TUAE-02161086",
+        lines=[],
+        raw=_statement_row("TUAE-02161086", "2026-09-30", invoice, soa),
+    )
+    calls: list = []
+    stored_args: dict = {}
+
+    async def fake_download(self, session, url):
+        return b"%PDF-1.4 " + url.encode()
+
+    def fake_store(**kwargs):
+        stored_args.update(kwargs)
+        return statement_docs.StoredStatementInvoice(
+            object_key="talabat/TUAE-02161086/TUAE-02161086-a.pdf",
+            content_type="application/pdf",
+            original_filename=kwargs["filename"],
+            fetched_at=datetime(2026, 10, 10),
+            size_bytes=100,
+            attachments=[{"filename": "SOA_4462911_715778.pdf"}],
+        )
+
+    with (
+        patch.object(TalabatClient, "_download_bundle", fake_download),
+        patch.object(TalabatClient, "_graphql", _signed_url("https://signed/x", calls)),
+        patch.object(statement_docs, "store_statement_invoice", side_effect=fake_store),
+    ):
+        (out,) = await client._enrich_statements_with_attachment_lines(
+            MagicMock(), [stmt]
+        )
+
+    assert [name for name, _ in calls] == ["RequestStatements", "RequestStatements"]
+    assert calls[0][1]["params"] == {
+        "statements": [
+            {"statementId": "TUAE-02161086", "statementType": "COMMISSION_REVENUE"}
+        ],
+        "attachmentPaths": [invoice],
+        "globalEntityId": "TB_AE",
+        "statementDateFrom": "2026-09-30",
+        "statementDateTo": "2026-09-30",
+    }
+    assert stored_args["filename"] == "TUAE-02161086-a.pdf"
+    assert stored_args["content_type"] == "application/pdf"
+    assert [name for name, _, _ in stored_args["extra_files"]] == [
+        "SOA_4462911_715778.pdf"
+    ]
+    assert out.invoice_object_key == "talabat/TUAE-02161086/TUAE-02161086-a.pdf"
+    assert out.lines == []
+
+
+@pytest.mark.asyncio
+async def test_detailed_xlsx_is_skipped_when_the_bundle_already_carries_the_orders():
+    """The Detailed xlsx attached to a statement is the bundle's per-order data
+    under another statement id; parsing both would count every order twice."""
+    from app.services.aggregators.normalized import (
+        StandardStatement,
+        StandardStatementLine,
+    )
+
+    client = TalabatClient()
+    from_bundle = StandardStatement(
+        statement_id="detailed-2026-09-01-2026-09-30-711571",
+        lines=[StandardStatementLine(source_key="k", amount=Decimal("1"))],
+    )
+    detailed = StandardStatement(
+        statement_id="Detailed_TUAE-02161086",
+        lines=[],
+        raw=_statement_row(
+            "Detailed_TUAE-02161086",
+            "2026-09-30",
+            "TB/2026-10-08/TB_AE/files/additional_statements/Detailed_x.xlsx",
+        ),
+    )
+    download = AsyncMock()
+    with (
+        patch.object(TalabatClient, "_download_bundle", download),
+        patch.object(TalabatClient, "_graphql", _signed_url("https://signed/x")),
+    ):
+        out = await client._enrich_statements_with_attachment_lines(
+            MagicMock(), [from_bundle, detailed]
+        )
+    download.assert_not_called()
+    assert out[1].lines == []
 
 
 @pytest.mark.asyncio
