@@ -30,8 +30,11 @@ Talabat to its payouts per chain/period except 12–14 Sep (15.04 short).
       subtotal 75,785 (= our 75,320 + 465 of shop-caused cancellations Talabat
       bills as sales), net 47,005.12 (ties to the fil). Payouts for Sept periods
       47,143.07 = accountant's received 47,144. Short vs orders: 15.05 (12–14 Sep)
-      + 15.11 (27–30 Sep); the tax invoice / credit note attachments 404, so the
-      reason is unread.
+      + 15.11 (27–30 Sep). Attachments now download through `RequestStatements`
+      (they 404'd as bare paths); all 14 Aug/Sep documents archived. Credit note
+      CUAE-00114424 / the SOA: "Customer Refund (Charged to You)" 30.00 — the
+      short-payment (the ~0.65 rest is per-period rounding). Not in our order
+      data, so not in the P&L's refunds yet.
 - [ ] After deploy: confirm auto-deliver books AGG-20260928 (noon FG9SNNLIQ25AXAA),
       migration 313 writes 9 rows, and the nightly finance pass lands Talabat's
       September statement (or run a Talabat finance range for 1–30 Sep by hand).
