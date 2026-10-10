@@ -10,18 +10,30 @@ Deliveroo/Keeta/noon exact, Careem −0.12 (12 orders × 0.01), Talabat −1.71
 their order lines: Careem/Keeta exact; Deliveroo 14–20 Sep +40.00; noon +0.31–0.44
 per weekly statement; Talabat payouts −15.00 twice (Order Compensation).
 
-- [ ] Deliveroo: a cancelled order's settled net must include the
+- [x] Deliveroo: a cancelled order's settled net must include the
       `cancelled_order_value` credit (AGG-20260916-071: +26.98, booked −13.02 by
       migration 313). Fix the derivation + repair the row.
-- [ ] Talabat: read each payout invoice's `customerRefundCharges`
+- [x] Talabat: read each payout invoice's `customerRefundCharges`
       (getInvoiceDetails) into order-less statement lines; the P&L books refund-
       type period lines as refunds (no VAT), not as fees. Sept: 2 × 15.00.
-- [ ] Order fees reconcile to the marketplace net: put the sub-0.05 VAT
+- [x] Order fees reconcile to the marketplace net: put the sub-0.05 VAT
       rounding residue on the commission so an order's P&L net equals its payout
       (Talabat, Careem). Re-promote September.
-- [ ] noon: book each weekly statement's rounding residue (statement net − its
+- [x] noon: book each weekly statement's rounding residue (statement net − its
       lines) as an order-less line, so the channel nets to what noon paid.
-- [ ] Verify: Sept P&L per channel nets to statement/payout totals; 161,060.
+- [x] Verify: Sept P&L per channel nets to statement/payout totals; 161,060.
+
+## Review (prod, after deploy + Talabat/noon finance re-pull + re-promotion)
+- GMV 161,320 − refunds 260 (incl. Talabat Order Compensation 30.00) = 161,060.
+- Order level: 0 of 2,746 statement-settled orders differ from their payout
+  (Careem/Talabat rounding gone; Deliveroo AGG-20260916-071 now +26.98).
+- Channel net to shop vs paid: Keeta 27,649.44, noon 21,194.42, Careem 4,643.91,
+  Deliveroo 5,193.54 — all exact. Talabat 47,143.72 vs 47,143.07 paid: 0.65 of
+  Talabat's own payout-level rounding across 18 payout invoices (its detailed
+  statement, 47,005.12, ties to the fil).
+- Hourly promotion only revisits ~30 days, so the Aug–early-Sep rows migration
+  314 marked were re-promoted by a ranged promote (since 2026-08-01). 8 August
+  Careem rows still read updated_at > promoted_at by microseconds (since 7 Sep).
 
 # September aggregator GMV audit (P&L 161,090 vs accountant 161,142)
 
