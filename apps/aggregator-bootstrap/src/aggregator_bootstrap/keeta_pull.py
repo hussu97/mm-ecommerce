@@ -1463,6 +1463,45 @@ async ({ endpoint, payload }) => {
 _SHOP_ID_IN_TEXT = re.compile(r"\[(\d{6,})\]")
 
 
+def _newest_bill_tasks(
+    page_content: Any, shop_ids: list[str]
+) -> list[tuple[dict, str, str | None]]:
+    """The ready weekly-bill tasks to download, as `(task, taskViewId, shopId)`:
+    only the newest file per (shop, period), oldest first.
+
+    A bill is a download task Keeta renders once, when it is requested, so its
+    settlement status is frozen at that moment — and the same week is often
+    requested more than once (1–7 Oct for shop 1644336388 has two files, eight
+    minutes apart). The list arrives newest-first, and the API applies payloads
+    in the order they are pushed, so every older duplicate used to be applied
+    last and win: a fresh "Settled" render of a week would be overwritten by the
+    stale "Settlement pending" one beside it. Keeping only the newest render, and
+    pushing oldest-first, means the latest word Keeta has given is the one booked.
+    """
+    newest: dict[tuple[str | None, str], tuple[int, dict, str, str | None]] = {}
+    for task in page_content or []:
+        if not isinstance(task, dict):
+            continue
+        if not task.get("downloadUrl") or task.get("taskStatus") != _TASK_STATUS_READY:
+            continue
+        task_view_id = str(task.get("taskViewId") or task.get("taskId") or "").strip()
+        if not task_view_id:
+            continue
+        shop_id = _shop_id_from_text(task.get("taskName"), task.get("displayTypeText"))
+        if shop_id is None and len(shop_ids) == 1:
+            shop_id = shop_ids[0]
+        period = str(task.get("displayTimeText") or task_view_id).strip()
+        try:
+            created = int(task.get("createTime") or 0)
+        except (TypeError, ValueError):
+            created = 0
+        key = (shop_id, period)
+        if key not in newest or created > newest[key][0]:
+            newest[key] = (created, task, task_view_id, shop_id)
+    chosen = sorted(newest.values(), key=lambda item: item[0])
+    return [(task, view_id, shop) for _, task, view_id, shop in chosen]
+
+
 async def _post_in_page(page: Any, endpoint: str, payload: dict) -> Any:
     """One signed in-page POST — the raw JSON the page's own fetch returns."""
     return await evaluate_in_page(
@@ -1660,22 +1699,8 @@ async def fetch_keeta_finance(
         page_content = (
             task_data.get("pageContent") if isinstance(task_data, dict) else None
         )
-        for task in page_content or []:
-            if not isinstance(task, dict):
-                continue
-            url = task.get("downloadUrl")
-            if not url or task.get("taskStatus") != _TASK_STATUS_READY:
-                continue
-            task_view_id = str(
-                task.get("taskViewId") or task.get("taskId") or ""
-            ).strip()
-            if not task_view_id:
-                continue
-            shop_id = _shop_id_from_text(
-                task.get("taskName"), task.get("displayTypeText")
-            )
-            if shop_id is None and len(shop_ids) == 1:
-                shop_id = shop_ids[0]
+        for task, task_view_id, shop_id in _newest_bill_tasks(page_content, shop_ids):
+            url = task["downloadUrl"]
             if not _budget_left():
                 notes.append("size budget reached before weekly reports done")
                 break

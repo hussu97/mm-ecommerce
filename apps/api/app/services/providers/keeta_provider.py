@@ -717,6 +717,7 @@ _PAYOUT_RESTAURANT_ID_COL = 4  # "Restaurant ID" — shop id fallback
 _PAYOUT_PAYABLE_COL = 8  # "Payable to Restaurant" (net, AED major units)
 _PAYOUT_STATUS_COL = 9  # "Settled" / "Settlement pending"
 _PAYOUT_CYCLE_COL = 10  # "2026.08.15~2026.08.21"
+_PAYOUT_SETTLEMENT_DATE_COL = 11  # "Settlement date" — "23 Sep 2026"
 
 
 def _parse_bill_payouts(
@@ -734,9 +735,17 @@ def _parse_bill_payouts(
     to the restaurant, so rows are grouped by their `Billing Cycle` value. A
     group's `transfer_amount` is the sum of its "Payable to Restaurant" figures
     (AED **major** units — read with `_money`, never `_from_minor_units`), its
-    `transfer_date`/`payment_due_date` is the cycle-end date, and its
-    `transfer_status` is `"settled"` only when every row of the cycle reads
-    `"Settled"` (any pending row makes the whole cycle `"pending"`).
+    `transfer_date` is the cycle-end date, its `payment_due_date` is the
+    sheet's own `Settlement date` (the day Keeta pays, a day or two after the
+    cycle; the cycle end when the column is blank), and its `transfer_status`
+    is `"settled"` only when every row of the cycle reads `"Settled"` (any
+    pending row makes the whole cycle `"pending"`).
+
+    The status is only as fresh as the file. A bill is a download task Keeta
+    renders once, when it is requested, so one rendered before the settlement
+    date says "Settlement pending" for ever: the 22–30 Sep bills were rendered
+    on 1 Oct for a 2 Oct settlement. Keeping the settlement date is what lets a
+    reader tell that stale "pending" (due date passed) from a real one.
 
     The `transfer_id` is `KEETA_BILL_{shopId}_{cycleEnd}` — stable and unique per
     (shop, week), so re-ingesting the same bill upserts in place rather than
@@ -769,8 +778,13 @@ def _parse_bill_payouts(
                 continue
             group = groups.setdefault(
                 cycle_key,
-                {"total": None, "all_settled": True, "shop_id": None},
+                {"total": None, "all_settled": True, "shop_id": None, "settles": None},
             )
+            settles = _keeta_short_date(_cell(values, _PAYOUT_SETTLEMENT_DATE_COL))
+            if settles is not None and (
+                group["settles"] is None or settles > group["settles"]
+            ):
+                group["settles"] = settles
             payable = _money(_cell(values, _PAYOUT_PAYABLE_COL))
             if payable is not None:
                 group["total"] = (
@@ -821,7 +835,7 @@ def _parse_bill_payouts(
                     ),
                     partial=partial,
                     transfer_date=cycle_end_str,
-                    payment_due_date=cycle_end_str,
+                    payment_due_date=_date_str(group["settles"]) or cycle_end_str,
                     transfer_amount=group["total"],
                     transfer_status="settled" if group["all_settled"] else "pending",
                     payment_reference=task_view_id or statement_id,

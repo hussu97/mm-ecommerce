@@ -696,3 +696,39 @@ async def test_write_keeta_today_hours_persist_identity_saves_weekly():
     assert payloads == [{"shopId": "1644170195", "businessHourOfTheWeek": weekly}]
     assert 8000 not in page.wait_ms
     assert page.closed
+
+
+def _bill_task(view_id, shop, period, created, *, status=30, url="https://s3/x"):
+    return {
+        "taskViewId": view_id,
+        "taskName": f"bill-[{shop}] {period} Order",
+        "displayTimeText": period,
+        "taskStatus": status,
+        "downloadUrl": url,
+        "createTime": created,
+    }
+
+
+def test_newest_bill_per_shop_and_week_is_pushed_last():
+    """Keeta renders a bill once, when asked, and a week is often asked for more
+    than once. The list is newest-first and the API applies payloads in push
+    order, so the older render used to win. Only the newest render per
+    (shop, week) is kept, and the result is oldest-first."""
+    from aggregator_bootstrap.keeta_pull import _newest_bill_tasks
+
+    content = [  # newest-first, as the portal returns it
+        _bill_task("DT_OCT_NEW", "1644336388", "1 Oct 2026 ~ 7 Oct 2026", 1791553174658),
+        _bill_task("DT_OCT_OTHER_SHOP", "1644174206", "1 Oct 2026 ~ 7 Oct 2026", 1791552942723),
+        _bill_task("DT_OCT_OLD", "1644336388", "1 Oct 2026 ~ 7 Oct 2026", 1791552990373),
+        _bill_task("DT_SEP", "1644336388", "22 Sep 2026 ~ 30 Sep 2026", 1790839752010),
+        _bill_task("DT_NOT_READY", "1644336388", "8 Oct 2026 ~ 14 Oct 2026", 1791600000000, status=10),
+        _bill_task("DT_NO_URL", "1644336388", "15 Sep 2026 ~ 21 Sep 2026", 1790180183777, url=None),
+    ]  # fmt: skip
+    chosen = _newest_bill_tasks(content, ["1644336388", "1644174206"])
+
+    assert [view_id for _, view_id, _ in chosen] == [
+        "DT_SEP",
+        "DT_OCT_OTHER_SHOP",
+        "DT_OCT_NEW",
+    ]
+    assert [shop for _, _, shop in chosen] == ["1644336388", "1644174206", "1644336388"]

@@ -1280,6 +1280,76 @@ async def test_ingest_keeta_bill_xlsx_upserts_statement_and_payouts():
     assert mock_payout.call_count == 2
 
 
+def _invoice_details_xlsx(rows: list[tuple]) -> bytes:
+    """A bill with only the "Invoice Details" sheet, in Keeta's real layout."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Invoice Details"
+    ws.append(
+        (
+            "Brand Name", "Brand ID", "Store name", "Store ID", "shop code",
+            "Transaction date", "Invoice amount", "Payable to merchant",
+            "Settlement status", "Billing Cycle", "Settlement date",
+            "Settlement object type", "Settlement object ID",
+        )
+    )  # fmt: skip
+    for day, payable, status, settles in rows:
+        ws.append(
+            (
+                "MM", 137179, "Melting Moments", 1644174206, "Sharjah - Al Majaz",
+                day, 1.0, payable, status, "2026.09.22~2026.09.30", settles,
+                "Resuaurant", 1644174206,
+            )
+        )  # fmt: skip
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_bill_payout_carries_keetas_settlement_date():
+    """The 22–30 Sep bill was rendered on 1 Oct and says "Settlement pending",
+    settling 2 Oct — and Keeta never re-renders it, so the status stays
+    pending for ever. The settlement date is kept as the due date, so a pending
+    payout past it reads as a stale snapshot, not as money Keeta still owes."""
+    from datetime import date
+
+    from app.services.providers.keeta_provider import _parse_bill_payouts
+
+    xlsx = _invoice_details_xlsx(
+        [
+            ("22 Sep 2026", 452.39, "Settlement pending", "2 Oct 2026"),
+            ("30 Sep 2026", 595.15, "Settlement pending", "2 Oct 2026"),
+        ]
+    )
+    (payout,) = _parse_bill_payouts(
+        xlsx,
+        "KEETA_BILL_1644174206_2026-09-22_2026-09-30",
+        "1644174206",
+        "DT2105560779732353079",
+        download_start=date(2026, 9, 22),
+        download_end=date(2026, 9, 30),
+    )
+    assert payout.transfer_status == "pending"
+    assert payout.transfer_amount == Decimal("1047.54")
+    assert payout.transfer_date == "2026-09-30"  # cycle end, as before
+    assert payout.payment_due_date == "2026-10-02"  # Keeta's own settlement date
+    assert payout.transfer_id == "KEETA_BILL_1644174206_2026-09-30"
+
+    # A blank settlement date falls back to the cycle end.
+    (blank,) = _parse_bill_payouts(
+        _invoice_details_xlsx([("22 Sep 2026", 10.0, "Settled", None)]),
+        "S",
+        "1644174206",
+        "T",
+        download_start=date(2026, 9, 22),
+        download_end=date(2026, 9, 30),
+    )
+    assert blank.payment_due_date == "2026-09-30"
+    assert blank.transfer_status == "settled"
+
+
 # ── Keeta's numeric order status ──────────────────────────────────────────────
 
 
