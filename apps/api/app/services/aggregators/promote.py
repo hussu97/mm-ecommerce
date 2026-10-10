@@ -646,11 +646,53 @@ def _actual_fee_overrides(agg: AggregatorOrder) -> dict:
     coupling reaching the MM order.
     """
     return {
-        "actual_commission": agg.commission_amount,
+        "actual_commission": _commission_to_the_net(agg),
         "actual_payment_fee": agg.payment_fee,
         "actual_cancellation_fee": agg.cancellation_fee,
         "actual_marketing_fee": agg.marketing_fee,
     }
+
+
+#: The most a settled order's fees may miss its payout by and still be read as
+#: rounding. Talabat rounds the NET it pays, not each fee's VAT: commission
+#: 16.50 + VAT 0.825 is stored 17.33, so 55 − 17.33 − 1.26 = 36.41 where it paid
+#: 36.42 (AGG-20260922-017). 173 September orders were 0.01 out that way, and 12
+#: Careem ones. A gap any bigger than this is a real difference, left visible.
+_ROUNDING_TOLERANCE = Decimal("0.05")
+
+
+def _commission_to_the_net(agg: AggregatorOrder) -> Decimal | None:
+    """The commission, nudged by the fils that make the order's fees reconcile
+    to what the marketplace actually paid for it.
+
+    Only for a settled order (on a statement, so `net_payable` is the
+    marketplace's own figure) that sold, whose every fee is known, and whose
+    gap is rounding (`_ROUNDING_TOLERANCE`). The commission takes it because
+    its VAT is the line rounded. Otherwise the commission is returned as given.
+    """
+    commission = agg.commission_amount
+    if commission is None or agg.net_payable is None or not agg.statement_id:
+        return commission
+    if _target_status(agg.channel, agg.status) == OrderStatusEnum.CANCELLED:
+        return commission
+    gross = money(agg.gross_sales or Decimal("0"))
+    refunded = money(min(agg.refund_amount, gross)) if agg.refund_amount else money(0)
+    fees = sum(
+        (
+            money(value or Decimal("0"))
+            for value in (
+                commission,
+                agg.payment_fee,
+                agg.cancellation_fee,
+                agg.marketing_fee,
+            )
+        ),
+        Decimal("0"),
+    )
+    gap = money(gross - refunded - fees - money(agg.net_payable))
+    if gap == 0 or abs(gap) > _ROUNDING_TOLERANCE:
+        return commission
+    return money(money(commission) + gap)
 
 
 async def _match_product(

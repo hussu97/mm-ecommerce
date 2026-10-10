@@ -129,6 +129,27 @@ def test_statement_lines_amounts_are_decimal():
         assert isinstance(line.amount, Decimal)
 
 
+def test_statement_lines_sum_an_orders_rows_per_category():
+    """7ebbf9a3 on 16 Sep: a cancelled order Deliveroo still paid for is two
+    rows — the order value credit and the commission on it. Keying lines per
+    row let the second row's payable (−13.02) overwrite the first's (+40.00),
+    and the P&L booked a charge on an order that netted +26.98."""
+    csv_text = textwrap.dedent("""\
+        Orders and related adjustments
+        Restaurant Name,Order Number,Delivery Date & Time (UTC),Activity,Order Value (د.إ),Adjustment Net (د.إ),Deliveroo Commission Rate,Deliveroo Commission (د.إ),Commission / Adjustment VAT Rate,Commission / Adjustment VAT (د.إ),Total Payable,Note,Order ID
+        MM-Barsha,1,2026-09-16 10:00:00,Cancelled order value,,40.00,,,,,40.00,"",7ebbf9a3
+        MM-Barsha,1,2026-09-16 10:00:00,Deliveroo commission on cancelled order,,-12.40,,,5.00,-0.62,-13.02,"",7ebbf9a3
+    """)
+    lines = DeliverooClient()._statement_lines("80904499", csv_text)
+    by_category = {line.fee_category: line.amount for line in lines}
+    assert by_category["net_payable"] == Decimal("26.98")
+    assert by_category["cancelled_order_value"] == Decimal("40.00")
+    assert by_category["deliveroo_commission_on_cancelled_order"] == Decimal("-12.40")
+    assert by_category["commission_vat"] == Decimal("-0.62")
+    # Still one line per order and category.
+    assert len({line.source_key for line in lines}) == len(lines)
+
+
 # Live Partner Hub invoice shape (prod `79872485.csv`): Order Number is the long
 # numeric, Order ID is the last column and equals sales detail `drn_id`.
 _LIVE_CSV = textwrap.dedent("""\

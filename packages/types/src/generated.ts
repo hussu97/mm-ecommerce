@@ -17671,6 +17671,8 @@ export interface components {
             pc4_pct: number | null;
             /** Period Charges */
             period_charges: number;
+            /** Period Refunds */
+            period_refunds: number;
             /** Refunds */
             refunds: number;
             shares: components["schemas"]["PnlShares"];
@@ -18765,6 +18767,8 @@ export interface components {
             pc4_pct: number | null;
             /** Period Charges */
             period_charges: number;
+            /** Period Refunds */
+            period_refunds: number;
             /** Refunds */
             refunds: number;
             shares: components["schemas"]["PnlShares"];
@@ -18936,6 +18940,8 @@ export interface components {
             pc4: number | null;
             /** Period Charges */
             period_charges: number | null;
+            /** Period Refunds */
+            period_refunds: number | null;
             /** Refunds */
             refunds: number | null;
             /** Surcharges */

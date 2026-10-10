@@ -322,3 +322,66 @@ async def test_curl_timeout_surfaces_as_unavailable(monkeypatch):
     )
     with pytest.raises(AggregatorUnavailableError, match="unreachable"):
         await provider.save_outlet_schedule(session, "OUT1", {"periods": {}})
+
+
+def test_statement_rounding_line_books_the_fils_between_noon_total_and_rows():
+    """NOON_R_R596728064_AED_20260930: noon credited 5687.50; its rows settle
+    5940.16 and its platform + long-distance fees are −253.05, so 0.39 is noon's
+    own rounding. Booked as one summary line, the channel nets to the wallet."""
+    from decimal import Decimal
+
+    from app.models.aggregator import STATEMENT_GRAIN_SUMMARY
+    from app.services.aggregators.normalized import (
+        StandardStatement,
+        StandardStatementLine,
+    )
+    from app.services.providers.noon_provider import NoonClient
+
+    def line(key, amount, *, line_type="settlement", grain="order", cat=None):
+        return StandardStatementLine(
+            source_key=key,
+            line_type=line_type,
+            fee_category=cat,
+            amount=Decimal(amount),
+            grain=grain,
+        )
+
+    stmt = StandardStatement(
+        statement_id="NOON_R_R596728064_AED_20260930",
+        period_end="2026-09-30",
+        net_payable=Decimal("5687.50"),
+        currency="AED",
+        lines=[
+            line("a", "5940.16"),
+            line("b", "8305.00", line_type="sale"),
+            line("c", "-96.60", line_type="fee", grain=STATEMENT_GRAIN_SUMMARY),
+            line("d", "-156.45", line_type="fee", grain=STATEMENT_GRAIN_SUMMARY),
+        ],
+    )
+    rounding = NoonClient._statement_rounding_line(stmt)
+    assert rounding is not None
+    assert rounding.amount == Decimal("0.39")
+    assert rounding.grain == STATEMENT_GRAIN_SUMMARY
+    assert rounding.external_order_id is None
+    assert rounding.line_date == "2026-09-30"
+    assert (
+        rounding.source_key == "noon:NOON_R_R596728064_AED_20260930:statement_rounding"
+    )
+
+    # Re-parsing with the rounding line already present is still the same gap.
+    again = StandardStatement(**{**stmt.__dict__, "lines": [*stmt.lines, rounding]})
+    assert NoonClient._statement_rounding_line(again).amount == Decimal("0.39")
+
+    # No rows yet, or a gap too big to be rounding: nothing booked.
+    assert (
+        NoonClient._statement_rounding_line(
+            StandardStatement(**{**stmt.__dict__, "lines": stmt.lines[2:]})
+        )
+        is None
+    )
+    assert (
+        NoonClient._statement_rounding_line(
+            StandardStatement(**{**stmt.__dict__, "net_payable": Decimal("5600.00")})
+        )
+        is None
+    )

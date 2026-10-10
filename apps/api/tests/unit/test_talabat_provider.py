@@ -2345,3 +2345,78 @@ def test_fees_reconciled_to_net_nets_a_partial_refund_first():
         net_payable=Decimal("20.43"),
     )
     assert TalabatClient._fees_reconciled_to_net(order) is order
+
+
+@pytest.mark.asyncio
+async def test_payout_invoice_carries_its_order_compensation_as_refund_lines():
+    """Talabat deducted "Order Compensation" −15.00 from the 12–14 Sep payout
+    (invoice 15328592) without naming the order. The invoice breakdown is the
+    only place it shows per payout, so it becomes an order-less refund line
+    dated at the end of the payout period (live response, 2026-10-10)."""
+    from app.models.aggregator import STATEMENT_GRAIN_SUMMARY
+    from app.services.aggregators.normalized import StandardStatement
+
+    client = TalabatClient()
+    invoice = StandardStatement(
+        statement_id="15328592",
+        period_start="2026-09-12",
+        period_end="2026-09-14",
+        net_payable=Decimal("4279.50"),
+        currency="AED",
+        raw={
+            "invoiceId": "15328592",
+            "processedDate": "2026-09-17",
+            "invoiceAccount": {
+                "grid": "",
+                "chainId": "666733",
+                "billingParentId": "",
+                "__typename": "FinanceAccount",
+            },
+        },
+    )
+    calls: list = []
+
+    async def fake_graphql(
+        self, session, *, endpoint, query, variables, operation_name
+    ):
+        calls.append((operation_name, variables))
+        return {
+            "finances": {
+                "getInvoiceDetails": {
+                    "breakdown": {
+                        "customerRefundCharges": {
+                            "total": -15,
+                            "charges": [
+                                {"reason": "Order Compensation", "amount": -15}
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+
+    session = MagicMock()
+    with patch.object(TalabatClient, "_graphql", fake_graphql):
+        out = await client._with_refund_charges(session, invoice)
+
+    assert calls[0][0] == "getInvoiceDetails"
+    params = calls[0][1]["params"]
+    assert params["invoiceId"] == "15328592"
+    assert params["processedDate"] == "2026-09-17"
+    assert params["accounts"] == [
+        {"grid": "", "chainId": "666733", "billingParentId": ""}
+    ]
+    (line,) = out.lines
+    assert line.fee_category == "customer_refund"
+    assert line.amount == Decimal("-15.00")
+    assert line.external_order_id is None
+    assert line.grain == STATEMENT_GRAIN_SUMMARY
+    assert line.line_date == "2026-09-14"
+    assert line.description == "Order Compensation"
+
+    # A payout with no compensation is left as it was.
+    async def none_graphql(self, session, **kwargs):
+        return {"finances": {"getInvoiceDetails": {"breakdown": {}}}}
+
+    with patch.object(TalabatClient, "_graphql", none_graphql):
+        assert (await client._with_refund_charges(session, invoice)).lines == []

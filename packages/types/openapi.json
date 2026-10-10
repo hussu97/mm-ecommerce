@@ -23442,6 +23442,10 @@
             "title": "Period Charges",
             "type": "number"
           },
+          "period_refunds": {
+            "title": "Period Refunds",
+            "type": "number"
+          },
           "refunds": {
             "title": "Refunds",
             "type": "number"
@@ -23457,6 +23461,7 @@
         "required": [
           "gmv",
           "refunds",
+          "period_refunds",
           "output_vat",
           "net_revenue",
           "cogs",
@@ -26431,6 +26436,10 @@
             "title": "Period Charges",
             "type": "number"
           },
+          "period_refunds": {
+            "title": "Period Refunds",
+            "type": "number"
+          },
           "refunds": {
             "title": "Refunds",
             "type": "number"
@@ -26446,6 +26455,7 @@
         "required": [
           "gmv",
           "refunds",
+          "period_refunds",
           "output_vat",
           "net_revenue",
           "cogs",
@@ -27078,6 +27088,17 @@
             ],
             "title": "Period Charges"
           },
+          "period_refunds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Refunds"
+          },
           "refunds": {
             "anyOf": [
               {
@@ -27104,6 +27125,7 @@
         "required": [
           "gmv",
           "refunds",
+          "period_refunds",
           "output_vat",
           "net_revenue",
           "cogs",

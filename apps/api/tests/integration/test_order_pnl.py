@@ -855,3 +855,55 @@ async def test_a_cancellation_that_kept_its_fees_books_what_it_kept(engine):
             )
             await db.execute(Branch.__table__.delete().where(Branch.id == branch.id))
             await db.commit()
+
+
+async def test_an_order_less_refund_is_a_refund_and_rounding_is_vat_free(engine, world):
+    """Talabat's "Order Compensation" (−15.00 on a payout, no order named) lands
+    with the refunds, as a report-only part of them, and never as a fee or in
+    fee VAT. noon's statement rounding (+0.39) is a period credit with no VAT
+    peeled out of it, though noon's other statement-level fees are VAT-inclusive.
+    """
+    from app.services.aggregators.period_charges import period_refunds
+
+    day = "2031-02-20"
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        for key, channel, line_type, category, amount in (
+            ("t-comp", "talabat", "refund", "customer_refund", "-15.00"),
+            ("n-round", "noon", "adjustment", "statement_rounding", "0.39"),
+        ):
+            db.add(
+                AggregatorStatementLine(
+                    channel=channel,
+                    source_key=f"pnl-refund-{key}",
+                    statement_id=f"S-{key}",
+                    external_order_id=None,
+                    line_date=day,
+                    line_type=line_type,
+                    fee_category=category,
+                    description=category,
+                    amount=D(amount),
+                    grain="summary",
+                )
+            )
+        await db.flush()
+
+        assert await period_refunds(db, day, day) == {"talabat": D("15.00")}
+        charges = {
+            (c.channel, c.category): c for c in await period_charges(db, day, day)
+        }
+        assert ("talabat", "customer_refund") not in charges
+        rounding = charges[("noon_food", "statement_rounding")]
+        assert rounding.amount == D("-0.39") and rounding.input_vat == D("0.00")
+
+        report = await pnl_report.build(db, date_from=day, date_to=day)
+        talabat = dict(report.channels)["talabat"]
+        assert talabat.refunds == D("15.00")
+        assert talabat.period_refunds == D("15.00")
+        assert talabat.period_charges == D("0.00")
+        assert talabat.fees_vat == D("0.00")
+        assert talabat.net_revenue == D("-15.00")
+        assert report.total.period_refunds == D("15.00")
+        noon = dict(report.channels)["noon_food"]
+        assert noon.period_charges == D("-0.39") and noon.fees_vat == D("0.00")
+        await db.rollback()

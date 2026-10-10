@@ -627,6 +627,9 @@ class _Lines:
     #: Non-order marketplace charges (monthly platform fees…), as billed.
     #: Report-level only.
     period_charges: Decimal = _ZERO
+    #: The part of `refunds` a marketplace charged with no order attached
+    #: (Talabat's Order Compensation). Report-level only; zero on an order.
+    period_refunds: Decimal = _ZERO
     #: Input VAT reclaimed on the fee lines (and on the period charges).
     fees_vat: Decimal = _ZERO
     discounts: Decimal = _ZERO
@@ -728,6 +731,7 @@ class PnlTotals(_Lines):
         for key in MISC_KEYS:
             setattr(self, key, money(getattr(self, key) + getattr(other, key)))
         self.period_charges = money(self.period_charges + other.period_charges)
+        self.period_refunds = money(self.period_refunds + other.period_refunds)
         self.orders += other.orders
         self.charged_cancellations += other.charged_cancellations
         self.orders_with_cogs += other.orders_with_cogs
@@ -917,6 +921,7 @@ def statement_fields(lines: _Lines) -> dict:
     return {
         "gmv": lines.gmv,
         "refunds": lines.refunds,
+        "period_refunds": lines.period_refunds,
         "output_vat": lines.output_vat,
         "net_revenue": lines.net_revenue,
         "cogs": lines.cogs,
@@ -954,6 +959,7 @@ def statement_fields(lines: _Lines) -> dict:
 SHARE_KEYS: tuple[str, ...] = (
     "gmv",
     "refunds",
+    "period_refunds",
     "output_vat",
     "net_revenue",
     "cogs",

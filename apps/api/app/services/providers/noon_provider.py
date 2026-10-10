@@ -1464,6 +1464,66 @@ class NoonClient(BaseAggregatorClient):
         "order value": (),
     }
 
+    #: The most a statement's total may differ from its rows and still be read
+    #: as noon's rounding. Anything larger means rows are missing, and is left
+    #: as a visible gap rather than booked.
+    _ROUNDING_TOLERANCE = Decimal("2.00")
+
+    @classmethod
+    def _statement_rounding_line(
+        cls, statement: StandardStatement
+    ) -> StandardStatementLine | None:
+        """A summary line for the gap between what noon credited for a
+        statement and the sum of its per-order settlement and statement-level
+        fee lines, when that gap is rounding. None when the statement has no
+        per-order rows yet, no total, no gap, or a gap too large to be rounding.
+        """
+        if statement.net_payable is None:
+            return None
+        lines = list(statement.lines or [])
+        order_net = [
+            line.amount or Decimal("0")
+            for line in lines
+            if line.grain != STATEMENT_GRAIN_SUMMARY
+            and (line.line_type or "").lower() == "settlement"
+        ]
+        if not order_net:
+            return None
+        summary = [
+            line.amount or Decimal("0")
+            for line in lines
+            if line.grain == STATEMENT_GRAIN_SUMMARY
+            and line.fee_category != "statement_rounding"
+        ]
+        gap = _money(
+            Decimal(str(statement.net_payable))
+            - sum(order_net, Decimal("0"))
+            - sum(summary, Decimal("0"))
+        )
+        if gap == 0:
+            return None
+        if abs(gap) > cls._ROUNDING_TOLERANCE:
+            logger.warning(
+                "noon statement %s: total %s is %s off its rows — not booked as "
+                "rounding",
+                statement.statement_id,
+                statement.net_payable,
+                gap,
+            )
+            return None
+        return StandardStatementLine(
+            source_key=f"noon:{statement.statement_id}:statement_rounding",
+            statement_id=statement.statement_id,
+            external_order_id=None,
+            line_date=statement.period_end,
+            line_type="adjustment",
+            fee_category="statement_rounding",
+            description="Statement rounding",
+            amount=gap,
+            currency=statement.currency or "AED",
+            grain=STATEMENT_GRAIN_SUMMARY,
+        )
+
     async def _overview_summary_lines(
         self,
         session: LoadedSession,
@@ -1682,6 +1742,17 @@ class NoonClient(BaseAggregatorClient):
             idx = idx_by_ref[stmt_ref]
             existing = list(statements[idx].lines or [])
             statements[idx] = replace(statements[idx], lines=existing + summary_lines)
+
+        # What noon pays for a statement is its own rounded total, a few fils off
+        # the sum of the rows it publishes (Sept 2026: +0.31 to +0.44 a week).
+        # Book that as one summary line so the channel nets to the wallet credit.
+        for stmt_ref in by_id:
+            idx = idx_by_ref[stmt_ref]
+            rounding = self._statement_rounding_line(statements[idx])
+            if rounding is not None:
+                statements[idx] = replace(
+                    statements[idx], lines=[*statements[idx].lines, rounding]
+                )
 
         notes = [
             n

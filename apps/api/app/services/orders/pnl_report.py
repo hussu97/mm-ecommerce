@@ -31,7 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.money import money
 from app.models.order import Order
 from app.models.pos_order import OrderSourceEnum
-from app.services.aggregators.period_charges import PeriodCharge, period_charges
+from app.services.aggregators.period_charges import (
+    PeriodCharge,
+    period_charges,
+    period_refunds,
+)
 from app.services.orders import tax_identity_service
 from app.services.orders.misc_expenses import (
     Cell,
@@ -139,6 +143,16 @@ async def build(
         column = by_channel.setdefault(charge.channel, PnlTotals())
         column.period_charges = money(column.period_charges + charge.amount)
         column.fees_vat = money(column.fees_vat + charge.input_vat)
+    # Refunds a marketplace charged with no order (Talabat's Order Compensation):
+    # report-only like the charges above, on the same entity rule, and booked
+    # with the refunds. No VAT comes back with them (see `period_refunds`).
+    if include_period:
+        for code, amount in (
+            await period_refunds(db, date_from, date_to, channel_set or None)
+        ).items():
+            column = by_channel.setdefault(code, PnlTotals())
+            column.refunds = money(column.refunds + amount)
+            column.period_refunds = money(column.period_refunds + amount)
 
     # Split over every cell's GMV, unfiltered (see the module docstring).
     misc = allocate(

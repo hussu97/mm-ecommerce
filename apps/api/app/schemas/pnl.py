@@ -21,6 +21,7 @@ class PnlShares(BaseModel):
 
     gmv: float | None
     refunds: float | None
+    period_refunds: float | None
     output_vat: float | None
     net_revenue: float | None
     cogs: float | None
@@ -69,8 +70,13 @@ class PnlStatement(BaseModel):
     #: The goods the customer was billed for before discounts, VAT included.
     #: Delivery fees are their own line (`delivery_fees`).
     gmv: float
-    #: Partial refunds on an order that still stood, as refunded.
+    #: Partial refunds on an order that still stood, as refunded — plus, on
+    #: the report, the refunds a marketplace charged with no order
+    #: (`period_refunds`).
     refunds: float
+    #: The part of `refunds` charged with no order attached (Talabat's Order
+    #: Compensation). Report only; zero on an order. No VAT comes back with it.
+    period_refunds: float
     #: VAT on sales owed to the FTA — charged, less the VAT inside refunds.
     output_vat: float
     #: GMV − refunds − VAT on sales.

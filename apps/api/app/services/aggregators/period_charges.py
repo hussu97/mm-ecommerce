@@ -42,10 +42,14 @@ from app.models.aggregator import (
 from app.services.aggregators import statement_categories as cats
 from app.services.orders.order_pricing import VAT_RATE
 
-__all__ = ["PeriodCharge", "pnl_channel_for", "period_charges"]
+__all__ = ["PeriodCharge", "pnl_channel_for", "period_charges", "period_refunds"]
 
 #: Channels whose fee lines are stored VAT-inclusive with no separate VAT line.
 _VAT_INCLUSIVE_CHANNELS = frozenset({CHANNEL_KEETA, CHANNEL_NOON})
+
+#: Lines that carry no VAT even on a VAT-inclusive channel: noon's statement
+#: rounding (the fils between its rounded total and its rows) is not a supply.
+_NO_VAT_CATEGORIES = frozenset({"statement_rounding"})
 
 #: Statement-table channel code → the P&L's channel code (`order_pnl.CHANNELS`).
 _PNL_CHANNEL = {CHANNEL_NOON: "noon_food"}
@@ -101,9 +105,11 @@ async def period_charges(
         or_(ln.external_order_id.is_(None), ln.external_order_id == ""),
         ln.line_date >= date_from,
         ln.line_date <= date_to,
-        # The gross / payout plumbing is not a charge.
+        # The gross / payout plumbing is not a charge, and a refund is money
+        # leaving the sale, not a fee (`period_refunds`).
         ~cats.is_gross(ln),
         ~cats.is_net(ln),
+        ~cats.is_refund(ln),
     )
     rows = (await db.execute(stmt)).all()
     if channels is not None:
@@ -149,7 +155,11 @@ async def period_charges(
     out: list[PeriodCharge] = []
     for (channel, category, _day), g in sorted(groups.items()):
         gross = g["gross"]
-        if channel in _VAT_INCLUSIVE_CHANNELS and not g["vat"]:
+        if (
+            channel in _VAT_INCLUSIVE_CHANNELS
+            and not g["vat"]
+            and category not in _NO_VAT_CATEGORIES
+        ):
             net = gross / (1 + VAT_RATE)
             vat = gross - net
         else:
@@ -169,3 +179,42 @@ async def period_charges(
             )
         )
     return out
+
+
+async def period_refunds(
+    db: AsyncSession,
+    date_from: str,
+    date_to: str,
+    channels: set[str] | None = None,
+) -> dict[str, Decimal]:
+    """
+    Refunds a marketplace charged the shop with no order attached, per P&L
+    channel, by statement date in [`date_from`, `date_to`]: a positive total is
+    money taken back from sales.
+
+    Talabat's "Order Compensation" is the case: a flat 15.00 deducted from a
+    payout (`customerRefundCharges` on the payout invoice), summed monthly on a
+    "Compensation Claim" credit note, and tied to no order anywhere it is
+    published. It is a refund, so the P&L books it with the refunds rather than
+    with the fees. Talabat issues it without VAT ("compensatory in nature and
+    not in consideration for a supply"), so it takes no output VAT back either,
+    and it stays out of the VAT ledger, which `period_charges` feeds.
+    """
+    ln = AggregatorStatementLine
+    rows = (
+        await db.execute(
+            select(ln.channel, ln.amount).where(
+                or_(ln.external_order_id.is_(None), ln.external_order_id == ""),
+                ln.line_date >= date_from,
+                ln.line_date <= date_to,
+                cats.is_refund(ln),
+            )
+        )
+    ).all()
+    out: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
+    for channel, amount in rows:
+        code = pnl_channel_for(channel)
+        if channels is not None and code not in channels:
+            continue
+        out[code] += -to_decimal(amount)
+    return {code: money(total) for code, total in out.items() if money(total) != 0}

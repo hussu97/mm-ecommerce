@@ -2209,3 +2209,79 @@ async def test_build_modifier_snapshot_keeps_verbatim_numeric_option_name():
     assert snap[0]["option_name"] == "3 Pieces"
     assert snap[0]["modifier_option_id"] == str(opt)
     assert snap[0]["quantity"] == 1
+
+
+def test_commission_takes_the_fils_that_reconcile_fees_to_the_payout():
+    """Talabat rounds the net it pays, not each fee's VAT: AGG-20260922-017 sold
+    55.00, commission 17.33 (16.50 + 0.825), payment 1.26, paid 36.42. Booked
+    as given, the order netted 36.41. The commission absorbs the fil."""
+    settled = _agg(
+        channel="talabat",
+        status="Delivered",
+        gross_sales=Decimal("55.00"),
+        commission_amount=Decimal("17.33"),
+        payment_fee=Decimal("1.26"),
+        cancellation_fee=None,
+        marketing_fee=Decimal("0"),
+        net_payable=Decimal("36.42"),
+        statement_id="detailed-2026-09-01-2026-09-30-711571",
+    )
+    assert promote._commission_to_the_net(settled) == Decimal("17.32")
+    assert promote._actual_fee_overrides(settled)["actual_commission"] == Decimal(
+        "17.32"
+    )
+
+    # A partial refund is part of the reconciliation (3917508736: 70 sold, 35
+    # refunded, 22.05 + 0.84 in fees, 12.11 paid — already exact).
+    refunded = _agg(
+        channel="talabat",
+        status="Delivered",
+        gross_sales=Decimal("70.00"),
+        refund_amount=Decimal("35.00"),
+        commission_amount=Decimal("22.05"),
+        payment_fee=Decimal("0.84"),
+        cancellation_fee=None,
+        marketing_fee=Decimal("0"),
+        net_payable=Decimal("12.11"),
+        statement_id="S",
+    )
+    assert promote._commission_to_the_net(refunded) == Decimal("22.05")
+
+
+def test_commission_is_left_alone_unless_the_gap_is_settled_rounding():
+    base = dict(
+        channel="talabat",
+        status="Delivered",
+        gross_sales=Decimal("55.00"),
+        commission_amount=Decimal("17.33"),
+        payment_fee=Decimal("1.26"),
+        cancellation_fee=None,
+        marketing_fee=Decimal("0"),
+    )
+    # Not settled yet: the net is the export's provisional figure.
+    assert promote._commission_to_the_net(
+        _agg(**base, net_payable=Decimal("36.42"), statement_id=None)
+    ) == Decimal("17.33")
+    # A real difference stays visible.
+    assert promote._commission_to_the_net(
+        _agg(**base, net_payable=Decimal("30.00"), statement_id="S")
+    ) == Decimal("17.33")
+    # A cancellation is settled through `marketplace_cancellation_net` instead.
+    assert promote._commission_to_the_net(
+        _agg(
+            **{**base, "status": "Cancelled"},
+            net_payable=Decimal("36.42"),
+            statement_id="S",
+        )
+    ) == Decimal("17.33")
+    # Unknown commission stays unknown.
+    assert (
+        promote._commission_to_the_net(
+            _agg(
+                **{**base, "commission_amount": None},
+                net_payable=Decimal("36.42"),
+                statement_id="S",
+            )
+        )
+        is None
+    )

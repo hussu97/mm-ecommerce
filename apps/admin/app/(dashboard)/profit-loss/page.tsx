@@ -87,6 +87,9 @@ type Row = {
 const ROWS: (Row | { misc: MiscLevel })[] = [
   { label: 'GMV (items before discounts, incl. VAT)', value: c => c.gmv, share: 'gmv', kind: 'line' },
   { label: 'Refunds', value: c => c.refunds, share: 'refunds', kind: 'cost' },
+  // Part of the refunds above: what a marketplace took back with no order named
+  // (Talabat's Order Compensation). Hidden at zero, which an order always is.
+  { label: 'Marketplace refunds, no order', value: c => c.period_refunds, share: 'period_refunds', kind: 'detail' },
   { label: 'VAT on sales', value: c => c.output_vat, share: 'output_vat', kind: 'cost' },
   { label: 'Net revenue', value: c => c.net_revenue, share: 'net_revenue', kind: 'sub' },
   { label: 'COGS (net of VAT)', value: c => c.cogs, share: 'cogs', kind: 'cost' },

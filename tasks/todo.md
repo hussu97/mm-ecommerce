@@ -1,3 +1,28 @@
+# P&L accuracy: marketplace net to the fil (Sept 2026 and onward)
+
+Owner ask (2026-10-10): add Talabat's Order Compensation charges to the P&L and
+make channel and order-level P&L as accurate as possible, for September and for
+future orders.
+
+Audit (prod, Sept): order-level P&L net-to-shop vs each marketplace's net payable —
+Deliveroo/Keeta/noon exact, Careem −0.12 (12 orders × 0.01), Talabat −1.71
+(173 × 0.01; Talabat rounds the net, we round each fee+VAT). Statement totals vs
+their order lines: Careem/Keeta exact; Deliveroo 14–20 Sep +40.00; noon +0.31–0.44
+per weekly statement; Talabat payouts −15.00 twice (Order Compensation).
+
+- [ ] Deliveroo: a cancelled order's settled net must include the
+      `cancelled_order_value` credit (AGG-20260916-071: +26.98, booked −13.02 by
+      migration 313). Fix the derivation + repair the row.
+- [ ] Talabat: read each payout invoice's `customerRefundCharges`
+      (getInvoiceDetails) into order-less statement lines; the P&L books refund-
+      type period lines as refunds (no VAT), not as fees. Sept: 2 × 15.00.
+- [ ] Order fees reconcile to the marketplace net: put the sub-0.05 VAT
+      rounding residue on the commission so an order's P&L net equals its payout
+      (Talabat, Careem). Re-promote September.
+- [ ] noon: book each weekly statement's rounding residue (statement net − its
+      lines) as an order-less line, so the channel nets to what noon paid.
+- [ ] Verify: Sept P&L per channel nets to statement/payout totals; 161,060.
+
 # September aggregator GMV audit (P&L 161,090 vs accountant 161,142)
 
 Owner ask (2026-10-10): deep-audit Sept aggregator GMV (incl. VAT) less refunds;

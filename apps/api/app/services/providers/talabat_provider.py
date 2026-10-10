@@ -57,7 +57,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.money import money
-from app.models.aggregator import CHANNEL_TALABAT, GRAIN_LINE
+from app.models.aggregator import (
+    CHANNEL_TALABAT,
+    GRAIN_LINE,
+    STATEMENT_GRAIN_ORDER,
+    STATEMENT_GRAIN_SUMMARY,
+)
 from app.services.aggregators.normalized import (
     PayoutsResult,
     SalesResult,
@@ -421,6 +426,29 @@ query RequestStatements($params: DownloadAdditionalStatementsRequest!) {
   finances {
     downloadAdditionalStatements(input: $params) {
       downloadUrl
+    }
+  }
+}
+""".strip()
+
+#: One payout invoice's breakdown — here only for `customerRefundCharges`, the
+#: "Order Compensation" Talabat deducts from a payout without naming the order
+#: (2 × −15.00 in Sept 2026, on invoices 15328592 and 15545348; the monthly
+#: credit note CUAE-00114424 is their sum). No other Talabat document carries
+#: them per payout. Captured from portalPluginFinance 2026-10-10.
+_INVOICE_DETAILS_QUERY = """
+query getInvoiceDetails($params: GetInvoiceDetailsRequest!) {
+  finances {
+    getInvoiceDetails(input: $params) {
+      breakdown {
+        customerRefundCharges {
+          total
+          charges {
+            reason
+            amount
+          }
+        }
+      }
     }
   }
 }
@@ -2261,7 +2289,7 @@ class TalabatClient(BaseAggregatorClient):
             session, accounts=accounts, from_date=from_date, to_date=to_date
         ):
             if invoice.statement_id not in seen:
-                statements.append(invoice)
+                statements.append(await self._with_refund_charges(session, invoice))
                 seen.add(invoice.statement_id)
         statements = await self._enrich_statements_with_attachment_lines(
             session, statements
@@ -2269,13 +2297,90 @@ class TalabatClient(BaseAggregatorClient):
         if (
             truncation_note is None
             and statements
-            and not any(s.lines for s in statements)
+            and not any(
+                line.grain == STATEMENT_GRAIN_ORDER
+                for s in statements
+                for line in s.lines
+            )
         ):
             truncation_note = (
                 "Talabat statements carry no per-order lines — the xlsx bundle "
                 "and per-statement attachments were empty or unreadable."
             )
         return StatementsResult(statements=statements, truncation_note=truncation_note)
+
+    async def _with_refund_charges(
+        self, session: LoadedSession, invoice: StandardStatement
+    ) -> StandardStatement:
+        """The payout invoice with its `customerRefundCharges` as order-less
+        `customer_refund` lines, dated at the end of the payout period.
+
+        Talabat deducts "Order Compensation" (a flat 15.00 a time) from a payout
+        and names no order — not on the credit note, the statement of account,
+        the Detailed statement or the order export — so these are period-level
+        refunds, which `period_refunds` hands to the P&L. Best-effort: a failed
+        lookup keeps the invoice as it was."""
+        raw = invoice.raw if isinstance(invoice.raw, dict) else {}
+        invoice_id = str(raw.get("invoiceId") or "").strip()
+        processed = _date_str(raw.get("processedDate"))
+        account = raw.get("invoiceAccount")
+        if not (invoice_id and processed and isinstance(account, dict)):
+            return invoice
+        try:
+            data = await self._graphql(
+                session,
+                endpoint=_FINANCE_GRAPHQL,
+                query=_INVOICE_DETAILS_QUERY,
+                variables={
+                    "params": {
+                        "invoiceId": invoice_id,
+                        "processedDate": processed,
+                        "globalEntityId": self._global_entity_id(session),
+                        "accounts": [
+                            {k: v for k, v in account.items() if k != "__typename"}
+                        ],
+                    }
+                },
+                operation_name="getInvoiceDetails",
+            )
+        except AggregatorAuthError:
+            raise
+        except AggregatorUnavailableError as exc:
+            logger.warning(
+                "%s invoice %s breakdown skipped (%s)", self.channel, invoice_id, exc
+            )
+            return invoice
+        breakdown = ((data.get("finances") or {}).get("getInvoiceDetails") or {}).get(
+            "breakdown"
+        ) or {}
+        charges = (breakdown.get("customerRefundCharges") or {}).get("charges") or []
+        line_date = invoice.period_end or processed
+        lines = list(invoice.lines)
+        for index, charge in enumerate(charges):
+            if not isinstance(charge, dict):
+                continue
+            amount = _money(charge.get("amount"))
+            if not amount:
+                continue
+            reason = str(charge.get("reason") or "Customer refund").strip()
+            lines.append(
+                StandardStatementLine(
+                    source_key=f"{invoice_id}:customer_refund:{index}",
+                    statement_id=invoice.statement_id,
+                    line_date=line_date,
+                    line_type="refund",
+                    fee_category="customer_refund",
+                    description=reason,
+                    amount=-abs(amount),
+                    currency=invoice.currency or "AED",
+                    grain=STATEMENT_GRAIN_SUMMARY,
+                )
+            )
+        return (
+            replace(invoice, lines=lines)
+            if len(lines) != len(invoice.lines)
+            else invoice
+        )
 
     async def _payout_invoice_rows(
         self,
@@ -2794,7 +2899,11 @@ class TalabatClient(BaseAggregatorClient):
         Statements that already have lines are left alone. A failed attachment
         is skipped so one bad file cannot drop the metadata row.
         """
-        bundle_has_lines = any(stmt.lines for stmt in statements)
+        bundle_has_lines = any(
+            line.grain == STATEMENT_GRAIN_ORDER
+            for stmt in statements
+            for line in stmt.lines
+        )
         out: list[StandardStatement] = []
         for stmt in statements:
             if stmt.lines:

@@ -32,6 +32,7 @@ import json
 import logging
 import uuid
 from contextvars import ContextVar
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -1890,6 +1891,14 @@ class DeliverooClient(BaseAggregatorClient):
         and each data row emits up to five non-zero lines (order value, an
         activity adjustment, commission, its VAT, and the net payable).
 
+        One order can have several rows — a cancelled order Deliveroo still pays
+        for is a "Cancelled order value" row (+40.00, payable +40.00) and a
+        "Deliveroo commission on cancelled order" row (−12.40, VAT −0.62,
+        payable −13.02). Lines are keyed per order and category, so the rows'
+        amounts are SUMMED into one line per category. Keying them per row and
+        letting the last one win kept only −13.02 for 7ebbf9a3 on 16 Sep, and
+        the P&L booked a 13.02 charge on an order that netted +26.98.
+
         Live Partner Hub CSVs carry both `Order Number` (a long numeric, e.g.
         ``51135384652``) and `Order ID` (a v4 UUID). `Order ID` is the sales
         detail `drn_id` — not list `order_id` (a different v3 UUID) and not the
@@ -1898,7 +1907,7 @@ class DeliverooClient(BaseAggregatorClient):
         """
         reader = csv.reader(io.StringIO(text))
         headers: list[str] | None = None
-        lines: list[StandardStatementLine] = []
+        lines: dict[str, StandardStatementLine] = {}
         row_number = 0
         for row in reader:
             if not row or not any(cell.strip() for cell in row):
@@ -1939,20 +1948,25 @@ class DeliverooClient(BaseAggregatorClient):
             for line_type, fee_category, amount in values:
                 if amount is None or amount == 0:
                     continue
-                lines.append(
-                    StandardStatementLine(
-                        source_key=f"{statement_id}:{base_key}:{fee_category}",
-                        statement_id=statement_id,
-                        external_order_id=external_order_id,
-                        line_date=line_date,
-                        line_type=line_type,
-                        fee_category=fee_category,
-                        description=note or activity or fee_category,
-                        amount=amount,
-                        currency="AED",
+                source_key = f"{statement_id}:{base_key}:{fee_category}"
+                existing = lines.get(source_key)
+                if existing is not None:
+                    lines[source_key] = replace(
+                        existing, amount=(existing.amount or 0) + amount
                     )
+                    continue
+                lines[source_key] = StandardStatementLine(
+                    source_key=source_key,
+                    statement_id=statement_id,
+                    external_order_id=external_order_id,
+                    line_date=line_date,
+                    line_type=line_type,
+                    fee_category=fee_category,
+                    description=note or activity or fee_category,
+                    amount=amount,
+                    currency="AED",
                 )
-        return lines
+        return list(lines.values())
 
     # ── in-page push path (invoice downloads fetched by the bootstrap worker) ──
     def parse_pushed_finance(self, payload: dict[str, Any]) -> StandardStatement | None:
