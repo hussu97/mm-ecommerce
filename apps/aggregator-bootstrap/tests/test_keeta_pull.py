@@ -732,3 +732,130 @@ def test_newest_bill_per_shop_and_week_is_pushed_last():
         "DT_OCT_NEW",
     ]
     assert [shop for _, _, shop in chosen] == ["1644336388", "1644174206", "1644336388"]
+
+
+# ── fresh bill renders ───────────────────────────────────────────────────────
+
+_SHOPS = ["1644336388", "1644174206", "1644170195", "1644189187"]
+
+
+def _ms(day: str, hour: int = 12) -> int:
+    from datetime import datetime, timedelta, timezone
+
+    y, m, d = (int(x) for x in day.split("-"))
+    return int(
+        datetime(y, m, d, hour, tzinfo=timezone(timedelta(hours=4))).timestamp() * 1000
+    )
+
+
+def _rendered(shop, period, created_day):
+    return _bill_task(f"DT_{shop}_{created_day}", shop, period, _ms(created_day))
+
+
+def test_keeta_cycles_are_the_four_settlement_weeks_of_each_month():
+    from datetime import date
+
+    from aggregator_bootstrap.keeta_pull import _keeta_cycles
+
+    cycles = _keeta_cycles(date(2026, 10, 10), 45)
+    assert cycles[0] == (date(2026, 8, 22), date(2026, 8, 31))
+    assert (date(2026, 9, 22), date(2026, 9, 30)) in cycles
+    # 1–7 Oct ended three days ago: due. 8–14 Oct has not ended: not yet.
+    assert cycles[-1] == (date(2026, 10, 1), date(2026, 10, 7))
+
+
+def test_bills_rendered_before_settlement_or_never_are_rendered_again():
+    """Prod on 2026-10-10: 22–30 Sep rendered 1 Oct (settled 2 Oct) said
+    "Settlement pending" for ever; 22–31 Aug was never rendered at all; 1–7 Oct
+    rendered 9 Oct after it settled is fine until its day-10 checkpoint."""
+    from datetime import date
+
+    from aggregator_bootstrap.keeta_pull import _bills_to_render
+
+    shop = "1644174206"
+    content = [
+        _rendered(shop, "1 Oct 2026 ~ 7 Oct 2026", "2026-10-10"),
+        _rendered(shop, "22 Sep 2026 ~ 30 Sep 2026", "2026-10-01"),
+        _rendered(shop, "15 Sep 2026 ~ 21 Sep 2026", "2026-10-02"),
+        _rendered(shop, "8 Sep 2026 ~ 14 Sep 2026", "2026-09-30"),
+        _rendered(shop, "1 Sep 2026 ~ 7 Sep 2026", "2026-09-20"),
+        _rendered(shop, "15 Aug 2026 ~ 22 Aug 2026", "2026-08-25"),  # not a cycle
+    ]
+    wanted = _bills_to_render(content, [shop], date(2026, 10, 10))
+    assert wanted == [
+        (shop, date(2026, 8, 22), date(2026, 8, 31)),  # never rendered
+        (shop, date(2026, 9, 22), date(2026, 9, 30)),  # rendered pre-settlement
+    ]
+
+    # Once a render on/after the checkpoint exists, it is left alone.
+    content.append(_rendered(shop, "22 Sep 2026 ~ 30 Sep 2026", "2026-10-10"))
+    content.append(_rendered(shop, "22 Aug 2026 ~ 31 Aug 2026", "2026-10-10"))
+    assert _bills_to_render(content, [shop], date(2026, 10, 10)) == []
+
+
+def test_bill_renders_are_capped_per_pull_oldest_first():
+    from datetime import date
+
+    from aggregator_bootstrap.keeta_pull import _MAX_RENDERS_PER_PULL, _bills_to_render
+
+    wanted = _bills_to_render([], _SHOPS, date(2026, 10, 10))
+    assert len(wanted) == _MAX_RENDERS_PER_PULL
+    assert wanted[0][1] == date(2026, 8, 22)
+
+
+def test_render_request_body_matches_the_portal_download_button():
+    """The body the live call accepted on 2026-10-10 (task DT2108851537654530075)."""
+    from datetime import date
+
+    from aggregator_bootstrap.keeta_pull import _render_request_body
+
+    body = _render_request_body("1644174206", date(2026, 9, 22), date(2026, 9, 30))
+    assert body == {
+        "periodStartDateStamp": _ms("2026-09-22", 0),
+        "periodEndDateStamp": _ms("2026-10-01", 0) - 1,
+        "type": 1,
+        "inputIds": [1644174206],
+        "downloadTaskType": 3,
+    }
+
+
+async def test_request_fresh_renders_posts_creates_and_waits_until_ready(monkeypatch):
+    from datetime import date
+
+    from aggregator_bootstrap import keeta_pull as kp
+
+    monkeypatch.setattr(kp, "_today", lambda: date(2026, 10, 10))
+    monkeypatch.setattr(kp, "_RENDER_POLL_SECONDS", 0)
+    shop = "1644174206"
+    existing = [
+        _rendered(shop, "1 Oct 2026 ~ 7 Oct 2026", "2026-10-10"),
+        _rendered(shop, "22 Sep 2026 ~ 30 Sep 2026", "2026-10-01"),
+        _rendered(shop, "15 Sep 2026 ~ 21 Sep 2026", "2026-10-02"),
+        _rendered(shop, "8 Sep 2026 ~ 14 Sep 2026", "2026-09-30"),
+        _rendered(shop, "1 Sep 2026 ~ 7 Sep 2026", "2026-09-20"),
+        _rendered(shop, "22 Aug 2026 ~ 31 Aug 2026", "2026-09-10"),
+    ]
+    posts: list[tuple[str, dict]] = []
+
+    async def fake_post(page, endpoint, payload):
+        posts.append((endpoint, payload))
+        if endpoint == kp.KEETA_DOWNLOAD_TASK_CREATE_ENDPOINT:
+            return {"code": 0, "data": {"taskViewId": "DT_NEW"}}
+        created = any(e == kp.KEETA_DOWNLOAD_TASK_CREATE_ENDPOINT for e, _ in posts)
+        fresh = _bill_task(
+            "DT_NEW", shop, "22 Sep 2026 ~ 30 Sep 2026", _ms("2026-10-10")
+        )
+        return {"data": {"pageContent": [fresh, *existing] if created else existing}}
+
+    class _Page:
+        async def wait_for_timeout(self, _ms):
+            return None
+
+    monkeypatch.setattr(kp, "_post_in_page", fake_post)
+    notes: list[str] = []
+    assert await kp._request_fresh_renders(_Page(), [shop], notes) == 1
+    creates = [p for e, p in posts if e == kp.KEETA_DOWNLOAD_TASK_CREATE_ENDPOINT]
+    assert creates == [
+        kp._render_request_body(shop, date(2026, 9, 22), date(2026, 9, 30))
+    ]
+    assert notes == []

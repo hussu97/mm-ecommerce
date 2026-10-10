@@ -21,10 +21,17 @@ Talabat to its payouts per chain/period except 12–14 Sep (15.04 short).
       23–30 Sep payouts are missing. Widen Talabat's finance window.
 - [x] Keeta bills are renders frozen when requested: newest render per (shop, week)
       now wins (it was the oldest); payouts carry Keeta's Settlement date as due date.
-      22–30 Sep (8,488.08) was rendered 1 Oct for a 2 Oct settlement; it stays
-      "pending" until a fresh render exists (Keeta → Billing → Download, per shop).
-      22–31 Aug (1,259.01) is a one-day partial (22 Aug only): no full bill for
-      that cycle was ever rendered.
+      22–30 Sep (8,488.08) was rendered 1 Oct for a 2 Oct settlement. A fresh
+      render (2026-10-10) says Settled, 2 Oct. The worker now asks Keeta for a
+      fresh render itself (`w/download/task/create`, the portal's Download
+      button) at day 3 and day 10 after each cycle, and for any cycle never
+      rendered (22–31 Aug).
+- [x] Talabat Sept finance pulled (1 Sep–9 Oct): detailed statement 1,211 orders,
+      subtotal 75,785 (= our 75,320 + 465 of shop-caused cancellations Talabat
+      bills as sales), net 47,005.12 (ties to the fil). Payouts for Sept periods
+      47,143.07 = accountant's received 47,144. Short vs orders: 15.05 (12–14 Sep)
+      + 15.11 (27–30 Sep); the tax invoice / credit note attachments 404, so the
+      reason is unread.
 - [ ] After deploy: confirm auto-deliver books AGG-20260928 (noon FG9SNNLIQ25AXAA),
       migration 313 writes 9 rows, and the nightly finance pass lands Talabat's
       September statement (or run a Talabat finance range for 1–30 Sep by hand).

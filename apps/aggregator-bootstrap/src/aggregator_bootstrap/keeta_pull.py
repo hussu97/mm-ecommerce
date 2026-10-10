@@ -1411,6 +1411,11 @@ KEETA_STATEMENT_FILE_ENDPOINT = (
 KEETA_DOWNLOAD_TASK_ENDPOINT = (
     "/api/settlement/statement/v2/r/download/task/list" + KEETA_QUERY_SUFFIX
 )
+#: Ask Keeta to render a billing report — what the portal's Reports → Billing
+#: report → "Download" button posts (finance-download bundle, 2026-10-10).
+KEETA_DOWNLOAD_TASK_CREATE_ENDPOINT = (
+    "/api/settlement/statement/v2/w/download/task/create" + KEETA_QUERY_SUFFIX
+)
 #: Shop-id lookup — the V2 form (the non-V2 returns "invalid param").
 KEETA_SHOP_LIST_ENDPOINT = (
     "/api/account/query/getShopListByAccountV2" + KEETA_QUERY_SUFFIX
@@ -1420,6 +1425,24 @@ KEETA_SHOP_LIST_ENDPOINT = (
 _DOWNLOAD_TASK_TYPE_BILLING = 3
 #: taskStatus 30 = ready/completed (a signed downloadUrl is present).
 _TASK_STATUS_READY = 30
+#: The create call's `type` for a per-shop render (the portal's SINGLE_SHOP).
+_RENDER_TYPE_SINGLE_SHOP = 1
+#: Days after a cycle ends at which its bill is re-rendered. Keeta settles a
+#: cycle two days after it ends (21 Sep → 23 Sep, 30 Sep → 2 Oct, 7 Oct → 9 Oct),
+#: so a render from day 3 on carries the settled status; day 10 is one more look
+#: for a cycle Keeta paid late. A cycle whose newest render predates the latest
+#: checkpoint it has passed gets a fresh one.
+_RENDER_CHECKPOINT_DAYS = (3, 10)
+#: How far back cycles are kept fresh — a month and a half covers the month the
+#: accountant is closing plus its last week's settlement.
+_RENDER_LOOKBACK_DAYS = 45
+#: Ceiling on renders requested in one pull (4 shops × 4 cycles); the backlog,
+#: if any, drains over the following nights.
+_MAX_RENDERS_PER_PULL = 16
+#: How long to wait for requested renders to become downloadable (they took
+#: under 10 s live), polling the task list.
+_RENDER_WAIT_SECONDS = 90
+_RENDER_POLL_SECONDS = 10
 #: Last-resort shopIds for this account (customerId 330066) — used only when the
 #: V2 endpoint, sessionStorage, AND the account's own `extras["shop_ids"]` all
 #: come up empty. The account row is the preferred source (threaded in as
@@ -1461,6 +1484,113 @@ async ({ endpoint, payload }) => {
 
 #: The shopId is embedded in a task's name/type as `[1644189187]`.
 _SHOP_ID_IN_TEXT = re.compile(r"\[(\d{6,})\]")
+
+
+def _keeta_cycles(today: date, lookback_days: int) -> list[tuple[date, date]]:
+    """Keeta's settlement cycles (1–7, 8–14, 15–21, 22–end of month) that ended
+    within `lookback_days` of `today` and at least the first render checkpoint
+    ago — the ones whose bill should by now say whether Keeta paid. Oldest
+    first."""
+    first = today - timedelta(days=lookback_days)
+    month = date(first.year, first.month, 1)
+    cycles: list[tuple[date, date]] = []
+    while month <= today:
+        last = _add_months(month, 1) - timedelta(days=1)
+        for start_day, end_day in ((1, 7), (8, 14), (15, 21), (22, last.day)):
+            start = month.replace(day=start_day)
+            end = month.replace(day=end_day)
+            if (
+                end >= first
+                and end + timedelta(days=_RENDER_CHECKPOINT_DAYS[0]) <= today
+            ):
+                cycles.append((start, end))
+        month = _add_months(month, 1)
+    return cycles
+
+
+def _task_period(text: Any) -> tuple[date, date] | None:
+    """A task's `displayTimeText` — `'22 Sep 2026 ~ 30 Sep 2026'`, or a single
+    day `'7 Sep 2026'` — as (start, end); None when it will not parse."""
+    parts = [p.strip() for p in str(text or "").split("~")]
+    days: list[date] = []
+    for part in parts:
+        try:
+            days.append(datetime.strptime(part, "%d %b %Y").date())
+        except ValueError:
+            return None
+    if len(days) == 1:
+        return days[0], days[0]
+    if len(days) == 2:
+        return days[0], days[1]
+    return None
+
+
+def _created_on(task: dict) -> date | None:
+    """The shop-local day Keeta rendered a task (`createTime`, epoch ms)."""
+    try:
+        millis = int(task.get("createTime") or 0)
+    except (TypeError, ValueError):
+        return None
+    if millis <= 0:
+        return None
+    return datetime.fromtimestamp(millis / 1000, _BUSINESS_TZ).date()
+
+
+def _bills_to_render(
+    page_content: Any, shop_ids: list[str], today: date
+) -> list[tuple[str, date, date]]:
+    """The (shop, cycle start, cycle end) bills to ask Keeta to render afresh.
+
+    A bill is rendered once, when it is requested, and its settlement status is
+    frozen there: the 22–30 Sep bills were rendered on 1 Oct, the day before
+    Keeta paid on 2 Oct, and said "Settlement pending" for ever, so 8,488.08 read
+    as owed until somebody clicked Download again (a fresh render said
+    "Settled"). Nobody should have to. A cycle is re-rendered when no render of
+    it exists (22–31 Aug never had one), or when its newest render predates the
+    latest checkpoint (`_RENDER_CHECKPOINT_DAYS`) the cycle has passed. A render
+    made on or after that day stops the requests, so each cycle costs at most
+    one render per checkpoint. Oldest cycle first, capped per pull.
+    """
+    newest: dict[tuple[str, date, date], date] = {}
+    for task in page_content or []:
+        if not isinstance(task, dict) or task.get("taskStatus") != _TASK_STATUS_READY:
+            continue
+        shop = _shop_id_from_text(task.get("taskName"), task.get("displayTypeText"))
+        period = _task_period(task.get("displayTimeText"))
+        created = _created_on(task)
+        if shop is None or period is None or created is None:
+            continue
+        key = (shop, period[0], period[1])
+        if key not in newest or created > newest[key]:
+            newest[key] = created
+
+    wanted: list[tuple[str, date, date]] = []
+    for start, end in _keeta_cycles(today, _RENDER_LOOKBACK_DAYS):
+        due = max(
+            end + timedelta(days=days)
+            for days in _RENDER_CHECKPOINT_DAYS
+            if end + timedelta(days=days) <= today
+        )
+        for shop in shop_ids:
+            rendered = newest.get((shop, start, end))
+            if rendered is None or rendered < due:
+                wanted.append((shop, start, end))
+    return wanted[:_MAX_RENDERS_PER_PULL]
+
+
+def _render_request_body(shop_id: str, start: date, end: date) -> dict:
+    """The create-task body for one shop's billing report over [start, end],
+    the way the portal's Download button builds it: shop-local day bounds in
+    epoch milliseconds."""
+    first = datetime.combine(start, time.min, _BUSINESS_TZ)
+    last = datetime.combine(end, time.max, _BUSINESS_TZ)
+    return {
+        "periodStartDateStamp": int(first.timestamp() * 1000),
+        "periodEndDateStamp": int(last.timestamp() * 1000),
+        "type": _RENDER_TYPE_SINGLE_SHOP,
+        "inputIds": [int(shop_id)],
+        "downloadTaskType": _DOWNLOAD_TASK_TYPE_BILLING,
+    }
 
 
 def _newest_bill_tasks(
@@ -1581,6 +1711,83 @@ async def _download_b64(url: str) -> tuple[str, int]:
     return base64.b64encode(body).decode("ascii"), len(body)
 
 
+async def _request_fresh_renders(
+    page: Any, shop_ids: list[str], notes: list[str]
+) -> int:
+    """Ask Keeta to re-render the bills `_bills_to_render` names, then wait for
+    them to become downloadable. Returns how many were requested. Best-effort:
+    a failure is noted and the pull carries on with the renders that exist."""
+    if not shop_ids:
+        return 0
+    try:
+        listing = await _post_in_page(
+            page,
+            KEETA_DOWNLOAD_TASK_ENDPOINT,
+            {
+                "downloadTaskType": _DOWNLOAD_TASK_TYPE_BILLING,
+                "pageNum": 1,
+                "pageSize": 100,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("keeta finance: render scan list failed")
+        notes.append("render scan list failed")
+        return 0
+    data = listing.get("data") if isinstance(listing, dict) else None
+    content = data.get("pageContent") if isinstance(data, dict) else None
+    wanted = _bills_to_render(content, shop_ids, _today())
+    requested: list[str] = []
+    for shop, start, end in wanted:
+        try:
+            created = await _post_in_page(
+                page,
+                KEETA_DOWNLOAD_TASK_CREATE_ENDPOINT,
+                _render_request_body(shop, start, end),
+            )
+        except Exception:  # noqa: BLE001 — one refused render must not stop the rest
+            logger.exception("keeta finance: render request failed for %s", shop)
+            notes.append(f"render request {shop} {start}–{end} failed")
+            continue
+        view_id = (
+            (created.get("data") or {}).get("taskViewId")
+            if isinstance(created, dict) and created.get("code") == 0
+            else None
+        )
+        if view_id:
+            requested.append(str(view_id))
+            logger.info(
+                "keeta finance: requested a fresh bill for %s %s–%s", shop, start, end
+            )
+        else:
+            notes.append(f"render request {shop} {start}–{end} refused: {created}")
+    if not requested:
+        return 0
+    pending = set(requested)
+    waited = 0
+    while pending and waited < _RENDER_WAIT_SECONDS:
+        await page.wait_for_timeout(_RENDER_POLL_SECONDS * 1000)
+        waited += _RENDER_POLL_SECONDS
+        try:
+            listing = await _post_in_page(
+                page,
+                KEETA_DOWNLOAD_TASK_ENDPOINT,
+                {
+                    "downloadTaskType": _DOWNLOAD_TASK_TYPE_BILLING,
+                    "pageNum": 1,
+                    "pageSize": len(requested) + 10,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        data = listing.get("data") if isinstance(listing, dict) else None
+        for task in (data.get("pageContent") if isinstance(data, dict) else None) or []:
+            if isinstance(task, dict) and task.get("taskStatus") == _TASK_STATUS_READY:
+                pending.discard(str(task.get("taskViewId")))
+    if pending:
+        notes.append(f"{len(pending)} requested bill render(s) not ready yet")
+    return len(requested)
+
+
 async def fetch_keeta_finance(
     context: Any,
     *,
@@ -1680,6 +1887,10 @@ async def fetch_keeta_finance(
         # reports/month + margin; ingest is idempotent, so the only cost of the old
         # behaviour was wasted bandwidth/time, but that time monopolised the daemon.
         weekly_page_size = max(max(months_back, 2) * 5, 10)
+        rendered = await _request_fresh_renders(page, shop_ids, notes)
+        # Fresh renders land at the top of the newest-first list; widen the page
+        # so every one of them is downloaded alongside the usual recent weeks.
+        weekly_page_size += rendered
         try:
             tasks = await _post_in_page(
                 page,
