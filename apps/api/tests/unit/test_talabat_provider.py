@@ -2420,3 +2420,46 @@ async def test_payout_invoice_carries_its_order_compensation_as_refund_lines():
 
     with patch.object(TalabatClient, "_graphql", none_graphql):
         assert (await client._with_refund_charges(session, invoice)).lines == []
+
+
+def test_orders_from_csv_reads_the_sentence_case_headers_of_october_2026():
+    """Talabat re-cased its export on 2026-10-05 ("Order Items" became "Order
+    items", "Online Payment Fee" became "Online payment fee", "Is Subscription
+    Order" became "Is Pro order"). Read by exact key, Karama's delivered
+    AGG-20261007-052 landed with no line and drew no stock. The row below is
+    that order's export as stored in prod."""
+    client = TalabatClient()
+    row = {
+        "Order ID": "3942107524",
+        "Store ID": "793319",
+        "Order status": "Delivered",
+        "Subtotal": "100.00",
+        "Order items": "1 Brookie Cookie Melt (500 grams)",
+        "Payment type": "Online",
+        "Commission": "30.00",
+        "Online payment fee": "1.47",
+        "Marketing fees total": "4.00",
+        "Tax amount": "3.57",
+        "Tax charge": "0.00",
+        "Operational charges": "30.00",
+        "Vendor refunds": "0.00",
+        "Amount owed back to Talabat": "0.00",
+        "Avoidable cancellation fee": "0.00",
+        "Estimated earnings": "34.53",
+        "Payout amount": "34.53",
+        "Is Pro order": "Y",
+        "Order received at": "2026-10-07 19:44",
+        "Delivered at": "2026-10-07 20:44",
+    }
+    order = client._orders_from_csv(_csv_from_rows([row]))[0]
+
+    assert [(i.item_name, i.quantity) for i in order.items] == [
+        ("Brookie Cookie Melt (500 grams)", Decimal("1"))
+    ]
+    assert order.payment_fee == Decimal("1.47")
+    assert order.marketing_fee == Decimal("4.00")
+    assert order.vat_amount == Decimal("3.57")
+    assert order.refund_amount == Decimal("30.00")
+    assert order.customer_is_member is True
+    # The order keeps the export exactly as Talabat headed it.
+    assert "Order items" in order.raw and "Order Items" not in order.raw

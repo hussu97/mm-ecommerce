@@ -551,6 +551,36 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
 
 
+class _CsvRow(dict):
+    """A Report Builder CSV row read by column name, whatever the header's case.
+
+    Talabat re-cased its export on 2026-10-05: "Order Items" became "Order
+    items", "Online Payment Fee" became "Online payment fee", and so on through
+    twenty columns. Every exact-key read turned into None without an error. The
+    export still parsed and orders still landed, but none of them had line
+    items. At Karama, where nothing but this CSV supplies Talabat's lines, four
+    delivered orders took no stock off the shelf. The fee, VAT and refund
+    columns went blank the same way.
+
+    The stored keys are left as Talabat sent them, so `dict(row)` (the `raw`
+    kept on the order) is still the export verbatim; only lookups fold case.
+    """
+
+    def __init__(self, row: dict[str, Any]) -> None:
+        super().__init__(row)
+        self._folded = {
+            key.strip().casefold(): value
+            for key, value in row.items()
+            if isinstance(key, str)
+        }
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._folded.get(key.strip().casefold(), default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._folded[key.strip().casefold()]
+
+
 def is_return_candidate_row(row: dict) -> bool:
     """Whether a Report Builder CSV row reads as a box coming back.
 
@@ -2038,7 +2068,8 @@ class TalabatClient(BaseAggregatorClient):
         """
         reader = csv.DictReader(io.StringIO(csv_text))
         orders: list[StandardOrder] = []
-        for row in reader:
+        for csv_row in reader:
+            row = _CsvRow(csv_row)
             external = (row.get("Order ID") or "").strip()
             if not external:
                 continue
@@ -2151,8 +2182,13 @@ class TalabatClient(BaseAggregatorClient):
                     # delivered "Y" orders Talabat charged its 4 AED "Loyalty
                     # Charges - Pro Delivery Fee" (the 2 others were cash orders it
                     # waived), and on 0 of 462 "N" orders. Anything else is unknown.
+                    # The 2026-10-05 export renamed it "Is Pro order", and it
+                    # still drives the fee: 127 of 127 billed, delivered "Y"
+                    # rows to 2026-10-10 were charged the 4 AED, 0 of 82 "N".
                     customer_is_member={"Y": True, "N": False}.get(
-                        (row.get("Is Subscription Order") or "").strip().upper()
+                        (_first(row, "Is Subscription Order", "Is Pro order") or "")
+                        .strip()
+                        .upper()
                     ),
                     items=self._items_from_row(row, external, subtotal),
                     raw=dict(row),
