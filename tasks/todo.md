@@ -1,3 +1,38 @@
+# September aggregator GMV audit (P&L 161,090 vs accountant 161,142)
+
+Owner ask (2026-10-10): deep-audit Sept aggregator GMV (incl. VAT) less refunds;
+find who is wrong and fix every issue found.
+
+Facts (prod, read-only): P&L reproduces 161,090.00 exactly (GMV 161,320 − refunds
+230). Noon/Keeta/Careem/Deliveroo reconcile to their own statements to the fils;
+Talabat to its payouts per chain/period except 12–14 Sep (15.04 short).
+
+- [x] Reproduce the P&L figure from prod; reconcile each channel to statements/payouts.
+- [x] Lock-key collisions: auto-deliver ≡ scheduler-leader (480A) so the stale
+      `out_for_delivery` safety net has never run; sales ≡ daily email (4805),
+      finance ≡ business-day (4806), catalog ≡ abandoned checkout (480B).
+      Unique keys + a test that scans every `*LOCK_KEY` literal.
+- [x] Noon/Deliveroo settled cancellations ignored by `_cancellation_net`:
+      AGG-20260924-009 (noon paid +28.66) is in no P&L line; AGG-20260930-054
+      (Deliveroo charged −17.90) books −0.85. Trust the figure once the order is
+      on a statement.
+- [x] Talabat statements never arrive by the nightly finance sweep (1-day window;
+      Talabat back-dates statements). September's detailed statement and the
+      23–30 Sep payouts are missing. Widen Talabat's finance window.
+- [ ] After deploy: confirm auto-deliver books AGG-20260928 (noon FG9SNNLIQ25AXAA),
+      migration 313 writes 9 rows, and the nightly finance pass lands Talabat's
+      September statement (or run a Talabat finance range for 1–30 Sep by hand).
+
+## Review
+- Bridge: P&L 161,090.00 (GMV 161,320 − refunds 230). + 40.00 noon
+  FG9ONNBM32FWXVA, a sale on noon's statement, now booked as 28.66 compensation
+  (not GMV) = 161,130.00. Accountant 161,142.00: 12.00 unexplained without their
+  per-channel sheet. Likely a Talabat in-transit compensation of 12.00 (3863208103
+  on 1 Sep or 3914253124 on 25 Sep).
+- Talabat 12–14 Sep paid 15.04 less than our order data implies. Wait for the
+  September detailed statement to name the order.
+- 4,539 unit + P&L integration tests pass; migration 313 up/down/up on Postgres 16.
+
 # Third-party courier cost: entered by hand, never the quote
 
 Owner ask (2026-10-05): MM-20261003-002 went out with a third party and the P&L

@@ -16,6 +16,7 @@ what you are about to do.
 
 | When | Lesson |
 |---|---|
+| 2026-10-10 | [An advisory lock key is an identity, not a counter: check it is free before taking it](#2026-10-10-an-advisory-lock-key-is-an-identity-not-a-counter-check-it-is-free-before-taking-it) |
 | 2026-09-05 | [When the user asks for a worktree, create it before the first implementation edit](#2026-09-05-when-the-user-asks-for-a-worktree-create-it-before-the-first-implementation-edit) |
 | 2026-08-18 | [A fix that needs somebody to run it is not a fix](#2026-08-18-a-fix-that-needs-somebody-to-run-it-is-not-a-fix) |
 | 2026-08-18 | [Counting occurrences in rendered HTML counts the framework, not the content](#2026-08-18-counting-occurrences-in-rendered-html-counts-the-framework-not-the-content) |
@@ -1506,3 +1507,21 @@ adjustment for that branch and state it. Only consumption that happened after
 it counts; anything dated before it but posted after (a backfill, a late post)
 is the error. When asked to fix data, fix data with one-time scripts. Propose
 code changes and wait for a yes; don't bundle them in.
+
+
+### [2026-10-10] An advisory lock key is an identity, not a counter: check it is free before taking it
+
+The aggregator auto-deliver safety net was given `0x…480A` with a comment
+saying "mmBATCH + 10". That key already belonged to the scheduler leader,
+which holds it for the life of the process. Every hourly auto-deliver pass
+found the lock taken, read that as "somebody else is sweeping" and returned
+0. It booked no orders at all, and the noon order it existed for sat in
+`out_for_delivery` for twelve days. Three more pairs had collided the same way.
+Each key was the next number after whatever its author looked at, in a
+namespace spread over twenty files.
+
+**Rule:** a try-lock that fails looks exactly like a job with nothing to do.
+Before choosing a key, grep the whole of `app/` for it.
+`test_every_advisory_lock_key_is_unique` now does that check. When a safety
+net has never logged doing anything, check that it can get its lock before
+you trust that there was nothing to do.
