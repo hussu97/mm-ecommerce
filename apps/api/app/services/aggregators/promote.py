@@ -800,6 +800,17 @@ def _option_fold(name: str | None) -> str:
     )
 
 
+#: What the shop's own words mean when a channel's listing shortens a product's
+#: name: folded channel spelling → folded MM option name. Deliveroo lists the
+#: mix-box pick as "Red Velvet Cookie"; the shop's red velvet cookie IS its "Red
+#: Velvet and Nutella Cookie" (owner, 2026-10-10), and unresolved the pick
+#: consumed no stock (AGG-20260904-047). Tried last, and only among the options
+#: the line's own product offers, like the fold.
+_OPTION_ALIASES: dict[str, str] = {
+    "red velvet cookie": "red velvet and nutella cookie",
+}
+
+
 def _pick_product_option(options: list[tuple[Any, str]], name: str | None) -> Any:
     """The one option among a product's own `(id, name)` options that `name` means.
 
@@ -823,7 +834,13 @@ def _pick_product_option(options: list[tuple[Any, str]], name: str | None) -> An
         return next(iter(exact)) if len(exact) == 1 else None
     fold = _option_fold(name)
     folded = {oid for oid, opt in options if _option_fold(opt) == fold}
-    return next(iter(folded)) if len(folded) == 1 else None
+    if folded:
+        return next(iter(folded)) if len(folded) == 1 else None
+    alias = _OPTION_ALIASES.get(fold)
+    if alias is None:
+        return None
+    aliased = {oid for oid, opt in options if _option_fold(opt) == _option_fold(alias)}
+    return next(iter(aliased)) if len(aliased) == 1 else None
 
 
 async def _build_modifier_snapshot(
@@ -1195,6 +1212,14 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
                 order.aggregator_cancel_reason = (
                     order.aggregator_cancel_reason or _REFUNDED_AFTER_DELIVERY
                 )
+                # The customer had the food before the refund, so it left the
+                # shelf. An order first seen after the refund was otherwise
+                # cancelled straight from `created`: it never passed `confirmed`,
+                # where consumption posts, and drew no stock (AGG-20261005-070,
+                # AGG-20261008-080, AGG-20261010-043). Climb it to delivered first,
+                # the same rungs an order seen before its refund has already
+                # taken, so both arrive at "delivered, then cancelled".
+                await _climb_ladder(db, order, agg, OrderStatusEnum.DELIVERED)
             with acting_as(StatusSourceEnum.AGGREGATOR, at=_rung_at(agg, target)):
                 await order_lifecycle.transition(
                     db,
@@ -1222,6 +1247,13 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
     else:
         _set_cancellation_net(order, None)
 
+    await _climb_ladder(db, order, agg, target)
+
+
+async def _climb_ladder(
+    db: AsyncSession, order: Order, agg: AggregatorOrder, target: OrderStatusEnum
+) -> None:
+    """Advance the order one rung at a time up to `target`, never back down."""
     if target not in _LADDER:
         return
     target_idx = _LADDER.index(target)

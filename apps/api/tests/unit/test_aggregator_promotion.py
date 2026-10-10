@@ -1829,6 +1829,33 @@ async def test_a_full_refund_after_delivery_cancels_the_delivered_order(monkeypa
     assert order.aggregator_cancel_reason == "Refunded after delivery"
 
 
+async def test_a_full_refund_first_seen_after_delivery_climbs_before_cancelling(
+    monkeypatch,
+):
+    """Noon refunded Karama's AGG-20261005-070 after delivering it, and the first
+    sweep to see the order saw the refund. It went `created → cancelled`, never
+    passed `confirmed` (where consumption posts), and the cookie melt the
+    customer ate stayed on the shelf in the ledger. It has to reach delivered
+    first, as it would have if a sweep had caught it before the refund."""
+    rungs = await _record_rungs(monkeypatch)
+    order = _mm_order(status=OrderStatusEnum.CREATED, aggregator_cancel_reason=None)
+
+    await promote._drive_status(_FakeDB(), order, _dispute())
+
+    assert rungs == [*promote._LADDER[1:], OrderStatusEnum.CANCELLED]
+    assert order.status == OrderStatusEnum.CANCELLED
+    assert order.aggregator_cancel_reason == "Refunded after delivery"
+
+
+async def test_an_ordinary_cancellation_of_a_new_order_does_not_climb(monkeypatch):
+    rungs = await _record_rungs(monkeypatch)
+    order = _mm_order(status=OrderStatusEnum.CREATED, aggregator_cancel_reason=None)
+
+    await promote._drive_status(_FakeDB(), order, _dispute(delivered_at=None))
+
+    assert rungs == [OrderStatusEnum.CANCELLED]
+
+
 async def test_a_partial_refund_after_delivery_keeps_the_order_delivered(monkeypatch):
     rungs = await _record_rungs(monkeypatch)
     order = _mm_order(status=OrderStatusEnum.DELIVERED, aggregator_cancel_reason=None)
@@ -2169,6 +2196,27 @@ def test_pick_product_option_folds_plural_and_abbreviated_picks():
     assert pick(sizes, "3 Pcs") == three
     assert pick(sizes, "6 pc") == six
     assert pick(sizes, "9 Pcs") is None
+
+
+def test_red_velvet_cookie_is_the_red_velvet_and_nutella_cookie():
+    """Deliveroo lists the mix-box pick as "Red Velvet Cookie"; the shop's red
+    velvet cookie is its "Red Velvet and Nutella Cookie" (owner, 2026-10-10).
+    Unmatched, AGG-20260904-047's pick consumed no stock."""
+    cookies_cream, red_velvet = uuid.uuid4(), uuid.uuid4()
+    mix_box = [
+        (cookies_cream, "Cookies and Cream Cookie"),
+        (red_velvet, "Red Velvet and Nutella Cookie"),
+    ]
+    pick = promote._pick_product_option
+    assert pick(mix_box, "Red Velvet Cookie") == red_velvet
+    assert pick(mix_box, "Red Velvet Cookies") == red_velvet
+    # Only among the box's own options: a product without it stays unmatched.
+    assert (
+        pick([(cookies_cream, "Cookies and Cream Cookie")], "Red Velvet Cookie") is None
+    )
+    # And a box that really offers a plain "Red Velvet Cookie" keeps it.
+    plain = uuid.uuid4()
+    assert pick([*mix_box, (plain, "Red Velvet Cookie")], "Red Velvet Cookie") == plain
 
 
 def test_pick_product_option_exact_wins_and_fold_ambiguity_is_refused():
