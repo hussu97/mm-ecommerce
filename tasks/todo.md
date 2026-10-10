@@ -29,6 +29,16 @@ Talabat to its payouts per chain/period except 12–14 Sep (15.04 short).
   (not GMV) = 161,130.00. Accountant 161,142.00: 12.00 unexplained without their
   per-channel sheet. Likely a Talabat in-transit compensation of 12.00 (3863208103
   on 1 Sep or 3914253124 on 25 Sep).
+- Accountant's sheet (Online Sept Sale 26): 161,142 = Talabat 75,467 + Noon 30,085
+  + Careem 6,935 + Keeta 41,050 + Deliveroo 7,605. Against ours: Talabat +147
+  (counts the 5 compensated cancellations: 1,207+5 = 1,212 orders, 168.60; 21.60
+  left for Talabat's Sept statement), Noon −150 (noon statement sales: net of the
+  190 shop-funded discounts, plus the 40 cancelled-but-billed order), Keeta +55
+  (likely 5167841430845412, gross 55, Keeta-compensated), Careem/Deliveroo exact.
+- Their commission/received: Careem and Deliveroo commissions look swapped
+  (Careem fees 2,181.94 ex VAT; Deliveroo 2,334.60 ex VAT); Deliveroo received
+  5,423 vs 5,153.54 on its statements. Keeta 22–30 Sep payout (8,488.08) shows
+  `pending` because the bill is never re-read after its first download.
 - Talabat 12–14 Sep paid 15.04 less than our order data implies. Wait for the
   September detailed statement to name the order.
 - 4,539 unit + P&L integration tests pass; migration 313 up/down/up on Postgres 16.
