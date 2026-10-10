@@ -73,8 +73,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["run_forever", "sweep_once"]
 
-#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 11.
-_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_480B
+#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 0x14
+#: (was + 11, the catalog sync's key, so the two skipped each other).
+_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4814
 
 #: The earliest abandonment this sweep will ever act on — midnight in Dubai on
 #: the day the basket reminder shipped. Baskets and orders older than this are

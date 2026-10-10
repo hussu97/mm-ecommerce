@@ -61,8 +61,9 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
-#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 5.
-_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4805
+#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 0x12
+#: (was + 5, the aggregator sales sweep's key, so the two skipped each other).
+_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4812
 
 #: How long after the last branch's configured close the mail may go out. The
 #: report counts *delivered* trade, so a rider still out at close — a website or

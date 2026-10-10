@@ -2615,9 +2615,10 @@ async def sweep_reconcile_once() -> int:
         return touched
 
 
-#: "mmBATCH" + 10 (after sales/finance/promote/reconcile/range) — the stale-order
-#: safety net serialises on its own lock like the other sweeps.
-_AUTODELIVER_LOCK_KEY = 0x6D6D_4241_5443_480A
+#: The stale-order safety net serialises on its own lock like the other sweeps.
+#: "mmBATCH" + 0x11. It was + 10 — the scheduler leader's key — so the leader,
+#: holding it for life on another connection, kept this sweep from ever running.
+_AUTODELIVER_LOCK_KEY = 0x6D6D_4241_5443_4811
 
 
 async def sweep_autodeliver_stale_once() -> int:

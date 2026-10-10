@@ -31,8 +31,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEZONE = "Asia/Dubai"
 
-#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 6.
-_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4806
+#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 0x13
+#: (was + 6, the aggregator finance sweep's key, so the two skipped each other).
+_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4813
 
 #: Hourly. A stranded day being closed an hour late costs nothing, and the sweep
 #: is a read plus a few writes, not worth running by the minute.

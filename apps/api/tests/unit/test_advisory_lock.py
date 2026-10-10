@@ -207,3 +207,36 @@ def test_no_sweep_takes_the_lock_through_a_session():
         assert "advisory_lock.held" in source, (
             f"{module.__name__} no longer serialises its sweep at all"
         )
+
+
+# ── the key namespace ─────────────────────────────────────────────────────────
+
+
+def test_every_advisory_lock_key_is_unique():
+    """
+    One flat 64-bit namespace, so two jobs sharing a key silently exclude each
+    other: a try-lock reads the other job's hold as "somebody else is sweeping"
+    and returns quietly.
+
+    That is how the aggregator auto-deliver safety net never ran once. It was
+    given the scheduler leader's key (…480A), the leader holds that key for the
+    life of the process on its own connection, and every hourly pass found it
+    taken — leaving AGG-20260928-xxx (noon FG9SNNLIQ25AXAA) in
+    `out_for_delivery` for twelve days. Three more pairs had collided the same
+    way (sales sweep / daily email, finance sweep / business-day rollover,
+    catalog sync / abandoned checkout).
+    """
+    import re
+    from collections import defaultdict
+    from pathlib import Path
+
+    app_dir = Path(advisory_lock.__file__).resolve().parents[1]
+    pattern = re.compile(r"^(\w*LOCK_KEY)\s*=\s*(0x[0-9A-Fa-f_]+)\s*$", re.M)
+    owners: dict[int, list[str]] = defaultdict(list)
+    for path in app_dir.rglob("*.py"):
+        for name, literal in pattern.findall(path.read_text()):
+            owners[int(literal, 16)].append(f"{path.relative_to(app_dir)}:{name}")
+
+    assert len(owners) > 15, "the scan found too few keys — has the pattern drifted?"
+    shared = {hex(k): v for k, v in owners.items() if len(v) > 1}
+    assert not shared, f"advisory lock keys shared by more than one job: {shared}"
