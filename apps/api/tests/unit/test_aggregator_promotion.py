@@ -443,10 +443,45 @@ def test_cancellation_net_trusts_only_what_the_marketplace_committed_to():
         )
         is None
     )
-    # Any other channel: unknown, as before.
+    # Noon / Deliveroo: unknown until the order is on a statement — noon's
+    # pre-statement net is the OMS's un-billed `orderRestaurantToInvoice`.
     assert (
         promote._cancellation_net(
-            _agg(channel="noon", net_payable=Decimal("10")), provider_paid=False
+            _agg(channel="noon", status="canceled", net_payable=Decimal("40")),
+            provider_paid=False,
+        )
+        is None
+    )
+    # On the statement, its net, either sign: noon billed FG9ONNBM32FWXVA as a
+    # 40.00 sale and paid 28.66; Deliveroo charged 17.90 on a cancellation.
+    assert promote._cancellation_net(
+        _agg(
+            channel="noon",
+            status="canceled",
+            net_payable=Decimal("28.66"),
+            statement_id="NOON_R_R596728064_AED_20260930",
+        ),
+        provider_paid=False,
+    ) == Decimal("28.66")
+    assert promote._cancellation_net(
+        _agg(
+            channel="deliveroo",
+            status="cancelled",
+            net_payable=Decimal("-17.90"),
+            statement_id="81601411",
+        ),
+        provider_paid=False,
+    ) == Decimal("-17.90")
+    # Careem: unknown, as before.
+    assert (
+        promote._cancellation_net(
+            _agg(
+                channel="careem",
+                status="cancelled",
+                net_payable=Decimal("10"),
+                statement_id="S1",
+            ),
+            provider_paid=False,
         )
         is None
     )

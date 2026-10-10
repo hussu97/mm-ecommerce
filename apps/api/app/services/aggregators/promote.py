@@ -379,6 +379,15 @@ def _cancellation_net(
       provisional net that is NOT paid (a merchant cancellation shows +23.25 and
       settles at nothing or less), so it stays unknown until billed.
 
+    * **Noon, Deliveroo** — the statement's net once the order is on one
+      (`statement_id`). Before that, noon's `net_payable` is the OMS's
+      `orderRestaurantToInvoice`, a pre-fee figure nobody has billed, so it
+      stays unknown. Leaving these out entirely dropped what the statements
+      said: noon paid +28.66 on FG9ONNBM32FWXVA (cancelled in its OMS, billed as
+      a 40.00 sale on its 30 Sep statement) and the P&L booked nothing at all;
+      Deliveroo charged −17.90 on a cancellation the P&L booked at −0.85,
+      because its `cancelled_order_charge` lands on no fee column.
+
     Keeta, until its bill lands, also books a customer-service cancellation the
     store was responsible for at Keeta's provisional earnings — the figure its
     own order page shows — flagged provisional (`_cancellation_provisional`) so
@@ -387,7 +396,7 @@ def _cancellation_net(
     has arrived without it** (`billed_without`) — Keeta left it off, so it paid
     nothing (5097840598108149, absent from its 1–7 Sep bill).
 
-    Other channels: unknown, as before.
+    Careem: unknown, as before.
     """
     if agg.channel == "keeta" and billed_without and not agg.statement_id:
         return Decimal("0.00")
@@ -401,6 +410,8 @@ def _cancellation_net(
             return money(net)
         if _keeta_desk_cancellation(agg.raw or {}):
             return money(net)
+    if agg.channel in ("noon", "deliveroo") and getattr(agg, "statement_id", None):
+        return money(net)
     return None
 
 
