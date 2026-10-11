@@ -302,7 +302,7 @@ cutover() {
   trap _restart_aggregator_worker EXIT
   _load_slots
   echo "==> Current live slots: api=${API_LIVE} pos-api=${POS_LIVE}"
-  # F-OPS-14/15: pos-api first. It is the smaller pair (256m/2+3 connections
+  # F-OPS-14/15: pos-api first. It is the smaller pair (384m/2+3 connections
   # vs the storefront's 512m/5+8), so its brief both-colours-up overlap adds
   # less to the box than the storefront's would — cutting it over first keeps
   # the storefront's own overlap (the bigger of the two, and the one that

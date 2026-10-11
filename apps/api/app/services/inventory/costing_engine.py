@@ -12,7 +12,9 @@ two ways in:
 * The same :meth:`CostingEngine.apply` over one new posting, starting from the
   current projection instead of from nothing — the **fast path**
   (``fast=True``). It handles the everyday cases — any issue (a sale, a
-  production draw), a priced receipt with nothing waiting for a price — and
+  production draw), a priced receipt with nothing waiting for a price, a batch
+  made from stock still waiting on a price (booked at the estimate, its
+  warehouse marked for the minute sweep) — and
   raises :class:`NeedsReplay` for anything that can change a cost already
   booked (a receipt that prices waiting stock, a void, a count overage, a cost
   adjustment). Known costs always match a replay exactly; the one thing the fast
@@ -635,6 +637,9 @@ class CostingEngine:
         self.external_sends = external_sends or {}
         self.external_group_inputs = external_group_inputs or {}
         self.fast = fast
+        #: The fast path booked a cost from an estimate that a replay should
+        #: refresh soon, not only at the nightly one (fast path only).
+        self.needs_refresh = False
         #: {made item: [(ingredient, storage qty per storage unit made), …]} —
         #: its current recipe, for estimating made stock no batch accounts for.
         self.recipes = recipes or {}
@@ -983,7 +988,12 @@ class CostingEngine:
         if not draws and not external and restated is None:
             return None
         if self.fast and any(provisional for _, _, provisional in external or []):
-            raise NeedsReplay("batch made from stock still waiting on a price")
+            # Booked at its inputs' estimate and flagged provisional, like every
+            # other estimate the fast path makes; the poster marks the warehouse
+            # so the estate sweep re-costs it within the minute. Replaying the
+            # whole warehouse inline instead held a till's "Produced" for 16-27 s
+            # (19k lines) and it timed out as "No connection" while it committed.
+            self.needs_refresh = True
         batch = self.batches.get(group)
         if batch is None:
             batch = Derived(line.line_id)

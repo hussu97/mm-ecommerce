@@ -912,4 +912,6 @@ async def cost_posting(
             line.line_id: result.projection.line_costs[line.line_id] for line in lines
         }
     await _write_fast(db, projection, levels)
+    if engine.needs_refresh:
+        await _mark_dirty(db, lines[0].warehouse_id)
     return {line.line_id: projection.line_costs[line.line_id] for line in lines}

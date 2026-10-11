@@ -1243,6 +1243,55 @@ def test_fast_path_refuses_a_production_restatement():
         engine.apply(restatement)
 
 
+def _fast_bake(ledger: Ledger, line: LedgerLine, *items) -> CostingEngine:
+    before = replay(ledger, ledger.lines[:-1])
+    return CostingEngine(
+        cutover_sequence=None,
+        reversed_transactions=ledger.reversed(),
+        po_prices=ledger.po_prices(),
+        fast=True,
+        seeds=seeds_from(before, [(item, WH) for item in items]),
+        external_group_inputs=external_groups(before, ledger, line),
+    )
+
+
+def test_fast_path_books_a_batch_from_unpriced_stock_at_an_estimate():
+    """A till's "Produced" from an ingredient counted in but never priced must
+    not replay the warehouse inline (16-27 s at Sharjah, timing the till out):
+    it is booked at the estimate, flagged, and left for the sweep to refresh."""
+    flour, cake, group = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("purchasing", "100", "0.5", item=flour, po=True)
+    ledger.add("consumption_from_production", "-100", item=flour)
+    # Counted in with no PO: provisional, estimated at the last price (0.5).
+    ledger.add("inventory_count", "300", item=flour)
+    ledger.add("consumption_from_production", "-100", item=flour, group=group)
+    batch = ledger.add("production", "10", item=cake, group=group)
+    engine = _fast_bake(ledger, batch, cake)
+    engine.apply(batch)
+    fast = engine.project()
+    full = replay(ledger)
+    cost = fast.line_costs[batch.line_id]
+    assert cost.is_provisional
+    assert engine.needs_refresh
+    assert cost.total_cost == full.line_costs[batch.line_id].total_cost == D("50")
+    assert fast.levels[(cake, WH)].quantity == full.levels[(cake, WH)].quantity
+
+
+def test_fast_path_batch_from_priced_stock_needs_no_refresh():
+    flour, cake, group = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("purchasing", "500", "0.5", item=flour, po=True)
+    ledger.add("consumption_from_production", "-100", item=flour, group=group)
+    batch = ledger.add("production", "10", item=cake, group=group)
+    engine = _fast_bake(ledger, batch, cake)
+    engine.apply(batch)
+    cost = engine.project().line_costs[batch.line_id]
+    assert not cost.is_provisional
+    assert not engine.needs_refresh
+    assert cost.total_cost == D("50")
+
+
 @pytest.mark.parametrize("seed", range(30))
 def test_invariant_holds_on_random_ledgers_with_reversals(seed):
     rng = random.Random(1000 + seed)

@@ -594,8 +594,12 @@ services:
           # Deliberately tighter than the storefront API: this VM is an
           # e2-small and the register serves a handful of terminals, not the
           # public. A cap Postgres can survive matters more than headroom the
-          # till will never use.
-          memory: 256m
+          # till will never use. Was 256m: a posting that falls off the FIFO
+          # fast path replays its warehouse in-process (19k lines at Sharjah),
+          # and at 256m that hit the cap 40k times in a day and swapped, so a
+          # 3 s replay took 16-27 s and the till timed out (2026-10-11). The
+          # register idles at ~210m resident; 384m leaves the host ~470m free.
+          memory: 384m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: pos.meltingmomentscakes.com", "http://localhost:8000/ping"]
       interval: 10s
@@ -672,7 +676,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256m
+          # Same as pos-api (see there).
+          memory: 384m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: pos.meltingmomentscakes.com", "http://localhost:8000/ping"]
       interval: 10s
