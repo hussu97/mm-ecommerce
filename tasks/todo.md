@@ -192,3 +192,27 @@ Replace the "single dominant tuple per section" layout with per-signature column
 - [ ] Add guarded Google Maps geocoding for address-bearing aggregator orders that lack coordinates; never retry normal channel rows that already have coordinates and accept failed/out-of-UAE results without failing the pull.
 - [ ] Add focused API/service/UI tests, regenerate OpenAPI contracts, run linters and relevant tests.
 - [ ] Commit the completed feature as Hussain Abbasi.
+
+# DSO + Karama stock audit, close of 2026-10-10
+
+Baselines: DSO CNT-007539 (2026-10-03 03:57), Karama CNT-007693 (2026-10-03 10:51).
+Every delivered order since then draws stock; box picks resolve correctly.
+
+## Data fixes (one-time scripts)
+- 4 Karama Talabat orders filed with no lines (re-cased CSV headers, fixed in cf85f09):
+  lines written, consumption re-posted at revision 2.
+- 3 Noon orders refunded after delivery (cancelled from `created`, never consumed):
+  consumption posted at the order's own time.
+
+## Counts posted (bulk stock audit, admin@)
+- CNT-009071 DSO: 27 counted, 5 adjusted. Fudge +3 / Eggless -3 = TRF-008333 sent the
+  wrong SKU; Ferrero -3 = TRR-008877's 3 Ferrero not on the shelf; Nutella/Brookie melt
+  small +1/-1.
+- CNT-009072 Karama: 39 counted, 20 adjusted. Sheet's "Tin" = Big/500 g (owner
+  confirmed); "Red velvet cookies" = Red Velvet and Nutella Cookie. Unsold desserts
+  and slices binned with no waste entry; cookie-melt sizes mixed; small bags +42.
+
+## Review
+On-hand equals the staff sheets on all 66 lines after posting. Open, proposed only:
+Karama packaging recipes overdraw small bags (56 drawn vs ~14 used); DSO packaging
+has never been counted (Box of 3 -78, small bags -275).
