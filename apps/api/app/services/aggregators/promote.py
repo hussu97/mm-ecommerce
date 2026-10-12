@@ -85,7 +85,12 @@ from app.services.aggregators import (
 from app.services.aggregators.catalog_diff import normalize_name
 from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
-from app.services.orders import order_fees, order_lifecycle, tax_identity_service
+from app.services.orders import (
+    order_fees,
+    order_lifecycle,
+    order_numbers,
+    tax_identity_service,
+)
 from app.services.orders.order_pricing import VAT_RATE
 from app.services.pos import pos_order_service, pos_pricing
 
@@ -1346,8 +1351,7 @@ async def _build_order(
         legal_entity_id=entity.id if entity is not None else None,
         **_money_fields(agg, vat_registered=entity_registered),
     )
-    db.add(order)
-    await db.flush()
+    await order_numbers.add_with_fresh_number(db, order, _order_number)
     unmapped = await _add_lines(db, order, agg)
     if unmapped:
         logger.info(

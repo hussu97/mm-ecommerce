@@ -9,7 +9,7 @@ lifecycle ladder, the write-back gate, and the loop's change detector.
 from __future__ import annotations
 
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -128,6 +128,7 @@ async def test_a_line_priced_only_on_a_modifier_gets_a_nonzero_total():
     db.add = added.append
     db.flush = AsyncMock()
     db.execute = AsyncMock()
+    db.begin_nested = nullcontext
     # No promotion gap-fill to adopt — this is a fresh create.
     db.scalar = AsyncMock(return_value=None)
 
@@ -507,6 +508,16 @@ def test_a_long_external_id_falls_back_to_the_grubops_sequence():
     # sequence is what the console shows the counter.
     info = {"orderSequenceNumber": {"createdSequence": "15020"}}
     assert g._driver_code({}, "4997841098410262", info) == "15020"
+
+
+def test_talabat_without_a_short_code_prints_the_last_four_not_the_sequence():
+    # 2026-10-12: GrubTech stopped passing Talabat's short code. The rider app
+    # shows the order id's last four ("6020"); the GrubOps sequence ("18820")
+    # appears nowhere the rider can see, so it must never print for Talabat,
+    # however soon after the order GrubTech assigns it.
+    info = {"orderSequenceNumber": {"createdSequence": "18820"}}
+    assert g._driver_code({}, "3953416020", info, channel="Talabat") == "6020"
+    assert g._driver_code({}, "3953416020", {}, channel="Talabat") == "6020"
 
 
 def test_the_driver_code_is_never_the_long_id_when_a_short_one_exists():

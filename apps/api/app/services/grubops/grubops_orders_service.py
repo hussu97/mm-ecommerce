@@ -55,7 +55,12 @@ from app.models.order_status_event import (
 from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
 from app.services.aggregators import reconcile
-from app.services.orders import order_fees, order_lifecycle, tax_identity_service
+from app.services.orders import (
+    order_fees,
+    order_lifecycle,
+    order_numbers,
+    tax_identity_service,
+)
 from app.services.providers.grubops_provider import provider
 
 logger = logging.getLogger(__name__)
@@ -184,6 +189,11 @@ def _num(value: Any, default: str = "0") -> Decimal:
 _SHORT_CODE_RE = re.compile(r"short.?code[:\s]+(\d{3,6})", re.IGNORECASE)
 
 
+#: Channels whose rider app shows the order id's last four, not the GrubOps
+#: sequence — see `_driver_code`.
+_LAST_FOUR_CHANNELS = ("keeta", "talabat")
+
+
 def _driver_code(
     header: dict, external_id: str | None, info: dict, *, channel: str | None = None
 ) -> str | None:
@@ -199,11 +209,17 @@ def _driver_code(
        for a Careem order whose own id is a long machine string;
     4. the last four of the external id.
 
-    **Keeta is the exception to (3):** its driver app shows the last four of the
-    order id (the "#2109" the rider reads), not the GrubOps counter sequence, so
-    for Keeta we skip the sequence and go straight to the last four — otherwise the
-    ticket prints a number (the GrubOps "16015") the driver never sees and cannot
-    match. `external_reference` always keeps the full marketplace id regardless.
+    **Keeta and Talabat are the exceptions to (3):** their rider apps show the
+    last four of the order id (Keeta's "#2109", Talabat's big "6020"), never the
+    GrubOps counter sequence, so for them we skip the sequence and go straight to
+    the last four — otherwise the ticket prints a number (the GrubOps "16015") the
+    driver never sees and cannot match. Talabat used to reach (1) every time; on
+    2026-10-12 GrubTech stopped passing its short code in the instructions, and
+    the sequence — which GrubTech assigns a few seconds after the order lands —
+    then won or lost against the last four depending on how fast we ingested:
+    AGG-20261012-047 printed "18820" because its first write failed and the retry
+    came after the sequence existed. `external_reference` always keeps the full
+    marketplace id regardless.
     """
     instructions = header.get("instructions") or ""
     match = _SHORT_CODE_RE.search(instructions)
@@ -212,7 +228,7 @@ def _driver_code(
     ext = str(external_id).strip() if external_id else ""
     if ext and ext.isdigit() and len(ext) <= 6:
         return ext
-    if "keeta" not in (channel or "").casefold():
+    if not any(c in (channel or "").casefold() for c in _LAST_FOUR_CHANNELS):
         seq = (info.get("orderSequenceNumber") or {}).get("createdSequence")
         if seq:
             return str(seq)
@@ -1071,8 +1087,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # history and "created" sorts line up with the aggregator timeline.
         created_at=_placed_at(info) or utcnow(),
     )
-    db.add(order)
-    await db.flush()
+    await order_numbers.add_with_fresh_number(db, order, _generate_order_number)
 
     # Onto the branch's register as a waiting order, then ring the doorbell —
     # the same pair a published website order gets, so the iPad alarms and the
