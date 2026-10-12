@@ -160,6 +160,63 @@ async def test_a_line_priced_only_on_a_modifier_gets_a_nonzero_total():
     assert items["Plain Box"].total_price == Decimal("100.00")
 
 
+def test_a_line_whose_grubops_id_maps_to_nothing_resolves_by_its_external_id():
+    # 2026-10-12: GrubTech began sending each modifier's menu-entry id in
+    # `modifierId`, which no map row knows, so every box pick consumed no stock.
+    # The line's `externalId` is still our own option uuid; it is the fallback,
+    # and an approved map row still wins when both resolve.
+    import uuid
+
+    box, nutella, brookie, mapped = (uuid.uuid4() for _ in range(4))
+    groups = g._group_lines(
+        [
+            {
+                "type": "ITEM",
+                "name": "Mix Cookies Box of 3",
+                "recipeId": "R-new",
+                "externalId": str(box),
+                "unitPrice": 45,
+                "quantity": 1,
+            },
+            {
+                "type": "MODIFIER",
+                "name": "Nutella Cookie",
+                "modifierId": "MENU-1",
+                "externalId": str(nutella),
+                "unitPrice": 0,
+                "quantity": 1,
+            },
+            {
+                "type": "MODIFIER",
+                "name": "Brookie",
+                "modifierId": "M-old",
+                "externalId": str(brookie),
+                "unitPrice": 0,
+                "quantity": 1,
+            },
+        ]
+    )
+    products = {str(box): box}
+    options = {
+        str(nutella): {"modifier_option_id": nutella},
+        str(brookie): {"modifier_option_id": brookie},
+        "M-old": {"modifier_option_id": mapped},
+    }
+    added: list = []
+    db = SimpleNamespace(add=added.append)
+    fields = g.money_fields_from_info({"orderHeader": {"totalPrice": 45}})
+
+    unmapped = g._write_order_lines(
+        db, SimpleNamespace(id=uuid.uuid4()), groups, products, options, fields
+    )
+
+    assert unmapped == 0
+    (item,) = [a for a in added if isinstance(a, g.OrderItem)]
+    assert item.product_id == box
+    picks = {o["option_name"]: o["option_id"] for o in item.selected_options_snapshot}
+    assert picks == {"Nutella Cookie": str(nutella), "Brookie": str(mapped)}
+
+
 def test_money_fields_derive_vat_when_the_payload_omits_it():
     # GrubTech often sends no taxAmount. A UAE storefront price is VAT-inclusive
     # and standard-rated, so the shop owes 5% on the gross regardless — derive it

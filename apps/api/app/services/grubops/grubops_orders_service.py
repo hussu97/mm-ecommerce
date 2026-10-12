@@ -45,6 +45,7 @@ from app.models.branch import Branch
 from app.models.external_item_map import KIND_OPTION, KIND_PRODUCT, ExternalItemMap
 from app.models.grubops import GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
+from app.models.modifier import ModifierOption
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import (
     OrderStatusEvent,
@@ -368,7 +369,10 @@ async def _resolve_branch(db, location_id: str | None) -> uuid.UUID | None:
 
 
 async def _reverse_maps(
-    db, recipe_ids: set[str], modifier_ids: set[str]
+    db,
+    recipe_ids: set[str],
+    modifier_ids: set[str],
+    external_ids: set[str] | None = None,
 ) -> tuple[dict[str, uuid.UUID], dict[str, dict[str, Any]]]:
     """GrubOps recipe/modifier id → our product / option, from the same approved
     `external_item_map` (system `grubops`) the OOS sync maintains.
@@ -377,6 +381,15 @@ async def _reverse_maps(
     real order line to the wrong product. A GrubOps recipe lives on `external_ref`
     and a modifier on `external_sub_ref` (under its recipe), so the lookups filter
     by `mm_kind` to keep the two apart.
+
+    `external_ids` are the lines' `externalId`s — our own product / option uuid,
+    which the catalogue sync wrote onto GrubTech's menu. Each one naming a real
+    product or option resolves too, keyed by that uuid, as the fallback for a
+    line whose GrubOps id maps to nothing. That is not hypothetical: on
+    2026-10-12 GrubTech started sending each modifier line's *menu entry* id in
+    `modifierId` instead of the catalogue modifier id, so every box pick and
+    every "3 Pieces" stopped resolving and consumed no stock. The `externalId`
+    never moved.
     """
     products: dict[str, uuid.UUID] = {}
     options: dict[str, dict[str, Any]] = {}
@@ -407,7 +420,22 @@ async def _reverse_maps(
         )
         for gid, oid in rows:
             options[gid] = {"modifier_option_id": oid}
+    uuids = {u for u in (_as_uuid(x) for x in external_ids or ()) if u is not None}
+    if uuids:
+        for (pid,) in await db.execute(select(Product.id).where(Product.id.in_(uuids))):
+            products[str(pid)] = pid
+        for (oid,) in await db.execute(
+            select(ModifierOption.id).where(ModifierOption.id.in_(uuids))
+        ):
+            options[str(oid)] = {"modifier_option_id": oid}
     return products, options
+
+
+def _as_uuid(value: Any) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _group_lines(order_lines: list[dict]) -> list[dict]:
@@ -774,14 +802,16 @@ def _write_order_lines(db, order, groups, products, options, money_fields) -> in
     for g in groups:
         item = g["item"]
         recipe_id = item.get("recipeId")
-        product_id = products.get(recipe_id)
+        product_id = products.get(recipe_id) or products.get(
+            str(item.get("externalId") or "")
+        )
         if product_id is None:
             unmapped += 1
         snapshot: list[dict] = []
         options_price = Decimal("0")
         for m in g["modifiers"]:
             mid = m.get("modifierId")
-            opt = options.get(mid)
+            opt = options.get(mid) or options.get(str(m.get("externalId") or ""))
             if opt is None:
                 unmapped += 1
             price = _num(m.get("unitPrice"))
@@ -856,7 +886,13 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         for m in g["modifiers"]
         if m.get("modifierId")
     }
-    products, options = await _reverse_maps(db, recipe_ids, modifier_ids)
+    external_ids = {
+        line.get("externalId")
+        for g in groups
+        for line in [g["item"], *g["modifiers"]]
+        if line.get("externalId")
+    }
+    products, options = await _reverse_maps(db, recipe_ids, modifier_ids, external_ids)
 
     # The legal entity this branch's marketplace sales trade under. Registered
     # (Fatema) for every branch today; a non-registered aggregator config books
