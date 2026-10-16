@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -24,7 +23,7 @@ from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import alerting, trading_hours
+from app.core import alerting
 from app.core.config import settings
 from app.core.deps import get_db
 from app.core.exceptions import (
@@ -1414,39 +1413,22 @@ async def worker_claim_commands(
 ) -> WorkerCommandClaimOut:
     """Hand the worker what it has been asked to write (busy mode on Keeta).
 
-    Polled every few seconds by the worker's scheduler; an empty list is the
-    ordinary answer. Each command carries the whole week to write, built from
-    MM's schedule here, so the worker needs no DB and makes no decision.
+    The worker polls `/waiting` every few seconds and claims only when a
+    browser job is about to run. It rests or opens each shop with Keeta's own
+    store-status verbs; `dry_run` keeps the live decision on the API side.
     """
     rows = await worker_commands.claim(db, channel=channel)
     dry_run = not settings.BRANCH_HOURS_SYNC_LIVE
-    today_key = _KEETA_DAY_KEYS[(datetime.now(trading_hours.TZ).weekday() + 1) % 7]
-    out: list[WorkerCommandOut] = []
-    for row in rows:
-        sched = await branch_hours_service.schedule(db, row.branch_id)
-        if sched is None:
-            # Nothing to reopen from: refuse rather than blank the shop's week.
-            await worker_commands.complete(
-                db,
-                row.id,
-                ok=False,
-                error="no MM weekly schedule to restore the hours from",
-                result=None,
-            )
-            continue
-        weekly = _keeta_weekly_from_schedule(sched)
-        if row.desired == "closed":
-            weekly[today_key] = [{"startTime": 0, "endTime": 0, "option": 1}]
-        out.append(
-            WorkerCommandOut(
-                id=row.id,
-                shop_id=row.external_shop_id,
-                branch_id=row.branch_id,
-                desired=row.desired,
-                dry_run=dry_run,
-                weekly=weekly,
-            )
+    out = [
+        WorkerCommandOut(
+            id=row.id,
+            shop_id=row.external_shop_id,
+            branch_id=row.branch_id,
+            desired=row.desired,
+            dry_run=dry_run,
         )
+        for row in rows
+    ]
     return WorkerCommandClaimOut(commands=out)
 
 

@@ -43597,7 +43597,7 @@
         "type": "object"
       },
       "WorkerCommandOut": {
-        "description": "One write the headed worker is asked to make (busy mode on Keeta).\n\n`desired` is `closed` or `open`. `weekly` is the exact\n`businessHourOfTheWeek` to write if the worker closes by hours: MM's\nschedule, with today set closed for a close \u2014 so both directions are a\nwhole-week write from MM's source of truth, never a read-modify of the\nportal's own copy. `dry_run` echoes the API's live flag.",
+        "description": "One write the headed worker is asked to make (busy mode on Keeta).\n\n`desired` is `closed` (Keeta's \"rest\" \u2014 a same-day close the portal lifts at\nmidnight) or `open`. `dry_run` echoes the API's live flag.",
         "properties": {
           "branch_id": {
             "format": "uuid",
@@ -43620,17 +43620,6 @@
           "shop_id": {
             "title": "Shop Id",
             "type": "string"
-          },
-          "weekly": {
-            "additionalProperties": {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "title": "Weekly",
-            "type": "object"
           }
         },
         "required": [
@@ -43638,8 +43627,7 @@
           "shop_id",
           "branch_id",
           "desired",
-          "dry_run",
-          "weekly"
+          "dry_run"
         ],
         "title": "WorkerCommandOut",
         "type": "object"
@@ -46952,7 +46940,7 @@
     },
     "/api/v1/aggregators/worker/commands/claim": {
       "post": {
-        "description": "Hand the worker what it has been asked to write (busy mode on Keeta).\n\nPolled every few seconds by the worker's scheduler; an empty list is the\nordinary answer. Each command carries the whole week to write, built from\nMM's schedule here, so the worker needs no DB and makes no decision.",
+        "description": "Hand the worker what it has been asked to write (busy mode on Keeta).\n\nThe worker polls `/waiting` every few seconds and claims only when a\nbrowser job is about to run. It rests or opens each shop with Keeta's own\nstore-status verbs; `dry_run` keeps the live decision on the API side.",
         "operationId": "worker_claim_commands_api_v1_aggregators_worker_commands_claim_post",
         "parameters": [
           {

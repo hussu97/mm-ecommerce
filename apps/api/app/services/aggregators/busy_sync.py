@@ -9,7 +9,7 @@ channel closes the way its portal allows:
 |---|---|---|
 | talabat | vendor status `CLOSED_TODAY` | vendor status `OPEN` (unless MM's own schedule has today closed) |
 | deliveroo / noon / careem | today's hours removed | the whole week rebuilt from MM (`push_weekly_hours`) |
-| keeta | a command for the headed worker (`worker_commands`) | the same, `open` |
+| keeta | a command for the headed worker (`worker_commands`), which calls the portal's own `set-rest` | the same, `set-open` |
 
 Every close we can make is "closed *today*", so a branch still busy after
 midnight is open again on the portal side: a `done` close whose

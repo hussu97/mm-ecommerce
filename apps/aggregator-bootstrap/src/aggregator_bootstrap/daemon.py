@@ -223,35 +223,25 @@ async def _dispatch(job: Job) -> "reauth.ReloginOutcome | None":
 
 
 async def _run_keeta_shop_status() -> None:
-    """Busy mode on Keeta: claim the waiting commands and write each shop.
-
-    The API builds the whole week to write (MM's schedule, today closed for a
-    close), so this makes no decision — it writes what it is handed in one
-    Chrome and reports each command's outcome, which moves the register's chip.
-    """
+    """Busy mode on Keeta: claim the waiting commands, rest/open each shop with
+    the portal's own store-status verbs, and report each outcome — which is
+    what moves the register's chip. One Chrome for the whole batch."""
     commands = await push.claim_commands("keeta")
     if not commands:
         return
     dry = any(bool(c.get("dry_run", True)) for c in commands)
-    windows = [
-        {"shop_id": c.get("shop_id"), "weekly": c.get("weekly")}
-        for c in commands
-        if c.get("shop_id") and c.get("weekly")
-    ]
     try:
-        result = await warm.write_keeta_hours_in_page(
-            windows=windows, persist=True, dry_run=dry
-        )
+        results = await warm.set_keeta_shop_status_in_page(commands, dry_run=dry)
     except Exception as exc:  # noqa: BLE001 — report it, then let the guard see it
         for command in commands:
             await push.push_command_result(
                 str(command["id"]), ok=False, dry_run=dry, error=str(exc)[:500]
             )
         raise
-    by_shop = {str(o["shop_id"]): o for o in _keeta_hours_outcomes(result, dry_run=dry)}
+    by_id = {str(r.get("id")): r for r in results}
     for command in commands:
-        outcome = by_shop.get(str(command.get("shop_id")))
-        if outcome is None:
+        result = by_id.get(str(command["id"]))
+        if result is None:
             await push.push_command_result(
                 str(command["id"]),
                 ok=False,
@@ -261,12 +251,11 @@ async def _run_keeta_shop_status() -> None:
             continue
         await push.push_command_result(
             str(command["id"]),
-            ok=bool(outcome["ok"]),
-            dry_run=bool(outcome.get("dry_run", dry)),
-            error=outcome.get("error"),
-            result={"planned": outcome.get("planned")}
-            if outcome.get("planned")
-            else None,
+            ok=bool(result.get("ok")),
+            dry_run=bool(result.get("dry_run", dry)),
+            error=result.get("error"),
+            result={k: result[k] for k in ("observed", "planned") if k in result}
+            or None,
         )
 
 

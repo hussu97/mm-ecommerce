@@ -428,6 +428,26 @@ async def pull_keeta_finance_in_page(
     return out
 
 
+async def set_keeta_shop_status_in_page(
+    commands: list[dict[str, Any]], *, dry_run: bool = False
+) -> list[dict[str, Any]]:
+    """Busy mode on Keeta: rest/open each commanded shop on the persistent
+    profile (one Chrome, torn down after) and read each back."""
+    from .engine import async_playwright
+    from .keeta_pull import set_keeta_shop_status
+
+    async with async_playwright() as pw:
+        opened = await _open_persistent(pw, "keeta")
+        try:
+            results = await set_keeta_shop_status(
+                opened.context, commands, dry_run=dry_run
+            )
+        finally:
+            await opened.close()
+    logger.info("keeta shop status: %s", results)
+    return results
+
+
 async def write_keeta_hours_in_page(
     *,
     windows: list[dict[str, Any]] | None = None,

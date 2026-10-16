@@ -497,50 +497,39 @@ async def test_command_poll_survives_an_api_blip(monkeypatch):
     assert q.pending() == set()
 
 
-async def test_shop_status_writes_what_the_api_built_and_reports_each(monkeypatch):
-    week = {"sun": [{"startTime": 0, "endTime": 0, "option": 1}]}
+async def test_shop_status_rests_and_opens_and_reports_each(monkeypatch):
     commands = [
-        {
-            "id": "c1",
-            "shop_id": "111",
-            "desired": "closed",
-            "dry_run": False,
-            "weekly": week,
-        },
-        {
-            "id": "c2",
-            "shop_id": "222",
-            "desired": "open",
-            "dry_run": False,
-            "weekly": week,
-        },
+        {"id": "c1", "shop_id": "111", "desired": "closed", "dry_run": False},
+        {"id": "c2", "shop_id": "222", "desired": "open", "dry_run": False},
     ]
-    written: dict = {}
+    seen: dict = {}
     reported: list[tuple[str, bool, str | None]] = []
 
     async def _claim(channel):
         return commands
 
-    async def _write(*, windows, persist, dry_run):
-        written.update(windows=windows, persist=persist, dry_run=dry_run)
-        return {
-            "results": [
-                {"shopId": "111", "raw": {"code": 0}},
-                {"shopId": "222", "raw": {"code": 7, "msg": "nope"}},
-            ]
-        }
+    async def _set(cmds, *, dry_run):
+        seen.update(commands=cmds, dry_run=dry_run)
+        return [
+            {
+                "id": "c1",
+                "ok": True,
+                "dry_run": False,
+                "observed": {"deliveryRestStatus": 2},
+            },
+            {"id": "c2", "ok": False, "dry_run": False, "error": "keeta refused: nope"},
+        ]
 
     async def _report(command_id, *, ok, dry_run, error=None, result=None):
         reported.append((command_id, ok, error))
 
     monkeypatch.setattr(push, "claim_commands", _claim)
-    monkeypatch.setattr(warm, "write_keeta_hours_in_page", _write)
+    monkeypatch.setattr(warm, "set_keeta_shop_status_in_page", _set)
     monkeypatch.setattr(push, "push_command_result", _report)
 
     await daemon._dispatch(Job(kind=JobKind.KEETA_SHOP_STATUS, seq=0, channel="keeta"))
 
-    assert written["persist"] is True and written["dry_run"] is False
-    assert [w["shop_id"] for w in written["windows"]] == ["111", "222"]
+    assert seen["dry_run"] is False and len(seen["commands"]) == 2
     assert reported[0] == ("c1", True, None)
     assert (
         reported[1][0] == "c2" and reported[1][1] is False and "nope" in reported[1][2]
@@ -551,24 +540,16 @@ async def test_shop_status_reports_failure_when_the_browser_dies(monkeypatch):
     reported: list[tuple[str, bool]] = []
 
     async def _claim(channel):
-        return [
-            {
-                "id": "c1",
-                "shop_id": "111",
-                "desired": "closed",
-                "dry_run": False,
-                "weekly": {"sun": []},
-            }
-        ]
+        return [{"id": "c1", "shop_id": "111", "desired": "closed", "dry_run": False}]
 
-    async def _write(**kwargs):
+    async def _set(cmds, *, dry_run):
         raise RuntimeError("chrome crashed")
 
     async def _report(command_id, *, ok, dry_run, error=None, result=None):
         reported.append((command_id, ok))
 
     monkeypatch.setattr(push, "claim_commands", _claim)
-    monkeypatch.setattr(warm, "write_keeta_hours_in_page", _write)
+    monkeypatch.setattr(warm, "set_keeta_shop_status_in_page", _set)
     monkeypatch.setattr(push, "push_command_result", _report)
 
     with pytest.raises(RuntimeError):
@@ -576,3 +557,29 @@ async def test_shop_status_reports_failure_when_the_browser_dies(monkeypatch):
             Job(kind=JobKind.KEETA_SHOP_STATUS, seq=0, channel="keeta")
         )
     assert reported == [("c1", False)]
+
+
+def test_keeta_shop_status_bodies_are_the_portals_own():
+    from aggregator_bootstrap.keeta_pull import (
+        keeta_shop_status_body,
+        keeta_status_matches,
+    )
+
+    path, body = keeta_shop_status_body("1644189187", "closed")
+    assert path == "/api/scm/shop/status/set-rest"
+    assert body == {
+        "opSource": 1,
+        "shopId": 1644189187,
+        "reasonCode": 7,
+        "operateSceneKey": "MERCHANT_INITIATIVE_SET_REST",
+    }
+    path, body = keeta_shop_status_body("1644189187", "open")
+    assert path == "/api/scm/shop/status/set-open"
+    assert body == {"opSource": 1, "shopId": 1644189187}
+    # Read back on the rest status: a shop outside its hours reads closed anyway.
+    assert keeta_status_matches(
+        {"deliveryRestStatus": 2, "businessStatus": 2}, "closed"
+    )
+    assert keeta_status_matches({"deliveryRestStatus": 1, "businessStatus": 2}, "open")
+    assert not keeta_status_matches({"deliveryRestStatus": 1}, "closed")
+    assert not keeta_status_matches(None, "open")

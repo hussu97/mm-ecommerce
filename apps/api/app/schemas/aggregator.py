@@ -489,11 +489,8 @@ class KeetaHoursResult(BaseModel):
 class WorkerCommandOut(BaseModel):
     """One write the headed worker is asked to make (busy mode on Keeta).
 
-    `desired` is `closed` or `open`. `weekly` is the exact
-    `businessHourOfTheWeek` to write if the worker closes by hours: MM's
-    schedule, with today set closed for a close — so both directions are a
-    whole-week write from MM's source of truth, never a read-modify of the
-    portal's own copy. `dry_run` echoes the API's live flag.
+    `desired` is `closed` (Keeta's "rest" — a same-day close the portal lifts at
+    midnight) or `open`. `dry_run` echoes the API's live flag.
     """
 
     id: UUID
@@ -501,7 +498,6 @@ class WorkerCommandOut(BaseModel):
     branch_id: UUID
     desired: str
     dry_run: bool
-    weekly: dict[str, list[dict]]
 
 
 class WorkerCommandsWaitingOut(BaseModel):

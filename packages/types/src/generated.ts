@@ -923,9 +923,9 @@ export interface paths {
          * Worker Claim Commands
          * @description Hand the worker what it has been asked to write (busy mode on Keeta).
          *
-         *     Polled every few seconds by the worker's scheduler; an empty list is the
-         *     ordinary answer. Each command carries the whole week to write, built from
-         *     MM's schedule here, so the worker needs no DB and makes no decision.
+         *     The worker polls `/waiting` every few seconds and claims only when a
+         *     browser job is about to run. It rests or opens each shop with Keeta's own
+         *     store-status verbs; `dry_run` keeps the live decision on the API side.
          */
         post: operations["worker_claim_commands_api_v1_aggregators_worker_commands_claim_post"];
         delete?: never;
@@ -24697,11 +24697,8 @@ export interface components {
          * WorkerCommandOut
          * @description One write the headed worker is asked to make (busy mode on Keeta).
          *
-         *     `desired` is `closed` or `open`. `weekly` is the exact
-         *     `businessHourOfTheWeek` to write if the worker closes by hours: MM's
-         *     schedule, with today set closed for a close — so both directions are a
-         *     whole-week write from MM's source of truth, never a read-modify of the
-         *     portal's own copy. `dry_run` echoes the API's live flag.
+         *     `desired` is `closed` (Keeta's "rest" — a same-day close the portal lifts at
+         *     midnight) or `open`. `dry_run` echoes the API's live flag.
          */
         WorkerCommandOut: {
             /**
@@ -24720,12 +24717,6 @@ export interface components {
             id: string;
             /** Shop Id */
             shop_id: string;
-            /** Weekly */
-            weekly: {
-                [key: string]: {
-                    [key: string]: unknown;
-                }[];
-            };
         };
         /** WorkerCommandResultIn */
         WorkerCommandResultIn: {
