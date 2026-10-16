@@ -36,6 +36,23 @@ export function isInAppBrowserHydrationError(event: ErrorEvent, userAgent: strin
  */
 const INJECTED_SCRIPT_FRAME = /^app:\/\/(?!\/)/;
 
+/**
+ * A frame with no source URL at all — Sentry shows it as `undefined:201:363` —
+ * is a script the browser evaluated from a string, not a file it fetched. Chrome
+ * on iOS runs its own feature scripts (translate, autofill, password manager)
+ * this way inside WKWebView; when one blows its stack on a product page the
+ * global onerror handler reports a `RangeError` with nothing to symbolicate.
+ * Engine-internal `[native code]` frames carry no URL either. Every script we
+ * ship, the inline Next bootstrap included, carries the page or chunk URL, so
+ * a URL-less frame is never ours.
+ */
+const URLLESS_FRAME = /^(|undefined|<anonymous>|\[native code\])$/;
+
+function isForeignFrame(filename: string | undefined): boolean {
+  const name = filename ?? '';
+  return INJECTED_SCRIPT_FRAME.test(name) || URLLESS_FRAME.test(name);
+}
+
 // Android WebView's message for a call into a removed JavascriptInterface; the
 // site never registers or calls one, so it can only come from the host app.
 const DEAD_NATIVE_BRIDGE = /Java object is gone/;
@@ -44,5 +61,5 @@ export function isInjectedScriptError(event: ErrorEvent): boolean {
   const exception = event.exception?.values?.[0];
   if (DEAD_NATIVE_BRIDGE.test(exception?.value ?? event.message ?? '')) return true;
   const frames = exception?.stacktrace?.frames ?? [];
-  return frames.length > 0 && frames.every((frame) => INJECTED_SCRIPT_FRAME.test(frame.filename ?? ''));
+  return frames.length > 0 && frames.every((frame) => isForeignFrame(frame.filename));
 }
