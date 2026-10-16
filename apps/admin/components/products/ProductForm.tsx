@@ -8,6 +8,7 @@ import type { Category, Modifier, Product, SalesChannel, ProductLabel } from '@/
 import { SALES_CHANNELS, PRODUCT_LABELS, PRODUCT_LABEL_LABELS } from '@/lib/types';
 import { SalesChannelPicker } from '@/components/products/SalesChannels';
 import { ModifierOptionStockGrid } from '@/components/products/BranchStock';
+import { ImageLightbox } from '@/components/products/ImageLightbox';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { TranslationFields } from '@/components/TranslationFields';
@@ -61,6 +62,7 @@ export function ProductForm({ product }: Props) {
     );
   const [translations, setTranslations] = useState<Record<string, Record<string, string>>>(product?.translations ?? {});
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
+  const [previewIdx, setPreviewIdx] = useState<number | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
@@ -117,7 +119,18 @@ export function ProductForm({ product }: Props) {
     }
   }
 
-  function removeImage(idx: number) {
+  async function removeImage(idx: number) {
+    // The thumbnail is small and the button sits on it, so a stray click used to
+    // drop a photo with no question asked. Removal only lands on Save, but that
+    // is easy to miss — ask first.
+    if (!(await confirm({
+      title: 'Remove image',
+      message: idx === 0
+        ? 'Remove the cover image? The next image becomes the cover. Nothing changes until you save.'
+        : 'Remove this image? Nothing changes until you save.',
+      confirmLabel: 'Remove',
+      danger: true,
+    }))) return;
     setImageUrls(prev => prev.filter((_, i) => i !== idx));
   }
 
@@ -411,20 +424,36 @@ export function ProductForm({ product }: Props) {
                   </span>
                 )}
               </div>
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+              {/* Clicking the thumbnail opens it full size; the controls stop the
+                  click so they never open the preview by accident. */}
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Preview image"
+                onClick={() => setPreviewIdx(idx)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPreviewIdx(idx); } }}
+                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center justify-center gap-1 cursor-zoom-in"
+              >
                 {idx > 0 && (
-                  <button type="button" onClick={() => moveImage(idx, -1)} className="text-white hover:text-secondary" title="Move left">
+                  <button type="button" onClick={e => { e.stopPropagation(); moveImage(idx, -1); }} className="text-white hover:text-secondary" title="Move left">
                     <span className="material-icons text-[16px]">chevron_left</span>
                   </button>
                 )}
-                <button type="button" onClick={() => removeImage(idx)} className="text-white hover:text-red-300" title="Remove">
-                  <span className="material-icons text-[16px]">delete</span>
-                </button>
+                <span className="material-icons text-[18px] text-white" aria-hidden>zoom_in</span>
                 {idx < imageUrls.length - 1 && (
-                  <button type="button" onClick={() => moveImage(idx, 1)} className="text-white hover:text-secondary" title="Move right">
+                  <button type="button" onClick={e => { e.stopPropagation(); moveImage(idx, 1); }} className="text-white hover:text-secondary" title="Move right">
                     <span className="material-icons text-[16px]">chevron_right</span>
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); void removeImage(idx); }}
+                  className="absolute top-0.5 right-0.5 flex items-center justify-center w-5 h-5 bg-white/90 text-red-600 hover:bg-red-600 hover:text-white"
+                  title="Remove"
+                  aria-label="Remove image"
+                >
+                  <span className="material-icons text-[14px]">delete</span>
+                </button>
               </div>
             </div>
           ))}
@@ -454,8 +483,9 @@ export function ProductForm({ product }: Props) {
           />
         </div>
         <p className="text-[11px] text-gray-400 font-body">
-          JPEG, PNG, WebP · Max 5 MB per image · First image is the cover
+          JPEG, PNG, WebP · Max 5 MB per image · First image is the cover · Click an image to view it full size
         </p>
+        <ImageLightbox urls={imageUrls} index={previewIdx} onIndexChange={setPreviewIdx} />
       </section>
 
       {/* Modifiers (interactive, edit mode only) */}
