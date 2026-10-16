@@ -149,6 +149,11 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
             "Send to the kitchen before payment and edit sent items",
         ),
         ("pos.till.manage", "Open the drawer, spot check cash and close the till"),
+        (
+            "pos.branch.busy",
+            "Turn busy mode on and off — take the branch offline for website "
+            "and delivery-app orders",
+        ),
         ("pos.driver.act_as", "Act as a delivery driver"),
     ],
 }

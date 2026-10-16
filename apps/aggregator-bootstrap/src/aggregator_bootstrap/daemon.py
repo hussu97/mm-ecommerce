@@ -50,6 +50,7 @@ _TIMEOUT_FIELDS: dict[JobKind, str] = {
     JobKind.KEETA_MENU: "WORKER_KEETA_MENU_TIMEOUT_SECONDS",
     JobKind.DELIVEROO_MENU: "WORKER_DELIVEROO_MENU_TIMEOUT_SECONDS",
     JobKind.KEETA_HOURS: "WORKER_KEETA_HOURS_TIMEOUT_SECONDS",
+    JobKind.KEETA_SHOP_STATUS: "WORKER_KEETA_SHOP_STATUS_TIMEOUT_SECONDS",
 }
 
 #: Channels the API remints itself over httpx (`policy.server_refreshable` —
@@ -189,6 +190,9 @@ async def _dispatch(job: Job) -> "reauth.ReloginOutcome | None":
         # httpx on the API — this job must not capture or push them.
         await warm.pull_deliveroo_menu_in_page()
         return
+    if job.kind is JobKind.KEETA_SHOP_STATUS:
+        await _run_keeta_shop_status()
+        return
     if job.kind is JobKind.KEETA_HOURS:
         # Persistent-profile in-page POST of `/api/scm/business-hour/update`.
         # One Chrome, torn down after — never a second browser beside finance/orders.
@@ -216,6 +220,54 @@ async def _dispatch(job: Job) -> "reauth.ReloginOutcome | None":
             await push.push_keeta_hours_result(outcomes)
         return
     raise ValueError(f"unknown job kind {job.kind!r}")  # pragma: no cover
+
+
+async def _run_keeta_shop_status() -> None:
+    """Busy mode on Keeta: claim the waiting commands, rest/open each shop with
+    the portal's own store-status verbs, and report each outcome — which is
+    what moves the register's chip. One Chrome for the whole batch."""
+    commands = await push.claim_commands("keeta")
+    if not commands:
+        return
+    dry = any(bool(c.get("dry_run", True)) for c in commands)
+    try:
+        results = await warm.set_keeta_shop_status_in_page(commands, dry_run=dry)
+    except Exception as exc:  # noqa: BLE001 — report it, then let the guard see it
+        for command in commands:
+            await push.push_command_result(
+                str(command["id"]), ok=False, dry_run=dry, error=str(exc)[:500]
+            )
+        raise
+    by_id = {str(r.get("id")): r for r in results}
+    for command in commands:
+        result = by_id.get(str(command["id"]))
+        if result is None:
+            await push.push_command_result(
+                str(command["id"]),
+                ok=False,
+                dry_run=dry,
+                error="the Keeta page did not write this shop",
+            )
+            continue
+        await push.push_command_result(
+            str(command["id"]),
+            ok=bool(result.get("ok")),
+            dry_run=bool(result.get("dry_run", dry)),
+            error=result.get("error"),
+            result={k: result[k] for k in ("observed", "planned") if k in result}
+            or None,
+        )
+
+
+async def _command_poll(queue: JobQueue) -> None:
+    """Enqueue a Keeta busy-mode job when the API says one is waiting."""
+    try:
+        waiting = await push.commands_waiting("keeta")
+    except Exception:  # noqa: BLE001 — a transient API blip must not kill the loop
+        logger.debug("daemon: command poll could not reach the API", exc_info=True)
+        return
+    if waiting and await queue.put(JobKind.KEETA_SHOP_STATUS, "keeta"):
+        logger.info("daemon: %s Keeta busy-mode command(s) — enqueued", waiting)
 
 
 def _keeta_hours_outcomes(
@@ -450,6 +502,8 @@ async def _run_scheduler(queue: JobQueue) -> None:
     heal_delta = timedelta(seconds=settings.WORKER_HEAL_POLL_SECONDS)
     keeta_next = now
     heal_next = now
+    command_delta = timedelta(seconds=max(settings.WORKER_COMMAND_POLL_SECONDS, 1))
+    command_next = now
     #: Keeta MENU cadence — disabled when the interval is <= 0.
     menu_hours = settings.WORKER_KEETA_MENU_INTERVAL_HOURS
     menu_delta = timedelta(hours=menu_hours) if menu_hours > 0 else None
@@ -498,7 +552,14 @@ async def _run_scheduler(queue: JobQueue) -> None:
         if now >= heal_next:
             await _heal_poll(queue)
             heal_next = now + heal_delta
-        await asyncio.sleep(tick)
+        if now >= command_next:
+            await _command_poll(queue)
+            command_next = now + command_delta
+        # Wake for whichever comes first: the next scheduler tick or the next
+        # command poll (which is the shorter of the two by default).
+        await asyncio.sleep(
+            max(1.0, min(tick, (command_next - _now_utc()).total_seconds()))
+        )
 
 
 async def _run_consumer(queue: JobQueue) -> None:

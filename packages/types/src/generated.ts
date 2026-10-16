@@ -910,6 +910,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/worker/commands/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Worker Claim Commands
+         * @description Hand the worker what it has been asked to write (busy mode on Keeta).
+         *
+         *     The worker polls `/waiting` every few seconds and claims only when a
+         *     browser job is about to run. It rests or opens each shop with Keeta's own
+         *     store-status verbs; `dry_run` keeps the live decision on the API side.
+         */
+        post: operations["worker_claim_commands_api_v1_aggregators_worker_commands_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/worker/commands/waiting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Worker Commands Waiting
+         * @description The worker's cheap poll: is there anything for the browser to do?
+         */
+        get: operations["worker_commands_waiting_api_v1_aggregators_worker_commands_waiting_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/worker/commands/{command_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Worker Command Result
+         * @description The worker's outcome for one command; moves the busy-mode chip.
+         */
+        post: operations["worker_command_result_api_v1_aggregators_worker_commands__command_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/worker/keeta/hours": {
         parameters: {
             query?: never;
@@ -1931,6 +1995,30 @@ export interface paths {
         /** Get Current Business Day */
         get: operations["get_current_business_day_api_v1_branches__branch_id__business_days_current_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/branches/{branch_id}/busy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Branch Busy
+         * @description Busy mode at a branch, with a chip per aggregator outlet.
+         */
+        get: operations["get_branch_busy_api_v1_branches__branch_id__busy_get"];
+        /**
+         * Set Branch Busy
+         * @description The console's copy of the register's busy switch — same effect.
+         */
+        put: operations["set_branch_busy_api_v1_branches__branch_id__busy_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -6582,6 +6670,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/branch/busy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Busy
+         * @description Busy mode at this terminal's branch, with a chip per aggregator outlet.
+         */
+        get: operations["get_busy_api_v1_pos_branch_busy_get"];
+        /**
+         * Set Busy
+         * @description Turn busy mode on or off. The website follows at once; the aggregator
+         *     outlets follow within seconds (the chips show each one land).
+         */
+        put: operations["set_busy_api_v1_pos_branch_busy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/counter-sync": {
         parameters: {
             query?: never;
@@ -11011,6 +11124,11 @@ export interface components {
              * @default false
              */
             offers_pickup: boolean;
+            /**
+             * Pay Later Checks
+             * @default false
+             */
+            pay_later_checks: boolean;
             /** Phone */
             phone?: string | null;
             /** Receipt Footer */
@@ -11328,6 +11446,8 @@ export interface components {
             address_localized: string | null;
             /** Business Day Start */
             business_day_start: string;
+            /** Busy Since */
+            busy_since?: string | null;
             /** Cash Enabled */
             cash_enabled: boolean;
             /** City */
@@ -11371,6 +11491,11 @@ export interface components {
             noon_send_outlet_code: string | null;
             /** Offers Pickup */
             offers_pickup: boolean;
+            /**
+             * Pay Later Checks
+             * @default false
+             */
+            pay_later_checks: boolean;
             /** Phone */
             phone: string | null;
             /** Receipt Footer */
@@ -11451,6 +11576,8 @@ export interface components {
             noon_send_outlet_code?: string | null;
             /** Offers Pickup */
             offers_pickup?: boolean | null;
+            /** Pay Later Checks */
+            pay_later_checks?: boolean | null;
             /** Phone */
             phone?: string | null;
             /** Receipt Footer */
@@ -12103,6 +12230,37 @@ export interface components {
             require_customer_for_delivery?: boolean | null;
             /** Timezone */
             timezone?: string | null;
+        };
+        /**
+         * BusyChannelResponse
+         * @description One aggregator outlet's progress, drawn as a chip on the banner.
+         */
+        BusyChannelResponse: {
+            /** Channel */
+            channel: string;
+            /** Error */
+            error?: string | null;
+            /** Label */
+            label: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "closing" | "closed" | "opening" | "open" | "failed" | "manual" | "not_live";
+        };
+        /** BusyStatusResponse */
+        BusyStatusResponse: {
+            /** Busy */
+            busy: boolean;
+            /** By Name */
+            by_name?: string | null;
+            /**
+             * Channels
+             * @default []
+             */
+            channels: components["schemas"]["BusyChannelResponse"][];
+            /** Since */
+            since?: string | null;
         };
         /**
          * CancellationExposureResponse
@@ -14519,6 +14677,7 @@ export interface components {
          */
         DeviceSessionResponse: {
             branch: components["schemas"]["BranchResponse"];
+            busy?: components["schemas"]["BusyStatusResponse"] | null;
             /**
              * Custom Orders Enabled
              * @default false
@@ -22181,6 +22340,11 @@ export interface components {
             /** Price */
             price?: number | string | null;
         };
+        /** SetBusyRequest */
+        SetBusyRequest: {
+            /** Busy */
+            busy: boolean;
+        };
         /** SetOptionAvailabilityRequest */
         SetOptionAvailabilityRequest: {
             /**
@@ -24524,6 +24688,62 @@ export interface components {
             /** Weekday */
             weekday: number;
         };
+        /** WorkerCommandClaimOut */
+        WorkerCommandClaimOut: {
+            /** Commands */
+            commands?: components["schemas"]["WorkerCommandOut"][];
+        };
+        /**
+         * WorkerCommandOut
+         * @description One write the headed worker is asked to make (busy mode on Keeta).
+         *
+         *     `desired` is `closed` (Keeta's "rest" — a same-day close the portal lifts at
+         *     midnight) or `open`. `dry_run` echoes the API's live flag.
+         */
+        WorkerCommandOut: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Desired */
+            desired: string;
+            /** Dry Run */
+            dry_run: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Shop Id */
+            shop_id: string;
+        };
+        /** WorkerCommandResultIn */
+        WorkerCommandResultIn: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /** Error */
+            error?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** WorkerCommandResultOut */
+        WorkerCommandResultOut: {
+            /** Recorded */
+            recorded: boolean;
+        };
+        /** WorkerCommandsWaitingOut */
+        WorkerCommandsWaitingOut: {
+            /** Waiting */
+            waiting: number;
+        };
         /** ZoneData */
         ZoneData: {
             /** Orders */
@@ -26159,6 +26379,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorWorkerAccount"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_claim_commands_api_v1_aggregators_worker_commands_claim_post: {
+        parameters: {
+            query: {
+                channel: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerCommandClaimOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_commands_waiting_api_v1_aggregators_worker_commands_waiting_get: {
+        parameters: {
+            query: {
+                channel: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerCommandsWaitingOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_command_result_api_v1_aggregators_worker_commands__command_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerCommandResultIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerCommandResultOut"];
                 };
             };
             /** @description Validation Error */
@@ -28052,6 +28375,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BusinessDayResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_branch_busy_api_v1_branches__branch_id__busy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BusyStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_branch_busy_api_v1_branches__branch_id__busy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetBusyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BusyStatusResponse"];
                 };
             };
             /** @description Validation Error */
@@ -36984,6 +37373,78 @@ export interface operations {
             };
         };
     };
+    get_busy_api_v1_pos_branch_busy_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Build"?: string | null;
+                "X-App-Platform"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BusyStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_busy_api_v1_pos_branch_busy_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Build"?: string | null;
+                "X-App-Platform"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetBusyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BusyStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     counter_sync_overview_api_v1_pos_counter_sync_get: {
         parameters: {
             query?: {
@@ -37696,6 +38157,7 @@ export interface operations {
                 order_type?: string | null;
                 open_only?: boolean;
                 returns_pending?: boolean;
+                in_kitchen?: boolean;
                 q?: string | null;
                 limit?: number;
                 offset?: number;

@@ -46,6 +46,7 @@ from app.schemas.pos import (
     WeeklyHoursUpdate,
     WeeklyShift,
 )
+from app.schemas.pos.busy_mode import BusyStatusResponse, SetBusyRequest
 from app.services import (
     audit_service,
     branch_holiday_service,
@@ -55,7 +56,11 @@ from app.services import (
 )
 from app.services.catalog import catalogue_cache
 from app.services.delivery import fulfilment_service
-from app.services.pos import branch_channel_tax_service, business_day_service
+from app.services.pos import (
+    branch_channel_tax_service,
+    business_day_service,
+    busy_mode_service,
+)
 
 router = APIRouter()
 
@@ -413,6 +418,42 @@ async def sync_branch_hours(
     if branch is None:
         raise NotFoundError("Branch not found")
     return await branch_hours_sync.sync_branch(db, branch)
+
+
+# ─── Busy mode ────────────────────────────────────────────────────────────────
+
+
+async def _busy_branch(db: AsyncSession, branch_id: uuid.UUID) -> Branch:
+    branch = await db.get(Branch, branch_id)
+    if branch is None or branch.deleted_at is not None:
+        raise NotFoundError("Branch not found")
+    return branch
+
+
+@router.get("/{branch_id}/busy", response_model=BusyStatusResponse)
+async def get_branch_busy(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("admin.branches.manage")),
+) -> BusyStatusResponse:
+    """Busy mode at a branch, with a chip per aggregator outlet."""
+    branch = await _busy_branch(db, branch_id)
+    return busy_mode_service.to_response(await busy_mode_service.status(db, branch))
+
+
+@router.put("/{branch_id}/busy", response_model=BusyStatusResponse)
+async def set_branch_busy(
+    branch_id: uuid.UUID,
+    data: SetBusyRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("admin.branches.manage")),
+) -> BusyStatusResponse:
+    """The console's copy of the register's busy switch — same effect."""
+    branch = await _busy_branch(db, branch_id)
+    state = await busy_mode_service.set_busy(
+        db, branch, data.busy, actor_id=admin.id, device_id=None, source="admin"
+    )
+    return busy_mode_service.to_response(state)
 
 
 # ─── Holidays ─────────────────────────────────────────────────────────────────

@@ -97,6 +97,11 @@ from app.schemas.aggregator import (
     ReconSummaryOut,
     ReconSummaryRow,
     SettlementReconOut,
+    WorkerCommandClaimOut,
+    WorkerCommandOut,
+    WorkerCommandResultIn,
+    WorkerCommandResultOut,
+    WorkerCommandsWaitingOut,
 )
 from app.services import branch_hours_service
 from app.services.aggregators import (
@@ -108,6 +113,7 @@ from app.services.aggregators import (
     settlement_reconcile,
     statement_categories,
     statement_docs,
+    worker_commands,
 )
 
 router = APIRouter()
@@ -1385,6 +1391,66 @@ async def worker_keeta_hours_result(
         )
         recorded += 1
     return KeetaHoursResult(recorded=recorded)
+
+
+@router.get("/worker/commands/waiting", response_model=WorkerCommandsWaitingOut)
+async def worker_commands_waiting(
+    channel: str = Query(..., max_length=20),
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> WorkerCommandsWaitingOut:
+    """The worker's cheap poll: is there anything for the browser to do?"""
+    return WorkerCommandsWaitingOut(
+        waiting=await worker_commands.waiting(db, channel=channel)
+    )
+
+
+@router.post("/worker/commands/claim", response_model=WorkerCommandClaimOut)
+async def worker_claim_commands(
+    channel: str = Query(..., max_length=20),
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> WorkerCommandClaimOut:
+    """Hand the worker what it has been asked to write (busy mode on Keeta).
+
+    The worker polls `/waiting` every few seconds and claims only when a
+    browser job is about to run. It rests or opens each shop with Keeta's own
+    store-status verbs; `dry_run` keeps the live decision on the API side.
+    """
+    rows = await worker_commands.claim(db, channel=channel)
+    dry_run = not settings.BRANCH_HOURS_SYNC_LIVE
+    out = [
+        WorkerCommandOut(
+            id=row.id,
+            shop_id=row.external_shop_id,
+            branch_id=row.branch_id,
+            desired=row.desired,
+            dry_run=dry_run,
+        )
+        for row in rows
+    ]
+    return WorkerCommandClaimOut(commands=out)
+
+
+@router.post(
+    "/worker/commands/{command_id}/result", response_model=WorkerCommandResultOut
+)
+async def worker_command_result(
+    command_id: UUID,
+    body: WorkerCommandResultIn,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> WorkerCommandResultOut:
+    """The worker's outcome for one command; moves the busy-mode chip."""
+    row = await worker_commands.complete(
+        db,
+        command_id,
+        ok=body.ok,
+        error=body.error,
+        result={**(body.result or {}), "dry_run": body.dry_run},
+        dry_run=body.dry_run,
+    )
+    return WorkerCommandResultOut(recorded=row is not None)
 
 
 #: A single manual backfill spans at most a quarter — enough to re-pull a

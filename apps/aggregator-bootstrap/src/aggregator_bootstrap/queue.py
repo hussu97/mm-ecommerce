@@ -33,19 +33,23 @@ class JobKind(IntEnum):
     """
 
     RELOGIN = 0
-    WARM = 1
-    KEETA_ORDERS = 2
-    DELIVEROO_FINANCE = 3
-    KEETA_FINANCE = 4
+    #: Busy mode on Keeta — a shop the register just took offline (or back
+    #: online). A shop is losing or taking orders it should not while this
+    #: waits, so it runs straight after a heal, ahead of everything else.
+    KEETA_SHOP_STATUS = 1
+    WARM = 2
+    KEETA_ORDERS = 3
+    DELIVEROO_FINANCE = 4
+    KEETA_FINANCE = 5
     #: The catalog-sync menu read — not time-critical (the menu changes rarely), so
     #: it sits at the lowest priority, never blocking a heal or an orders pull.
-    KEETA_MENU = 5
+    KEETA_MENU = 6
     #: The Deliveroo catalog-sync read (menu only — hours are httpx on the API),
     #: same low priority as the Keeta menu — background, never ahead of a heal.
-    DELIVEROO_MENU = 6
+    DELIVEROO_MENU = 7
     #: Keeta in-page hours write (today's window / close). Nightly, after finance,
     #: lowest priority so it never blocks a heal or an orders pull on the one Chrome.
-    KEETA_HOURS = 7
+    KEETA_HOURS = 8
 
 
 @dataclass(order=True)

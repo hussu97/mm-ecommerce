@@ -55,6 +55,10 @@ export interface Branch {
   uses_pos: boolean;
   /** Whether this branch's POS terminals show the read-only Recipes tab (shop-floor reference for how made items are built). Off by default. */
   show_recipes: boolean;
+  /** The POS "Sent to kitchen" tab: checks fired, set aside and paid after service. */
+  pay_later_checks?: boolean;
+  /** Busy mode: when it was turned on; null when trading normally. */
+  busy_since?: string | null;
   /** The branch this one returns surplus/expired/damaged stock to. Null = returns not routed from here. */
   return_branch_id: string | null;
   accepts_reservations: boolean;

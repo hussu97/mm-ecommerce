@@ -63,6 +63,13 @@ _RAW_MIGRATION_INDEX = (
 # column now has a real index) as the thing to celebrate, not an entry to
 # re-justify.
 ALLOW_LIST: dict[tuple[str, str], str] = {
+    # Migration 315: busy mode. Who turned it on is displayed, never searched;
+    # the event trail is read by (branch_id, at), which is indexed; and the
+    # worker command queue holds a handful of rows, read by channel + status.
+    ("branches", "busy_by_user_id"): "display-only, one row per branch",
+    ("branch_busy_events", "actor_user_id"): "display-only audit trail",
+    ("branch_busy_events", "device_id"): "display-only audit trail",
+    ("aggregator_worker_command", "branch_id"): "tiny queue, read by channel",
     # Migration 306: marketplace returns. A handful of rows a month, read by
     # order (unique-indexed); who received it and the restock movement are only
     # displayed, and a user/transaction delete scanning a table this size is free.

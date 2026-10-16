@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     #: one Chrome; sits after the nightly finance job so it must not overrun into
     #: morning trading. Same budget as orders.
     WORKER_KEETA_HOURS_TIMEOUT_SECONDS: int = 600
+    #: Busy mode on Keeta (open/close a shop). One cold Chrome and one write per
+    #: shop — well under a minute in practice; the budget only catches a wedge.
+    WORKER_KEETA_SHOP_STATUS_TIMEOUT_SECONDS: int = 300
+    #: How often the scheduler asks the API whether a busy-mode command is
+    #: waiting. A cheap GET; short because a cashier is watching the chip.
+    WORKER_COMMAND_POLL_SECONDS: int = 10
 
     #: Channels warmed nightly to rotate their decaying anti-bot cookie (Noon's
     #: Akamai bm_sv/_abck, Talabat's PerimeterX _px3). Careem/Deliveroo self-heal in

@@ -653,6 +653,8 @@ async def pickup_branches(db: AsyncSession) -> list[Branch]:
                 .where(
                     Branch.offers_pickup.is_(True),
                     Branch.is_active.is_(True),
+                    # A shop in busy mode is not offering collection right now.
+                    ~Branch.is_busy,
                     Branch.deleted_at.is_(None),
                     Branch.latitude.isnot(None),
                     Branch.longitude.isnot(None),

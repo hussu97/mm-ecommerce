@@ -486,6 +486,40 @@ class KeetaHoursResult(BaseModel):
     recorded: int
 
 
+class WorkerCommandOut(BaseModel):
+    """One write the headed worker is asked to make (busy mode on Keeta).
+
+    `desired` is `closed` (Keeta's "rest" — a same-day close the portal lifts at
+    midnight) or `open`. `dry_run` echoes the API's live flag.
+    """
+
+    id: UUID
+    shop_id: str
+    branch_id: UUID
+    desired: str
+    dry_run: bool
+
+
+class WorkerCommandsWaitingOut(BaseModel):
+    waiting: int
+
+
+class WorkerCommandClaimOut(BaseModel):
+    commands: list[WorkerCommandOut] = Field(default_factory=list)
+
+
+class WorkerCommandResultIn(BaseModel):
+    ok: bool
+    error: str | None = None
+    dry_run: bool = False
+    #: What the worker read back (e.g. Keeta `businessStatus`), for the trail.
+    result: dict | None = None
+
+
+class WorkerCommandResultOut(BaseModel):
+    recorded: bool
+
+
 class AggregatorRunTriggerIn(BaseModel):
     """What "Run now" asks for. Omit the dates for the standard recent pass; give
     both to backfill an explicit Dubai business-date range (inclusive) — e.g. to

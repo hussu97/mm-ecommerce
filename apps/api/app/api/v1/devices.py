@@ -45,6 +45,7 @@ from app.schemas.pos_counter import DeviceHeartbeatRequest
 from app.services import audit_service, crud_service, push_service
 from app.services.inventory.access_service import assert_branch_access
 from app.services.orders import custom_order_service
+from app.services.pos import busy_mode_service
 
 logger = logging.getLogger("mm.pos.devices")
 
@@ -579,6 +580,7 @@ async def device_heartbeat(
         device=DeviceResponse.model_validate(device),
         branch=BranchResponse.model_validate(branch),
         custom_orders_enabled=await custom_order_service.branch_id(db) == branch.id,
+        busy=busy_mode_service.to_response(await busy_mode_service.status(db, branch)),
     )
 
 

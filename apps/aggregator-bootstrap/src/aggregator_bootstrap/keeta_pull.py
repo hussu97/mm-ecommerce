@@ -1945,3 +1945,159 @@ async def fetch_keeta_finance(
         await page.close()
 
     return payloads, ("; ".join(notes) if notes else None)
+
+
+# ── Shop open / rest (busy mode) ─────────────────────────────────────────────
+# Captured live 2026-10-16 from the portal's own "close store" dialog
+# (main.*.js) and exercised on Barsha (shop 1644189187):
+#   POST /api/scm/shop/status/set-rest
+#        {opSource:1, shopId, reasonCode:7, operateSceneKey:"MERCHANT_INITIATIVE_SET_REST"}
+#        → a "normal rest" task IN_EFFECT until local midnight (isAutoOpen),
+#          summary businessStatus 1→2, deliveryRestStatus 1→2 within ~4s.
+#   POST /api/scm/shop/status/set-open {opSource:1, shopId}
+#        → the rest task ends, businessStatus back to 1 within ~4s.
+#   GET  /api/scm/shop/status/restTaskList?shopId=… → the IN_EFFECT rest tasks.
+# reasonCode 20 + duration -1 is the dialog's "long closed" option — deliberately
+# not used: busy mode is a same-day close the reconciler re-applies after
+# midnight, the same contract as Talabat's CLOSED_TODAY.
+KEETA_SHOP_REST_PATH = "/api/scm/shop/status/set-rest"
+KEETA_SHOP_OPEN_PATH = "/api/scm/shop/status/set-open"
+#: `deliveryRestStatus` in the shop summary: 1 = trading normally, 2 = resting.
+KEETA_REST_STATUS_RESTING = 2
+
+_SHOP_STATUS_WRITE_JS = """
+async ({ endpoint, shopId, payload }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const r = await fetch(endpoint, { method: "POST", credentials: "include", headers,
+    body: JSON.stringify(payload) });
+  const t = await r.text();
+  try { return JSON.parse(t); } catch (e) { return { status: r.status, text: t.slice(0, 500) }; }
+}
+"""
+
+
+def keeta_shop_status_body(shop_id: str, desired: str) -> tuple[str, dict[str, Any]]:
+    """The endpoint and body that make a shop `closed` (rest) or `open`."""
+    if desired == "closed":
+        return KEETA_SHOP_REST_PATH, {
+            "opSource": 1,
+            "shopId": int(shop_id),
+            "reasonCode": 7,
+            "operateSceneKey": "MERCHANT_INITIATIVE_SET_REST",
+        }
+    return KEETA_SHOP_OPEN_PATH, {"opSource": 1, "shopId": int(shop_id)}
+
+
+def keeta_status_matches(shop: dict[str, Any] | None, desired: str) -> bool:
+    """Whether the summary read back shows `desired`. Judged on the rest status,
+    not `businessStatus` — a shop outside its hours reads closed either way."""
+    if not isinstance(shop, dict):
+        return False
+    resting = shop.get("deliveryRestStatus") == KEETA_REST_STATUS_RESTING
+    return resting if desired == "closed" else not resting
+
+
+async def set_keeta_shop_status(
+    context: Any, commands: list[dict[str, Any]], *, dry_run: bool = False
+) -> list[dict[str, Any]]:
+    """Rest or open each commanded shop in-page (signed), then read it back.
+
+    Each command is `{id, shop_id, desired}`; returns `{id, ok, dry_run,
+    error?, observed?}` per command. Primes the session on the ORDER route
+    (LOGIN_ACCOUNTID), as every signed Keeta call does.
+    """
+    from .browser import NeedsHumanLogin
+
+    page = await context.new_page()
+    try:
+        await page.goto(
+            KEETA_ORDER_ROUTE_HOURS, wait_until="domcontentloaded", timeout=60_000
+        )
+        account_id = ""
+        for _ in range(12):
+            await page.wait_for_timeout(2_000)
+            await _reseed_keeta_storage(page)
+            account_id = str(await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS) or "")
+            if account_id:
+                break
+        if not account_id:
+            raise NeedsHumanLogin(
+                "keeta shop status: LOGIN_ACCOUNTID is empty — persistent profile "
+                "is signed out. Run: aggregator-bootstrap login --channel keeta"
+            )
+        results: list[dict[str, Any]] = []
+        for command in commands:
+            shop_id = str(command.get("shop_id") or "")
+            desired = str(command.get("desired") or "")
+            path, body = keeta_shop_status_body(shop_id, desired)
+            if dry_run:
+                results.append(
+                    {
+                        "id": command.get("id"),
+                        "ok": True,
+                        "dry_run": True,
+                        "planned": {"endpoint": path, "body": body},
+                    }
+                )
+                continue
+            raw = await page.evaluate(
+                _SHOP_STATUS_WRITE_JS,
+                {
+                    "endpoint": path + KEETA_QUERY_SUFFIX,
+                    "shopId": shop_id,
+                    "payload": body,
+                },
+            )
+            code = raw.get("code") if isinstance(raw, dict) else None
+            if code != 0:
+                results.append(
+                    {
+                        "id": command.get("id"),
+                        "ok": False,
+                        "dry_run": False,
+                        "error": f"keeta {path} refused: {str(raw)[:300]}",
+                    }
+                )
+                continue
+            # The summary lags the write by a second or two.
+            shop: dict[str, Any] | None = None
+            for _ in range(4):
+                await page.wait_for_timeout(2_000)
+                summary = await evaluate_in_page(
+                    page,
+                    _SHOP_SUMMARY_JS,
+                    {
+                        "endpoint": KEETA_SHOP_SUMMARY_PATH + KEETA_QUERY_SUFFIX,
+                        "shopIdList": [shop_id],
+                    },
+                )
+                data = summary.get("data") if isinstance(summary, dict) else None
+                shops = (data or {}).get("shopList") if isinstance(data, dict) else None
+                shop = shops[0] if isinstance(shops, list) and shops else None
+                if keeta_status_matches(shop, desired):
+                    break
+            observed = {
+                k: (shop or {}).get(k)
+                for k in ("businessStatus", "deliveryRestStatus", "status")
+            }
+            ok = keeta_status_matches(shop, desired)
+            results.append(
+                {
+                    "id": command.get("id"),
+                    "ok": ok,
+                    "dry_run": False,
+                    "observed": observed,
+                    **({} if ok else {"error": f"keeta accepted but reads {observed}"}),
+                }
+            )
+        return results
+    finally:
+        await page.close()

@@ -48,6 +48,8 @@ class BranchCreate(BaseModel):
     uses_pos: bool = True
     #: Whether this branch's terminals show the read-only Recipes tab. Off by default.
     show_recipes: bool = False
+    #: The register's "Sent to kitchen" tab — pay-later checks. Off by default.
+    pay_later_checks: bool = False
     #: The branch this one returns stock to (surplus/expired/damaged). Null = none.
     return_branch_id: UUID | None = None
     accepts_reservations: bool = False
@@ -84,6 +86,7 @@ class BranchUpdate(BaseModel):
     offers_pickup: bool | None = None
     uses_pos: bool | None = None
     show_recipes: bool | None = None
+    pay_later_checks: bool | None = None
     #: Local-first counter rollout: `off` | `shadow` | `on`. See
     #: `Branch.counter_local_first`.
     counter_local_first: Literal["off", "shadow", "on"] | None = None
@@ -125,6 +128,12 @@ class BranchResponse(ORMModel):
     show_recipes: bool
     #: Local-first counter rollout: `off` | `shadow` | `on`.
     counter_local_first: str = "off"
+    #: The register's "Sent to kitchen" tab: a check may be fired, set aside
+    #: and paid after the food is served.
+    pay_later_checks: bool = False
+    #: Busy mode: when it was turned on, null when the branch is trading
+    #: normally. Offline for the website and every aggregator while set.
+    busy_since: datetime | None = None
     return_branch_id: UUID | None
     accepts_reservations: bool
     reservation_duration: int

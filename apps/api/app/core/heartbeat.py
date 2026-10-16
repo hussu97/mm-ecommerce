@@ -39,6 +39,7 @@ LOOP_NAMES = (
     "replenishment",
     "vat_ledger_refresh",
     "branch_hours_sync",
+    "busy_sync",
     "grubops_reconcile",
     "grubops_orders",
     "aggregator_ingest",

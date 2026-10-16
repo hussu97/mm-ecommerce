@@ -26,6 +26,7 @@ from app.models import (
     KitchenTicket,
     Order,
     OrderItem,
+    OrderItemStatusEnum,
     OrderSourceEnum,
     OrderStatusEnum,
     PosOrderStatusEnum,
@@ -260,6 +261,10 @@ async def list_orders(
     # Only marketplace orders on their way back (a return PIN pending or known).
     # The register's return-docket fallback poll; a handful of rows at most.
     returns_pending: bool = False,
+    # Pay-later checks: open counter checks with food already in the kitchen —
+    # the register's "Sent to kitchen" tab. Not scoped by business date, so a
+    # check fired before the day's cut-off does not vanish from the tab.
+    in_kitchen: bool = False,
     q: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -282,6 +287,16 @@ async def list_orders(
         stmt = stmt.where(Order.order_type == order_type)
     if open_only:
         stmt = stmt.where(Order.pos_status.in_(sorted(pos_order_service.OPEN_STATUSES)))
+    if in_kitchen:
+        stmt = stmt.where(
+            Order.source == OrderSourceEnum.CASHIER.value,
+            Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
+            exists().where(
+                OrderItem.order_id == Order.id,
+                OrderItem.sent_to_kitchen_at.is_not(None),
+                OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
+            ),
+        )
     if returns_pending:
         # An IN over the (tiny) returns table, so the plan starts there rather
         # than at the branch's whole order history.

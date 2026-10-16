@@ -323,6 +323,13 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         spawn_tracked(branch_hours_sync.run_forever(), name="branch_hours_sync")
     )
 
+    # Busy mode out to the marketplaces. A few-second tick so the register's
+    # chips move while the cashier is watching; writes are gated by the same
+    # hours flags, so with them off it only marks channels "manual".
+    from app.services.aggregators import busy_sync
+
+    background.append(spawn_tracked(busy_sync.run_forever(), name="busy_sync"))
+
     # Same reasoning, its own flag: this one talks to somebody else's
     # private API, so it has to be switchable off without taking the
     # dispatcher down with it. Storefront only, like its neighbours —

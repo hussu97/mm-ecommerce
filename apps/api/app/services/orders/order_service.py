@@ -108,6 +108,10 @@ from app.services.pos import business_day_service, pos_order_service
 
 logger = logging.getLogger(__name__)
 
+#: The code a pickup order is refused with when its chosen shop is in busy
+#: mode, so the web app can send the customer back to choose another.
+BRANCH_BUSY = "branch_busy"
+
 __all__ = [
     "SUPPORTED_LOCALES",
     "VALID_TRANSITIONS",
@@ -589,7 +593,12 @@ async def resolve_branch(
 
     if zone is not None and zone.branch_id is not None:
         branch = await db.get(Branch, zone.branch_id)
-        if branch is not None and branch.deleted_at is None and branch.is_active:
+        if (
+            branch is not None
+            and branch.deleted_at is None
+            and branch.is_active
+            and not branch.is_busy
+        ):
             return branch
         logger.warning(
             "Zone %s names branch %s, which cannot take orders",
@@ -608,7 +617,9 @@ async def resolve_branch(
             .scalars()
             .first()
         )
-        if branch is not None:
+        # `resolve_pickup` also feeds courier dispatch for orders already
+        # placed, so it is not filtered itself; a busy kitchen is refused here.
+        if branch is not None and not branch.is_busy:
             return branch
 
     # Last resort: any branch that is open for business. `resolve_pickup` is
@@ -620,7 +631,11 @@ async def resolve_branch(
         (
             await db.execute(
                 select(Branch)
-                .where(Branch.is_active.is_(True), Branch.deleted_at.is_(None))
+                .where(
+                    Branch.is_active.is_(True),
+                    Branch.deleted_at.is_(None),
+                    ~Branch.is_busy,
+                )
                 .order_by(Branch.display_order, Branch.name)
             )
         )
@@ -657,11 +672,16 @@ class NoBranchFulfils:
 
     best_branch: Branch | None
     unavailable: list[availability_service.UnavailableLine]
+    #: The pickup branch the customer chose, when it is in busy mode. Refused
+    #: by name rather than quietly re-routed: a collection order sent to a
+    #: different shop is a customer driving to the wrong one.
+    busy_branch: Branch | None = None
 
 
 async def _load_active_branch(db: AsyncSession, branch_id: uuid.UUID) -> Branch | None:
     """A branch that may actually take this online order — active, not deleted,
-    and still switched on for online orders.
+    and still switched on for online orders — and not in busy mode, which is the
+    shop's own same-day version of that switch, thrown from the register.
 
     An assignment on the map says a branch *should* serve a zone; the
     `receives_online_orders` flag is the branch's own switch, and turning it off
@@ -674,6 +694,7 @@ async def _load_active_branch(db: AsyncSession, branch_id: uuid.UUID) -> Branch 
         and branch.deleted_at is None
         and branch.is_active
         and branch.receives_online_orders
+        and not branch.is_busy
     ):
         return branch
     return None
@@ -704,6 +725,9 @@ async def select_fulfilment(
     """
     # Pickup: the chosen store wins outright, exactly as `resolve_branch` does.
     if pickup_branch_id is not None:
+        chosen = await db.get(Branch, pickup_branch_id)
+        if chosen is not None and chosen.is_busy:
+            return NoBranchFulfils(best_branch=None, unavailable=[], busy_branch=chosen)
         branch = await resolve_branch(db, zone, pickup_branch_id=pickup_branch_id)
         if branch is not None:
             return FulfilmentChoice(
@@ -1473,6 +1497,12 @@ async def create_order(
         ),
     )
     if isinstance(choice, NoBranchFulfils):
+        if choice.busy_branch is not None:
+            raise ConflictError(
+                f"{choice.busy_branch.name} isn't taking online orders right now. "
+                "Please choose another pickup point or delivery.",
+                code=BRANCH_BUSY,
+            )
         if choice.best_branch is None:
             logger.error("No branch can take online orders; refusing %s", data.email)
             raise BadRequestError(
@@ -1802,7 +1832,7 @@ async def preview_order(
         branch = choice.branch
         unavailable: list[availability_service.UnavailableLine] = []
     else:
-        branch = choice.best_branch
+        branch = choice.best_branch or choice.busy_branch
         unavailable = choice.unavailable
 
     # Match what `create_order` will charge: if the resolved kitchen's website

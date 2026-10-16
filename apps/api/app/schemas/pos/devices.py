@@ -16,6 +16,7 @@ from app.core.pos_builds import (
 
 from ._base import ORMModel
 from .branches import BranchResponse
+from .busy_mode import BusyStatusResponse
 
 DeviceTypeLiteral = Literal["cashier", "sub_cashier", "display", "notifier"]
 
@@ -133,6 +134,9 @@ class DeviceSessionResponse(BaseModel):
     branch: BranchResponse
     #: See `DevicePairResponse.custom_orders_enabled`.
     custom_orders_enabled: bool = False
+    #: Busy mode at this branch, so every till shows the banner within one
+    #: heartbeat even when the push that announced it was lost.
+    busy: BusyStatusResponse | None = None
 
 
 class PrinterCreate(BaseModel):

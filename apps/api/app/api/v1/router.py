@@ -78,6 +78,7 @@ from .orders import router as orders_router
 from .payment_gateways import router as payment_gateways_router
 from .payments import router as payments_router
 from .po_misc import po_misc_categories_router, po_misc_periods_router
+from .pos_busy import router as pos_busy_router
 from .pos_config import (
     charges_router,
     kitchen_flows_router,
@@ -191,6 +192,7 @@ api_router.include_router(
     kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]
 )
 api_router.include_router(devices_router, prefix="/devices", tags=["Devices"])
+api_router.include_router(pos_busy_router, prefix="/pos/branch", tags=["Busy mode"])
 api_router.include_router(printers_router, prefix="/printers", tags=["Printers"])
 api_router.include_router(roles_router, prefix="/roles", tags=["Roles"])
 api_router.include_router(staff_router, prefix="/staff", tags=["Staff"])

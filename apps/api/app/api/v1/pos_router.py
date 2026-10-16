@@ -37,6 +37,7 @@ from .operations import (
     pos_transfers_router,
 )
 from .po_misc import pos_po_misc_router
+from .pos_busy import router as pos_busy_router
 from .pos_config import (
     charges_router,
     kitchen_flows_router,
@@ -75,6 +76,8 @@ pos_api_router.include_router(menu_groups_router, prefix="/menu-groups", tags=["
 pos_api_router.include_router(
     availability_router, prefix="/pos/availability", tags=["Availability"]
 )
+# Busy mode — the branch's own "offline for online orders" switch.
+pos_api_router.include_router(pos_busy_router, prefix="/pos/branch", tags=["Busy mode"])
 
 # ─── Selling ──────────────────────────────────────────────────────────────────
 pos_api_router.include_router(
