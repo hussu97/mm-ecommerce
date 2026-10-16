@@ -87,6 +87,19 @@ describe('isInjectedScriptError', () => {
     ).toBe(false);
   });
 
+  it('drops an error thrown wholly inside a URL-less script (Chrome iOS injected)', () => {
+    expect(isInjectedScriptError(eventWithFrames('Maximum call stack size exceeded.', ['undefined']))).toBe(true);
+    expect(isInjectedScriptError(eventWithFrames('Ka`prod', ['[native code]', 'undefined', '<anonymous>']))).toBe(true);
+  });
+
+  it('keeps a URL-less frame that passes through our own bundle', () => {
+    expect(
+      isInjectedScriptError(
+        eventWithFrames('Maximum call stack size exceeded.', ['undefined', 'app:///_next/static/chunks/main.js']),
+      ),
+    ).toBe(false);
+  });
+
   it('keeps an error with no stack', () => {
     expect(isInjectedScriptError(errorEvent("Cannot read properties of undefined (reading 'id')"))).toBe(false);
   });
