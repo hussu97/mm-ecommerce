@@ -1036,7 +1036,18 @@ async def void_item(
         and _net_paid(order) == 0
     ):
         return await _void_open_check(db, order=order, user=user, reason_id=reason_id)
-    return await recalculate(db, order)
+    order = await recalculate(db, order)
+    # A payment already covers more than the check now costs. Letting the void
+    # through would leave the shop holding money for food it is not serving —
+    # and the settled-order sweep would then close the check as fully paid, so
+    # nobody would ever be prompted to give it back. Common once a check can be
+    # part-paid and still edited (pay-later checks), so refused outright: the
+    # request rolls back and the line stays live until the payment is refunded.
+    if _net_paid(order) > money(order.total):
+        raise ConflictError(
+            "A payment already covers this item. Refund the payment before voiding it."
+        )
+    return order
 
 
 async def return_item(

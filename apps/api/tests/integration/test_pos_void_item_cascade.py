@@ -21,6 +21,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.exceptions import ConflictError
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import Warehouse
@@ -175,8 +176,10 @@ async def test_a_paid_check_does_not_cascade_on_the_last_void(engine):
         env = await _open_check(db, prices=[Decimal("35.00")])
 
     # Money is on the check: voiding the last line must not silently cancel it —
-    # that would strand a held payment against a cancelled sale. The line voids,
-    # the check stays open for the explicit void flow to refund and end.
+    # that would strand a held payment against a cancelled sale. Nor may the
+    # line quietly void while the money for it stays held (the settled-order
+    # sweep would then close a zero check as paid). The void is refused, the
+    # line stays live and the check stays open: refund first, then void.
     async with Session() as db:
         order = await pos_order_service.get_order(db, env["order_id"])
         user = await db.get(User, env["user_id"])
@@ -194,15 +197,15 @@ async def test_a_paid_check_does_not_cascade_on_the_last_void(engine):
     async with Session() as db:
         order = await pos_order_service.get_order(db, env["order_id"])
         user = await db.get(User, env["user_id"])
-        result = await pos_order_service.void_item(
-            db, order=order, item_id=env["item_ids"][0], user=user
-        )
-        await db.commit()
-        assert result.pos_status == "active"
-        assert result.status == OrderStatusEnum.CREATED
+        with pytest.raises(ConflictError, match="Refund the payment"):
+            await pos_order_service.void_item(
+                db, order=order, item_id=env["item_ids"][0], user=user
+            )
+        await db.rollback()
 
     async with Session() as db:
         order = await pos_order_service.get_order(db, env["order_id"])
         assert order.pos_status == "active"
-        assert order.items[0].status == "void"
+        assert order.status == OrderStatusEnum.CREATED
+        assert order.items[0].status != "void"
         assert pos_order_service._net_paid(order) == Decimal("35.00")
