@@ -3809,6 +3809,11 @@
             "title": "Offers Pickup",
             "type": "boolean"
           },
+          "pay_later_checks": {
+            "default": false,
+            "title": "Pay Later Checks",
+            "type": "boolean"
+          },
           "phone": {
             "anyOf": [
               {
@@ -4685,6 +4690,18 @@
             "title": "Business Day Start",
             "type": "string"
           },
+          "busy_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Busy Since"
+          },
           "cash_enabled": {
             "title": "Cash Enabled",
             "type": "boolean"
@@ -4813,6 +4830,11 @@
           },
           "offers_pickup": {
             "title": "Offers Pickup",
+            "type": "boolean"
+          },
+          "pay_later_checks": {
+            "default": false,
+            "title": "Pay Later Checks",
             "type": "boolean"
           },
           "phone": {
@@ -5212,6 +5234,17 @@
               }
             ],
             "title": "Offers Pickup"
+          },
+          "pay_later_checks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pay Later Checks"
           },
           "phone": {
             "anyOf": [
@@ -7117,6 +7150,94 @@
           }
         },
         "title": "BusinessSettingsUpdate",
+        "type": "object"
+      },
+      "BusyChannelResponse": {
+        "description": "One aggregator outlet's progress, drawn as a chip on the banner.",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "closing",
+              "closed",
+              "opening",
+              "open",
+              "failed",
+              "manual",
+              "not_live"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "label",
+          "state"
+        ],
+        "title": "BusyChannelResponse",
+        "type": "object"
+      },
+      "BusyStatusResponse": {
+        "properties": {
+          "busy": {
+            "title": "Busy",
+            "type": "boolean"
+          },
+          "by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Name"
+          },
+          "channels": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BusyChannelResponse"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          }
+        },
+        "required": [
+          "busy"
+        ],
+        "title": "BusyStatusResponse",
         "type": "object"
       },
       "CancellationExposureResponse": {
@@ -14259,6 +14380,16 @@
         "properties": {
           "branch": {
             "$ref": "#/components/schemas/BranchResponse"
+          },
+          "busy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BusyStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "custom_orders_enabled": {
             "default": false,
@@ -36524,6 +36655,19 @@
         "title": "SetAvailabilityRequest",
         "type": "object"
       },
+      "SetBusyRequest": {
+        "properties": {
+          "busy": {
+            "title": "Busy",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "busy"
+        ],
+        "title": "SetBusyRequest",
+        "type": "object"
+      },
       "SetOptionAvailabilityRequest": {
         "properties": {
           "branch_id": {
@@ -43439,6 +43583,134 @@
         "title": "WeeklyShift",
         "type": "object"
       },
+      "WorkerCommandClaimOut": {
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerCommandOut"
+            },
+            "title": "Commands",
+            "type": "array"
+          }
+        },
+        "title": "WorkerCommandClaimOut",
+        "type": "object"
+      },
+      "WorkerCommandOut": {
+        "description": "One write the headed worker is asked to make (busy mode on Keeta).\n\n`desired` is `closed` or `open`. `weekly` is the exact\n`businessHourOfTheWeek` to write if the worker closes by hours: MM's\nschedule, with today set closed for a close \u2014 so both directions are a\nwhole-week write from MM's source of truth, never a read-modify of the\nportal's own copy. `dry_run` echoes the API's live flag.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "desired": {
+            "title": "Desired",
+            "type": "string"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "shop_id": {
+            "title": "Shop Id",
+            "type": "string"
+          },
+          "weekly": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "title": "Weekly",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "shop_id",
+          "branch_id",
+          "desired",
+          "dry_run",
+          "weekly"
+        ],
+        "title": "WorkerCommandOut",
+        "type": "object"
+      },
+      "WorkerCommandResultIn": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "WorkerCommandResultIn",
+        "type": "object"
+      },
+      "WorkerCommandResultOut": {
+        "properties": {
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded"
+        ],
+        "title": "WorkerCommandResultOut",
+        "type": "object"
+      },
+      "WorkerCommandsWaitingOut": {
+        "properties": {
+          "waiting": {
+            "title": "Waiting",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "waiting"
+        ],
+        "title": "WorkerCommandsWaitingOut",
+        "type": "object"
+      },
       "ZoneData": {
         "properties": {
           "orders": {
@@ -46673,6 +46945,196 @@
           }
         },
         "summary": "Hydrate Accounts",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/commands/claim": {
+      "post": {
+        "description": "Hand the worker what it has been asked to write (busy mode on Keeta).\n\nPolled every few seconds by the worker's scheduler; an empty list is the\nordinary answer. Each command carries the whole week to write, built from\nMM's schedule here, so the worker needs no DB and makes no decision.",
+        "operationId": "worker_claim_commands_api_v1_aggregators_worker_commands_claim_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": true,
+            "schema": {
+              "maxLength": 20,
+              "title": "Channel",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerCommandClaimOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Claim Commands",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/commands/waiting": {
+      "get": {
+        "description": "The worker's cheap poll: is there anything for the browser to do?",
+        "operationId": "worker_commands_waiting_api_v1_aggregators_worker_commands_waiting_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": true,
+            "schema": {
+              "maxLength": 20,
+              "title": "Channel",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerCommandsWaitingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Commands Waiting",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/commands/{command_id}/result": {
+      "post": {
+        "description": "The worker's outcome for one command; moves the busy-mode chip.",
+        "operationId": "worker_command_result_api_v1_aggregators_worker_commands__command_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Command Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerCommandResultIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerCommandResultOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Command Result",
         "tags": [
           "Aggregators"
         ]
@@ -49972,6 +50434,112 @@
           }
         ],
         "summary": "Get Current Business Day",
+        "tags": [
+          "Branches"
+        ]
+      }
+    },
+    "/api/v1/branches/{branch_id}/busy": {
+      "get": {
+        "description": "Busy mode at a branch, with a chip per aggregator outlet.",
+        "operationId": "get_branch_busy_api_v1_branches__branch_id__busy_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusyStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Branch Busy",
+        "tags": [
+          "Branches"
+        ]
+      },
+      "put": {
+        "description": "The console's copy of the register's busy switch \u2014 same effect.",
+        "operationId": "set_branch_busy_api_v1_branches__branch_id__busy_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBusyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusyStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Branch Busy",
         "tags": [
           "Branches"
         ]
@@ -65820,6 +66388,220 @@
         ]
       }
     },
+    "/api/v1/pos/branch/busy": {
+      "get": {
+        "description": "Busy mode at this terminal's branch, with a chip per aggregator outlet.",
+        "operationId": "get_busy_api_v1_pos_branch_busy_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Device-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusyStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Busy",
+        "tags": [
+          "Busy mode"
+        ]
+      },
+      "put": {
+        "description": "Turn busy mode on or off. The website follows at once; the aggregator\noutlets follow within seconds (the chips show each one land).",
+        "operationId": "set_busy_api_v1_pos_branch_busy_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Device-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBusyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusyStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Busy",
+        "tags": [
+          "Busy mode"
+        ]
+      }
+    },
     "/api/v1/pos/counter-sync": {
       "get": {
         "description": "Synced counter sales that need a look \u2014 a pricing mismatch, an\nunverified re-price, a late till/day or any other ingest flag \u2014 the\nquarantined sales, and every terminal's unsynced counts.",
@@ -67193,6 +67975,16 @@
             "schema": {
               "default": false,
               "title": "Returns Pending",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "in_kitchen",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "In Kitchen",
               "type": "boolean"
             }
           },

@@ -248,7 +248,9 @@ async def _serving_branch(
             await db.execute(
                 select(Branch)
                 .where(
-                    Branch.is_active.is_(True), Branch.receives_online_orders.is_(True)
+                    Branch.is_active.is_(True),
+                    Branch.receives_online_orders.is_(True),
+                    ~Branch.is_busy,
                 )
                 .order_by(Branch.created_at)
                 .limit(1)

@@ -40,6 +40,7 @@ __all__ = [
     "push_hours",
     "push_weekly_hours",
     "close_outlet",
+    "reopen_outlet",
 ]
 
 #: httpx writers. Keeta is deliberately absent — see module docstring.
@@ -256,6 +257,42 @@ async def close_outlet(
     )
     if dry_run:
         logger.info("hours writer dry-run close %s %s", channel, plan.get("endpoint"))
+        return plan
+    await _execute(channel, plan)
+    plan["dry_run"] = False
+    return plan
+
+
+async def reopen_outlet(
+    db: Any, *, channel: str, branch: Any, dry_run: bool = True
+) -> dict[str, Any]:
+    """Lift a same-day status close — Talabat's `CLOSED_TODAY` — back to `OPEN`.
+
+    Only Talabat closes by status; the others close by having today's hours
+    removed, and are reopened by `push_weekly_hours` rebuilding the week from
+    MM. Busy mode is the caller: the register's "Turn off busy mode".
+    """
+    _ensure_writable(channel)
+    if channel != "talabat":
+        raise HoursWriteUnsupported(
+            f"{channel} reopens by rewriting its hours (push_weekly_hours)"
+        )
+    session = await _load_session(db, "talabat")
+    row = await _branch_map(db, "talabat", branch.id)
+    vendor = row.external_outlet_id
+    plan: dict[str, Any] = {
+        "session": session,
+        "vendor": vendor,
+        "endpoint": f"PUT vendor-api .../vendors/{vendor}/status",
+        "status": "OPEN",
+        "payload": {"status": "OPEN"},
+        "channel": channel,
+        "branch_id": str(getattr(branch, "id", "")),
+        "op": "reopen_outlet",
+        "dry_run": dry_run,
+    }
+    if dry_run:
+        logger.info("hours writer dry-run reopen %s %s", channel, plan["endpoint"])
         return plan
     await _execute(channel, plan)
     plan["dry_run"] = False

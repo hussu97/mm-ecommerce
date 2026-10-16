@@ -8,10 +8,13 @@ import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { BranchWeeklyHours } from '@/components/pos/BranchWeeklyHours';
 import { BranchHolidays } from '@/components/pos/BranchHolidays';
 import { BranchChannelTaxConfigs } from '@/components/pos/BranchChannelTaxConfigs';
+import { BranchBusyMode } from '@/components/pos/BranchBusyMode';
 
 /** The local-first counter rollout flag (`branches.counter_local_first`). */
 type CounterRollout = 'off' | 'shadow' | 'on';
-type BranchRow = Branch & { counter_local_first?: CounterRollout };
+type BranchRow = Branch & { counter_local_first?: CounterRollout } & Partial<
+    Pick<Schemas['BranchResponse'], 'pay_later_checks' | 'busy_since'>
+  >;
 
 /** A terminal as the rollout warning reads it; `supports_local_first` is decided
  *  server-side against `COUNTER_LOCAL_FIRST_MIN_BUILD`. */
@@ -115,6 +118,7 @@ export default function BranchesPage() {
         cash_enabled: true,
         uses_pos: true,
         show_recipes: false,
+        pay_later_checks: false,
         counter_local_first: 'off',
         accepts_reservations: false,
         is_active: true,
@@ -126,6 +130,17 @@ export default function BranchesPage() {
         { header: 'Type', sortable: true, sortAccessor: (b) => b.type, render: (b) => <span className="capitalize">{b.type}</span> },
         { header: 'Day starts', sortable: true, sortAccessor: (b) => b.business_day_start, render: (b) => b.business_day_start },
         { header: 'Online', sortable: true, sortAccessor: (b) => (b.receives_online_orders ? 'Yes' : 'No'), render: (b) => (b.receives_online_orders ? 'Yes' : 'No') },
+        {
+          header: 'Busy',
+          sortable: true,
+          sortAccessor: (b) => (b.busy_since ? 'Busy' : ''),
+          render: (b) =>
+            b.busy_since ? (
+              <span className="text-xs font-medium text-red-700">Busy</span>
+            ) : (
+              <span className="text-xs text-gray-400">—</span>
+            ),
+        },
         { header: 'Collection', sortable: true, sortAccessor: (b) => (b.offers_pickup ? 'Yes' : 'No'), render: (b) => (b.offers_pickup ? 'Yes' : 'No') },
         {
           header: 'noon Send',
@@ -242,6 +257,13 @@ export default function BranchesPage() {
             'Adds a read-only Recipes tab to every terminal at this branch — the shop-floor reference for how made items are built from their ingredients. View-only; recipes are edited in the Recipes console.',
         },
         {
+          name: 'pay_later_checks',
+          label: 'Pay-later checks ("Sent to kitchen" tab on the POS)',
+          type: 'checkbox',
+          helper:
+            'Restaurant style: a check can be sent to the kitchen, set aside under "Sent to kitchen", edited, and paid after the food is served. Off: every check is paid at the counter as it is rung up.',
+        },
+        {
           name: 'counter_local_first',
           label: 'Local-first counter',
           type: 'select',
@@ -271,6 +293,10 @@ export default function BranchesPage() {
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}
     />
+
+    <div className="mt-8">
+      <BranchBusyMode branches={allBranches} />
+    </div>
 
     <div className="mt-8">
       <CounterRolloutPanel branches={allBranches} terminals={terminals} />

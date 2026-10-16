@@ -10,6 +10,7 @@ def test_jobkind_priority_order():
     # slow nightly finance download never blocks a heal or an orders pull.
     assert (
         JobKind.RELOGIN
+        < JobKind.KEETA_SHOP_STATUS
         < JobKind.WARM
         < JobKind.KEETA_ORDERS
         < JobKind.DELIVEROO_FINANCE

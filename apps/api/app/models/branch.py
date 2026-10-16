@@ -18,7 +18,9 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql.elements import ColumnElement
 
 from .base import Base, TimestampMixin, UUIDMixin, business_date_format
 
@@ -223,6 +225,25 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     counter_local_first: Mapped[str] = mapped_column(
         String(10), nullable=False, server_default="off", default="off"
     )
+    #: Busy mode (migration 315): the branch has taken itself offline for
+    #: online orders — the website stops routing to it and every aggregator
+    #: outlet it trades on is closed (`aggregators/busy_sync`). An on/off switch
+    #: thrown from the register, not a window: it stays on until someone turns
+    #: it off. Null means trading normally. Read through `is_busy`.
+    busy_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    busy_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Pay-later checks (migration 315): the register's "Sent to kitchen" tab.
+    #: A counter check may be fired to the kitchen, set aside, and paid after
+    #: the food is served — restaurant style. Off everywhere but Barsha.
+    pay_later_checks: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
 
     # Relationships
     tax_group: Mapped[TaxGroup | None] = relationship("TaxGroup")
@@ -328,6 +349,20 @@ class Branch(Base, UUIDMixin, TimestampMixin):
             "https://www.google.com/maps/search/?api=1"
             f"&query={self.latitude},{self.longitude}"
         )
+
+    @hybrid_property
+    def is_busy(self) -> bool:
+        """In busy mode — offline for the website and every aggregator.
+
+        A hybrid so the website's branch queries and the Python checks read one
+        predicate: `~Branch.is_busy` in SQL, `branch.is_busy` on a loaded row.
+        """
+        return self.busy_since is not None
+
+    @is_busy.inplace.expression
+    @classmethod
+    def _is_busy_expression(cls) -> ColumnElement[bool]:
+        return cls.busy_since.isnot(None)
 
     @property
     def has_grubops(self) -> bool:

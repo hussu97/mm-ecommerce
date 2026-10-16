@@ -117,6 +117,16 @@ async def _push_weekly_to_channel(
     row. Any other error is recorded `failed`, alerted to Sentry with a stable
     per-channel fingerprint, and swallowed so the next channel still runs.
     """
+    # Busy mode owns this outlet while it wants it closed: mirroring the week
+    # now would put today's hours straight back. It rebuilds the week itself on
+    # the way out of busy mode.
+    from app.services.aggregators import busy_sync
+
+    if await busy_sync.owns_channel(db, branch.id, channel):
+        logger.info(
+            "branch-hours: %s at %s is in busy mode; skipped", channel, branch.name
+        )
+        return
     dry = _dry_run()
     started = utcnow()
     try:

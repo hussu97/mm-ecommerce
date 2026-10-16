@@ -219,6 +219,9 @@ def _website_delivery_branch_ids():
     return select(Branch.id).where(
         Branch.is_active.is_(True),
         Branch.receives_online_orders.is_(True),
+        # Busy mode routes the website around a branch, so its shelf must not
+        # decide what the website lists while it is on.
+        ~Branch.is_busy,
         or_(
             Branch.id.in_(_assigned_branch_ids_on_active_map()),
             ~_assigned_branch_ids_on_active_map().exists(),
@@ -301,6 +304,7 @@ def out_at_every_branch_in_set_subquery(branch_ids: "Sequence[uuid.UUID]"):
     pin_serving = select(Branch.id).where(
         Branch.is_active.is_(True),
         Branch.receives_online_orders.is_(True),
+        ~Branch.is_busy,
         Branch.id.in_(list(branch_ids)),
     )
     ids = select(Branch.id).where(

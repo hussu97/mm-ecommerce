@@ -63,8 +63,16 @@ def test_the_register_carries_what_a_till_needs():
         "/api/v1/pos/counter/sales",
         "/api/v1/pos/counter/promote",
         "/api/v1/pos/counter/shadow",
+        "/api/v1/pos/branch/busy",
     ):
         assert any(p.startswith(present) for p in pos), f"{present} missing"
+
+
+def test_busy_mode_is_on_both_apps():
+    """The till flips it on the POS host; the console reads it on the main one."""
+    for app in (pos_app, web_app):
+        paths = app.openapi()["paths"]
+        assert set(paths["/api/v1/pos/branch/busy"]) == {"get", "put"}
 
 
 def test_local_first_counter_routes_are_on_both_apps():

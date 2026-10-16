@@ -126,6 +126,50 @@ async def push_keeta_hours_result(outcomes: list[dict]) -> dict[str, Any]:
         return resp.json()
 
 
+async def commands_waiting(channel: str) -> int:
+    """GET how many busy-mode commands wait for this channel (the cheap poll)."""
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/worker/commands/waiting"
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(url, params={"channel": channel}, headers=_headers())
+        resp.raise_for_status()
+        return int((resp.json() or {}).get("waiting") or 0)
+
+
+async def claim_commands(channel: str) -> list[dict[str, Any]]:
+    """POST-claim the waiting commands: `[{id, shop_id, desired, dry_run, weekly}]`.
+
+    Claimed at run time, not at poll time, so a command never sits claimed
+    behind a long job and times out before it starts.
+    """
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/worker/commands/claim"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, params={"channel": channel}, headers=_headers())
+        resp.raise_for_status()
+        return list((resp.json() or {}).get("commands") or [])
+
+
+async def push_command_result(
+    command_id: str,
+    *,
+    ok: bool,
+    dry_run: bool,
+    error: str | None = None,
+    result: dict[str, Any] | None = None,
+) -> None:
+    """POST one command's outcome; the API moves the register's busy chip."""
+    url = (
+        f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/worker/commands/"
+        f"{command_id}/result"
+    )
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            url,
+            json={"ok": ok, "dry_run": dry_run, "error": error, "result": result},
+            headers=_headers(),
+        )
+        resp.raise_for_status()
+
+
 async def push_keeta_orders(payloads: list[dict]) -> dict[str, Any]:
     """POST in-page-fetched Keeta order payloads to /aggregators/keeta/orders.
 

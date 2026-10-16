@@ -209,6 +209,43 @@ async def notify_transfer_created(
     )
 
 
+async def notify_branch_busy(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID,
+    branch_name: str,
+    busy: bool,
+) -> int:
+    """Tell every register at the branch that busy mode changed.
+
+    Quiet, like a transfer — never the order alarm. The alert is what a person
+    sees; ``content-available`` is what makes a backgrounded till refresh its
+    banner without waiting for the two-minute heartbeat. The app turns
+    ``event: branch_busy_changed`` into that refresh.
+    """
+    if not is_enabled():
+        return 0
+    if busy:
+        title = "Busy mode is on"
+        body = f"{branch_name} is offline for website and delivery-app orders"
+    else:
+        title = "Busy mode is off"
+        body = f"{branch_name} is back online for website and delivery-app orders"
+    payload = {
+        "aps": {
+            "alert": {"title": title, "body": body},
+            "sound": "default",
+            "interruption-level": "active",
+            "content-available": 1,
+        },
+        "event": "branch_busy_changed",
+        "busy": busy,
+    }
+    return await _send_to_branch(
+        db, branch_id, payload=payload, collapse_id=f"branch-busy:{branch_id}"
+    )
+
+
 async def notify_custom_order_created(db: AsyncSession, order: Order) -> int:
     """Wake the custom-orders branch's registers to print a new order's docket.
 

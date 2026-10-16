@@ -76,6 +76,10 @@ export const branchesApi = {
   create: (data: Partial<Branch>) => api.post<Branch>('/branches', data),
   update: (id: string, data: Partial<Branch>) => api.put<Branch>(`/branches/${id}`, data),
   remove: (id: string) => api.delete<void>(`/branches/${id}`),
+  /** Busy mode: offline for website and delivery-app orders, with a chip per outlet. */
+  busy: (id: string) => api.get<Schemas['BusyStatusResponse']>(`/branches/${id}/busy`),
+  setBusy: (id: string, busy: boolean) =>
+    api.put<Schemas['BusyStatusResponse']>(`/branches/${id}/busy`, { busy }),
   businessDays: (id: string, limit = 30) => api.get<unknown[]>(`/branches/${id}/business-days${buildQs({ limit })}`),
   closeBusinessDay: (id: string) => api.post<unknown>(`/branches/${id}/business-days/close`),
   sections: (id: string) => api.get<unknown[]>(`/branches/${id}/sections`),

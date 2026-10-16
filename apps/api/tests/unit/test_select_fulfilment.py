@@ -24,12 +24,13 @@ from app.services.orders.order_service import (
 pytestmark = pytest.mark.anyio
 
 
-def _branch(*, online=True, active=True, deleted=False):
+def _branch(*, online=True, active=True, deleted=False, busy=False):
     return SimpleNamespace(
         id=uuid.uuid4(),
         is_active=active,
         deleted_at=object() if deleted else None,
         receives_online_orders=online,
+        is_busy=busy,
     )
 
 
@@ -167,3 +168,18 @@ async def test_legacy_zone_with_no_priority_falls_back_to_resolve_branch():
     assert isinstance(choice, FulfilmentChoice)
     assert choice.branch is legacy
     assert choice.provider == "lalamove"
+
+
+async def test_a_busy_branch_is_skipped_for_the_next_rank():
+    """Busy mode is the shop's own same-day switch-off: delivery walks past it."""
+    busy = _branch(busy=True)
+    rank2 = _branch()
+    zone = _zone([(busy, "slider"), (rank2, "noon_send")])
+    with patch(
+        "app.services.orders.order_service.availability_service.unavailable_cart_lines",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        choice = await select_fulfilment(_db([busy, rank2]), zone, cart=None)
+    assert isinstance(choice, FulfilmentChoice)
+    assert choice.branch is rank2

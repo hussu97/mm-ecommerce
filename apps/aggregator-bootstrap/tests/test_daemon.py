@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aggregator_bootstrap import daemon, reauth, warm
+from aggregator_bootstrap import daemon, push, reauth, warm
 from aggregator_bootstrap.browser import NeedsHumanLogin
 from aggregator_bootstrap.queue import Job, JobKind, JobQueue
 
@@ -466,3 +466,113 @@ async def test_scheduler_enqueues_menu_when_interval_positive(monkeypatch, tmp_p
     assert JobKind.KEETA_MENU in kinds
     assert JobKind.DELIVEROO_MENU in kinds
     assert JobKind.KEETA_HOURS not in kinds
+
+
+# ── Busy mode on Keeta ───────────────────────────────────────────────────────
+
+
+async def test_command_poll_enqueues_only_when_something_waits(monkeypatch):
+    waiting = {"n": 0}
+
+    async def _waiting(channel):
+        assert channel == "keeta"
+        return waiting["n"]
+
+    monkeypatch.setattr(push, "commands_waiting", _waiting)
+    q = JobQueue()
+    await daemon._command_poll(q)
+    assert q.pending() == set()
+    waiting["n"] = 1
+    await daemon._command_poll(q)
+    assert q.pending() == {(JobKind.KEETA_SHOP_STATUS, "keeta")}
+
+
+async def test_command_poll_survives_an_api_blip(monkeypatch):
+    async def _boom(channel):
+        raise RuntimeError("api down")
+
+    monkeypatch.setattr(push, "commands_waiting", _boom)
+    q = JobQueue()
+    await daemon._command_poll(q)  # does not raise
+    assert q.pending() == set()
+
+
+async def test_shop_status_writes_what_the_api_built_and_reports_each(monkeypatch):
+    week = {"sun": [{"startTime": 0, "endTime": 0, "option": 1}]}
+    commands = [
+        {
+            "id": "c1",
+            "shop_id": "111",
+            "desired": "closed",
+            "dry_run": False,
+            "weekly": week,
+        },
+        {
+            "id": "c2",
+            "shop_id": "222",
+            "desired": "open",
+            "dry_run": False,
+            "weekly": week,
+        },
+    ]
+    written: dict = {}
+    reported: list[tuple[str, bool, str | None]] = []
+
+    async def _claim(channel):
+        return commands
+
+    async def _write(*, windows, persist, dry_run):
+        written.update(windows=windows, persist=persist, dry_run=dry_run)
+        return {
+            "results": [
+                {"shopId": "111", "raw": {"code": 0}},
+                {"shopId": "222", "raw": {"code": 7, "msg": "nope"}},
+            ]
+        }
+
+    async def _report(command_id, *, ok, dry_run, error=None, result=None):
+        reported.append((command_id, ok, error))
+
+    monkeypatch.setattr(push, "claim_commands", _claim)
+    monkeypatch.setattr(warm, "write_keeta_hours_in_page", _write)
+    monkeypatch.setattr(push, "push_command_result", _report)
+
+    await daemon._dispatch(Job(kind=JobKind.KEETA_SHOP_STATUS, seq=0, channel="keeta"))
+
+    assert written["persist"] is True and written["dry_run"] is False
+    assert [w["shop_id"] for w in written["windows"]] == ["111", "222"]
+    assert reported[0] == ("c1", True, None)
+    assert (
+        reported[1][0] == "c2" and reported[1][1] is False and "nope" in reported[1][2]
+    )
+
+
+async def test_shop_status_reports_failure_when_the_browser_dies(monkeypatch):
+    reported: list[tuple[str, bool]] = []
+
+    async def _claim(channel):
+        return [
+            {
+                "id": "c1",
+                "shop_id": "111",
+                "desired": "closed",
+                "dry_run": False,
+                "weekly": {"sun": []},
+            }
+        ]
+
+    async def _write(**kwargs):
+        raise RuntimeError("chrome crashed")
+
+    async def _report(command_id, *, ok, dry_run, error=None, result=None):
+        reported.append((command_id, ok))
+
+    monkeypatch.setattr(push, "claim_commands", _claim)
+    monkeypatch.setattr(warm, "write_keeta_hours_in_page", _write)
+    monkeypatch.setattr(push, "push_command_result", _report)
+
+    with pytest.raises(RuntimeError):
+        await daemon._dispatch(
+            Job(kind=JobKind.KEETA_SHOP_STATUS, seq=0, channel="keeta")
+        )
+    assert reported == [("c1", False)]
