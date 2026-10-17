@@ -101,8 +101,8 @@ class BranchChannelBusyState(Base, TimestampMixin):
     """What one aggregator outlet ought to be, and how far we got.
 
     `applied_for_date` is the Dubai day a successful close covers. Every close
-    we can make is a "closed today" (Talabat's `CLOSED_TODAY`, or today's hours
-    removed on the others), so a branch still busy after midnight is open again
+    we can make is a "closed today" (today's hours removed from the portal's
+    schedule), so a branch still busy after midnight is open again
     on the portal side — the reconciler re-closes any `closed` row whose date is
     behind today.
     """

@@ -40,7 +40,6 @@ __all__ = [
     "push_hours",
     "push_weekly_hours",
     "close_outlet",
-    "reopen_outlet",
 ]
 
 #: httpx writers. Keeta is deliberately absent — see module docstring.
@@ -263,42 +262,6 @@ async def close_outlet(
     return plan
 
 
-async def reopen_outlet(
-    db: Any, *, channel: str, branch: Any, dry_run: bool = True
-) -> dict[str, Any]:
-    """Lift a same-day status close — Talabat's `CLOSED_TODAY` — back to `OPEN`.
-
-    Only Talabat closes by status; the others close by having today's hours
-    removed, and are reopened by `push_weekly_hours` rebuilding the week from
-    MM. Busy mode is the caller: the register's "Turn off busy mode".
-    """
-    _ensure_writable(channel)
-    if channel != "talabat":
-        raise HoursWriteUnsupported(
-            f"{channel} reopens by rewriting its hours (push_weekly_hours)"
-        )
-    session = await _load_session(db, "talabat")
-    row = await _branch_map(db, "talabat", branch.id)
-    vendor = row.external_outlet_id
-    plan: dict[str, Any] = {
-        "session": session,
-        "vendor": vendor,
-        "endpoint": f"PUT vendor-api .../vendors/{vendor}/status",
-        "status": "OPEN",
-        "payload": {"status": "OPEN"},
-        "channel": channel,
-        "branch_id": str(getattr(branch, "id", "")),
-        "op": "reopen_outlet",
-        "dry_run": dry_run,
-    }
-    if dry_run:
-        logger.info("hours writer dry-run reopen %s %s", channel, plan["endpoint"])
-        return plan
-    await _execute(channel, plan)
-    plan["dry_run"] = False
-    return plan
-
-
 async def _execute(channel: str, plan: dict[str, Any]) -> None:
     """Dispatch a live write. `plan` is the dict the dry-run already returned."""
     session: LoadedSession = plan["session"]
@@ -327,12 +290,9 @@ async def _execute(channel: str, plan: dict[str, Any]) -> None:
     if channel == "talabat":
         from app.services.providers import talabat_provider as tp
 
-        if plan.get("status"):
-            await tp.provider.put_vendor_status(session, plan["vendor"], plan["status"])
-        if plan.get("calendar") is not None:
-            await tp.provider.put_delivery_calendars(
-                session, plan["vendor"], plan["calendar"]
-            )
+        await tp.provider.put_delivery_calendars(
+            session, plan["vendor"], plan["calendar"]
+        )
         return
     if channel == "noon":
         from app.services.providers import noon_provider as np
@@ -410,34 +370,54 @@ async def _deliveroo_close(
     }
 
 
-def _talabat_set_day(raw: Any, *, dh_day: int, opens: str, closes: str) -> Any:
-    """The `Normal` calendar object with `dh_day`'s window replaced (single object,
-    the shape `PUT .../calendars` takes)."""
+def _talabat_normal(raw: Any) -> dict[str, Any]:
+    """A copy of the vendor's `Normal` calendar from the VTS GET (or a blank one)."""
     calendars = (
         [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
         if isinstance(raw, dict)
         else []
     )
-    target = next(
+    return next(
         (c for c in calendars if c.get("name") == "Normal"),
         calendars[0] if calendars else {"name": "Normal", "schedule": {}},
     )
-    schedule = dict(target.get("schedule") or {})
-    by_day = [
+
+
+def _talabat_days_except(target: dict[str, Any], dh_day: int) -> list[dict]:
+    schedule = target.get("schedule") or {}
+    return [
         dict(e)
         for e in (schedule.get("openingTimesByDay") or [])
         if isinstance(e, dict) and e.get("day") != dh_day
     ]
+
+
+def _talabat_with_days(target: dict[str, Any], by_day: list[dict]) -> dict[str, Any]:
+    by_day.sort(key=lambda e: int(e.get("day") or 0))
+    schedule = dict(target.get("schedule") or {})
+    schedule["openingTimesByDay"] = by_day
+    target["schedule"] = schedule
+    return target
+
+
+def _talabat_set_day(raw: Any, *, dh_day: int, opens: str, closes: str) -> Any:
+    """The `Normal` calendar object with `dh_day`'s window replaced (single object,
+    the shape `PUT .../calendars` takes)."""
+    target = _talabat_normal(raw)
+    by_day = _talabat_days_except(target, dh_day)
     by_day.append(
         {
             "day": dh_day,
             "openingTimes": [{"from": _minutes(opens), "to": _minutes(closes)}],
         }
     )
-    by_day.sort(key=lambda e: int(e.get("day") or 0))
-    schedule["openingTimesByDay"] = by_day
-    target["schedule"] = schedule
-    return target
+    return _talabat_with_days(target, by_day)
+
+
+def _talabat_without_day(raw: Any, *, dh_day: int) -> dict[str, Any]:
+    """The `Normal` calendar object with `dh_day` removed — closed that day."""
+    target = _talabat_normal(raw)
+    return _talabat_with_days(target, _talabat_days_except(target, dh_day))
 
 
 async def _talabat_push(
@@ -456,26 +436,38 @@ async def _talabat_push(
         "vendor": vendor,
         "endpoint": f"PUT vts .../vendor/TB_AE;{vendor}/calendars",
         "calendar": calendar,
-        "status": "OPEN",
-        "payload": {"calendar": calendar, "status": "OPEN"},
+        "payload": {"calendar": calendar},
     }
 
 
 async def _talabat_close(
     db: AsyncSession, branch: Any, *, weekday: int
 ) -> dict[str, Any]:
-    # Holiday close is Partner `CLOSED_TODAY`, not a calendar rewrite — weekday
-    # is unused by design (same signature as the other closers).
-    _ = weekday
+    """Today's day removed from the `Normal` calendar — a day with no opening
+    times is a closed day, exactly as `_talabat_normal_calendar_with_week`
+    writes MM's own closed weekdays.
+
+    This used to be `PUT vendor-api .../vendors/{id}/status` with `CLOSED_TODAY`.
+    That route was never verified against the live portal, and it does not
+    exist: every call 404'd `no Route matched with those values`, so busy mode
+    never closed a Talabat outlet. The calendar write is the one already
+    verified live (2026-09-05) and used hourly by the weekly mirror; reopening
+    is that mirror's `push_weekly_hours`, same as Deliveroo, Noon and Careem.
+    """
+    from app.services.providers import talabat_provider as tp
+
     session = await _load_session(db, "talabat")
     row = await _branch_map(db, "talabat", branch.id)
     vendor = row.external_outlet_id
+    current = await tp.provider.get_delivery_calendars(session, vendor)
+    dh_day = (weekday - 1) % 7  # MM 0=Sun → DH 6; MM 1=Mon → DH 0
+    calendar = _talabat_without_day(current, dh_day=dh_day)
     return {
         "session": session,
         "vendor": vendor,
-        "endpoint": f"PUT vendor-api .../vendors/{vendor}/status",
-        "status": "CLOSED_TODAY",
-        "payload": {"status": "CLOSED_TODAY"},
+        "endpoint": f"PUT vts .../vendor/TB_AE;{vendor}/calendars",
+        "calendar": calendar,
+        "payload": {"calendar": calendar},
     }
 
 
@@ -730,16 +722,6 @@ def _talabat_normal_calendar_with_week(
     `{calendars:[…]}` wrapper. Only the "Normal" calendar is touched; the vendor's
     alternative (ramadan/eid) calendars are left as they are.
     """
-    calendars = (
-        [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
-        if isinstance(raw, dict)
-        else []
-    )
-    target = next(
-        (c for c in calendars if c.get("name") == "Normal"),
-        calendars[0] if calendars else {"name": "Normal", "schedule": {}},
-    )
-    schedule = dict(target.get("schedule") or {})
     by_day = [
         {
             "day": (wd - 1) % 7,  # MM 0=Sun → DH 6; MM 1=Mon → DH 0
@@ -748,10 +730,7 @@ def _talabat_normal_calendar_with_week(
         for wd in range(7)
         if (win := weekly.get(wd)) is not None
     ]
-    by_day.sort(key=lambda e: int(e.get("day") or 0))
-    schedule["openingTimesByDay"] = by_day
-    target["schedule"] = schedule
-    return target
+    return _talabat_with_days(_talabat_normal(raw), by_day)
 
 
 async def _talabat_push_weekly(
@@ -764,9 +743,6 @@ async def _talabat_push_weekly(
     vendor = row.external_outlet_id
     current = await tp.provider.get_delivery_calendars(session, vendor)
     calendar = _talabat_normal_calendar_with_week(current, weekly=weekly)
-    # No `status`: the recurring calendar is the schedule; a transient
-    # OPEN/CLOSED_TODAY override belongs to the holiday path, not the weekly
-    # mirror, which must not undo a manager's same-day close.
     return {
         "session": session,
         "vendor": vendor,

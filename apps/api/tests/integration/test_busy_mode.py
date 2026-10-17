@@ -250,16 +250,11 @@ def writers(monkeypatch):
         calls.append(("close", channel))
         return {"endpoint": f"close {channel}"}
 
-    async def reopen_outlet(db, *, channel, branch, dry_run=True):
-        calls.append(("reopen", channel))
-        return {"endpoint": f"reopen {channel}"}
-
     async def push_weekly_hours(db, *, channel, branch, weekly, dry_run=True):
         calls.append(("weekly", channel))
         return {"endpoint": f"weekly {channel}"}
 
     monkeypatch.setattr(hours_writers, "close_outlet", close_outlet)
-    monkeypatch.setattr(hours_writers, "reopen_outlet", reopen_outlet)
     monkeypatch.setattr(hours_writers, "push_weekly_hours", push_weekly_hours)
     return calls, fail
 
@@ -299,8 +294,8 @@ async def test_close_then_reopen_each_outlet_its_own_way(Session, writers, live_
     calls.clear()
     await _toggle(Session, branch_id, False)
     await _drain(Session, branch_id)
-    # Talabat lifts its status close; Deliveroo gets the whole week back.
-    assert sorted(calls) == [("reopen", "talabat"), ("weekly", "deliveroo")]
+    # Both get the whole week back from MM's schedule.
+    assert sorted(calls) == [("weekly", "deliveroo"), ("weekly", "talabat")]
     async with Session() as db:
         assert not await busy_sync.owns_channel(db, branch_id, "deliveroo")
         runs = (

@@ -1323,22 +1323,6 @@ class TalabatClient(BaseAggregatorClient):
             json_body=calendar,
         )
 
-    async def put_vendor_status(
-        self, session: LoadedSession, vendor: str, status: str
-    ) -> Any:
-        """Partner Outlet Management holiday close / reopen.
-
-        `PUT .../vendors/{id}/status` with `OPEN` / `CLOSED_TODAY` / `CLOSED_UNTIL`.
-        Used for a closed weekday or a holiday; the next open day's hours write
-        sends `OPEN` again.
-        """
-        return await self.request_json(
-            session,
-            "PUT",
-            f"{_MENU_API}/vendors/{vendor}/status",
-            json_body={"status": status},
-        )
-
     async def prepare_session(
         self, db: AsyncSession, session: LoadedSession | None
     ) -> LoadedSession | None:
