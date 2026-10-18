@@ -174,7 +174,7 @@ def _jwt_exp(token: str) -> int:
         return 0
 
 
-async def _ensure_fresh_talabat_token(page) -> None:
+async def _ensure_fresh_talabat_token(page) -> bool:
     """Force the SPA to mint a fresh `accessToken` before the session is captured.
 
     The portal PERSISTS the `accessToken` cookie in the Chrome profile, so a heal
@@ -184,7 +184,10 @@ async def _ensure_fresh_talabat_token(page) -> None:
     14:09 kept a token that expired at 13:11). Navigating to the menu console makes
     the SPA fetch the catalog with that token; on an expired one it exchanges the
     `refreshToken` and rewrites the `accessToken` cookie. Best-effort and fail-safe:
-    if it does not refresh, the session is captured exactly as before."""
+    if it does not refresh, the session is captured exactly as before.
+
+    Returns whether the token ended up fresh, so a caller that only *looked*
+    logged in can tell a live profile from one whose refresh token is dead too."""
     import time
 
     ctx = page.context
@@ -197,7 +200,7 @@ async def _ensure_fresh_talabat_token(page) -> None:
 
     for _ in range(3):
         if await _access_exp() > time.time() + 300:  # >5 min of life left = fresh
-            return
+            return True
         try:
             await page.goto(
                 "https://partner-app.talabat.com/menu-management-v2",
@@ -208,6 +211,7 @@ async def _ensure_fresh_talabat_token(page) -> None:
         except Exception:  # noqa: BLE001 — never let a refresh nudge break the login
             break
     logger.info("talabat: accessToken still stale after refresh nudge; proceeding")
+    return False
 
 
 async def _talabat_debug_shot(page, tag: str) -> None:
@@ -247,13 +251,34 @@ async def login_talabat(
         logger.info("talabat: already authenticated on load")
         # The persisted accessToken is often stale on this path — refresh it before
         # the caller captures the session, or the vendor-api read 401s an hour later.
-        await _ensure_fresh_talabat_token(page)
-        # RETURN THE PAGE, not None: login_with_account does
-        # `page = await login_talabat(...)`, so a bare `return` set page=None and
-        # the heal then timed out even though the profile was already logged in —
-        # the commonest way talabat can heal without a fresh OTP login. Match
-        # login_careem / login_noon, which return the page on every exit.
-        return page
+        if await _ensure_fresh_talabat_token(page):
+            # RETURN THE PAGE, not None: login_with_account does
+            # `page = await login_talabat(...)`, so a bare `return` set page=None
+            # and the heal then timed out even though the profile was already
+            # logged in — the commonest way talabat can heal without a fresh OTP
+            # login. Match login_careem / login_noon, which return the page on
+            # every exit.
+            return page
+        # The SPA still renders from its persisted cookies, but the refresh token
+        # is dead too, so nothing can mint a bearer. Returning here captured that
+        # expired token and pushed it `live`; the first API call 401'd it back to
+        # `needs_bootstrap`, and every heal repeated the same thing
+        # (2026-10-18: Talabat dead from 13:29 with a "successful" re-login at
+        # 17:16). Drop the portal's cookies and log in for real.
+        logger.info(
+            "talabat: profile token unrefreshable; clearing it for a fresh login"
+        )
+        try:  # the SPA may also keep its auth state in web storage
+            await page.evaluate("localStorage.clear(); sessionStorage.clear()")
+        except Exception:  # noqa: BLE001 — best-effort; the cookies are the session
+            pass
+        await context.clear_cookies(domain="partner-app.talabat.com")
+        await context.clear_cookies(domain=".talabat.com")
+        await page.goto(
+            TALABAT_LOGIN_URL, wait_until="domcontentloaded", timeout=60_000
+        )
+        await page.wait_for_timeout(3_000)
+        await _dismiss_talabat_cookie_banner(page)
     if await _talabat_human_verification_present(page):
         await _talabat_debug_shot(page, "px-gate")
         raise AntiBotChallengeError(
