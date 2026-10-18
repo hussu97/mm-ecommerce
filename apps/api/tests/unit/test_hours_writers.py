@@ -97,9 +97,9 @@ async def test_close_outlet_dry_run_does_not_execute(monkeypatch):
 
     async def fake_closer(_db, _branch, **_kw):
         return {
-            "endpoint": "PUT .../vendors/1/status",
-            "status": "CLOSED_TODAY",
-            "payload": {"status": "CLOSED_TODAY"},
+            "endpoint": "PUT vts .../vendor/TB_AE;1/calendars",
+            "calendar": {"name": "Normal", "schedule": {}},
+            "payload": {"calendar": {"name": "Normal", "schedule": {}}},
             "session": object(),
         }
 
@@ -193,6 +193,54 @@ def test_talabat_weekly_builder_returns_single_normal_calendar():
     assert [e["day"] for e in by_day] == [0, 6]
     assert by_day[0]["openingTimes"] == [{"from": 540, "to": 1380}]  # Mon 09:00-23:00
     assert by_day[1]["openingTimes"] == [{"from": 480, "to": 1320}]  # Sun 08:00-22:00
+
+
+@pytest.mark.asyncio
+async def test_talabat_close_removes_today_from_the_calendar(monkeypatch):
+    # Busy mode closes Talabat the way the weekly mirror writes a closed weekday:
+    # today's day absent from the Normal calendar. No vendor-status write — that
+    # route 404'd on every call in production.
+    raw = {
+        "calendars": [
+            {
+                "id": "1",
+                "name": "Normal",
+                "schedule": {
+                    "type": "REGULAR",
+                    "openingTimesByDay": [
+                        {"day": 0, "openingTimes": [{"from": 480, "to": 1320}]},
+                        {"day": 5, "openingTimes": [{"from": 720, "to": 1320}]},
+                    ],
+                },
+            },
+            {"name": "Special", "schedule": {"openingTimesByDay": []}},
+        ]
+    }
+    from app.services.providers import talabat_provider as tp
+
+    async def fake_load(_db, _channel):
+        return object()
+
+    async def fake_map(_db, _channel, _branch_id):
+        return SimpleNamespace(external_outlet_id="711571")
+
+    async def fake_get(_session, vendor):
+        assert vendor == "711571"
+        return raw
+
+    monkeypatch.setattr(hw, "_load_session", fake_load)
+    monkeypatch.setattr(hw, "_branch_map", fake_map)
+    monkeypatch.setattr(tp.provider, "get_delivery_calendars", fake_get)
+
+    # MM Saturday (6) is DH day 5.
+    plan = await hw._talabat_close(object(), SimpleNamespace(id="b1"), weekday=6)
+    assert "status" not in plan
+    cal = plan["calendar"]
+    assert cal["name"] == "Normal" and cal["id"] == "1"
+    assert cal["schedule"]["type"] == "REGULAR"
+    assert [e["day"] for e in cal["schedule"]["openingTimesByDay"]] == [0]
+    # The GET's own objects are not mutated.
+    assert len(raw["calendars"][0]["schedule"]["openingTimesByDay"]) == 2
 
 
 def test_noon_weekly_builder_maps_days_and_keeps_envelope():

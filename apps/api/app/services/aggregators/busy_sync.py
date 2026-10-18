@@ -7,8 +7,7 @@ channel closes the way its portal allows:
 
 | channel | close | reopen |
 |---|---|---|
-| talabat | vendor status `CLOSED_TODAY` | vendor status `OPEN` (unless MM's own schedule has today closed) |
-| deliveroo / noon / careem | today's hours removed | the whole week rebuilt from MM (`push_weekly_hours`) |
+| talabat / deliveroo / noon / careem | today's hours removed | the whole week rebuilt from MM (`push_weekly_hours`) |
 | keeta | a command for the headed worker (`worker_commands`), which calls the portal's own `set-rest` | the same, `set-open` |
 
 Every close we can make is "closed *today*", so a branch still busy after
@@ -63,7 +62,7 @@ _WORKER_WAIT = worker_commands.CLAIM_TIMEOUT
 #: Portal writes in flight at once — each holds a scheduler connection.
 _PARALLEL = 2
 #: Channels closed by rewriting hours — they need MM's schedule to reopen from.
-_HOURS_CHANNELS = frozenset({"deliveroo", "noon", "careem"})
+_HOURS_CHANNELS = frozenset({"talabat", "deliveroo", "noon", "careem"})
 
 
 def _today() -> date:
@@ -313,14 +312,6 @@ async def _write(db: AsyncSession, branch: Branch, seen: _Seen) -> str | None:
         )
     if seen.desired == "closed":
         plan = await hours_writers.close_outlet(
-            db, channel=channel, branch=branch, dry_run=dry
-        )
-        return str(plan.get("endpoint"))
-    if channel == "talabat":
-        if branch_hours_service.window_for(sched, _today()) is None and sched:
-            # A day the branch is closed anyway: `OPEN` would contradict it.
-            return None
-        plan = await hours_writers.reopen_outlet(
             db, channel=channel, branch=branch, dry_run=dry
         )
         return str(plan.get("endpoint"))
