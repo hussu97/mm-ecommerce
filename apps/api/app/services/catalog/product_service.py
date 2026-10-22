@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core import search as search_text
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.category import Category
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import (
@@ -23,6 +23,7 @@ from app.models.tax import TaxGroup
 from app.schemas.product import (
     ProductCreate,
     ProductModifierLink,
+    ProductModifierLinkUpdate,
     ProductResponse,
     ProductUpdate,
 )
@@ -569,6 +570,50 @@ async def link_modifier(
     result = await db.execute(stmt)
     product = result.scalar_one()
     return ProductResponse.model_validate(product)
+
+
+async def update_modifier_link(
+    db: AsyncSession,
+    slug: str,
+    modifier_id: uuid.UUID,
+    data: ProductModifierLinkUpdate,
+) -> ProductResponse:
+    """Change a link's choice rules in place. Before this the only way to move
+    a group's maximum was to unlink it and link it again."""
+    product_id = (
+        await db.execute(select(Product.id).where(Product.slug == slug))
+    ).scalar_one_or_none()
+    if product_id is None:
+        raise NotFoundError(f"Product '{slug}' not found")
+
+    pm = (
+        await db.execute(
+            select(ProductModifier).where(
+                ProductModifier.product_id == product_id,
+                ProductModifier.modifier_id == modifier_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if pm is None:
+        raise NotFoundError("Modifier is not linked to this product")
+
+    for key, val in data.model_dump(exclude_unset=True, exclude_none=True).items():
+        setattr(pm, key, val)
+    # A group whose minimum exceeds its maximum can never be satisfied, so the
+    # product would be unsellable everywhere that enforces the rules.
+    if pm.minimum_options > pm.maximum_options:
+        raise BadRequestError(
+            "The minimum cannot be more than the maximum "
+            f"({pm.minimum_options} > {pm.maximum_options})"
+        )
+    await db.flush()
+
+    stmt = (
+        select(Product)
+        .options(*_product_load_options())
+        .where(Product.id == product_id)
+    )
+    return ProductResponse.model_validate((await db.execute(stmt)).scalar_one())
 
 
 async def unlink_modifier(

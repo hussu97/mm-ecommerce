@@ -66,6 +66,17 @@ class ProductModifierLink(BaseModel):
     unique_options: bool = False
 
 
+class ProductModifierLinkUpdate(BaseModel):
+    """The rules on an existing product↔modifier link — omitted fields keep
+    their value, so the product page can change one number without resending
+    the rest."""
+
+    minimum_options: int | None = Field(None, ge=0)
+    maximum_options: int | None = Field(None, ge=0)
+    free_options: int | None = Field(None, ge=0)
+    unique_options: bool | None = None
+
+
 class ProductCreate(BaseModel):
     category_id: UUID | None = None
     name: str = Field(min_length=1, max_length=200)

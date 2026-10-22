@@ -324,6 +324,10 @@ export const inventoryApi = {
     requestBlob(`/inventory/purchase-orders/export${buildQs(params)}`),
   purchaseOrder: (id: string) => api.get<PurchaseOrder>(`/inventory/purchase-orders/${id}`),
   createPurchaseOrder: (d: Record<string, unknown>) => api.post<PurchaseOrder>('/inventory/purchase-orders', d),
+  // Draft lines priced against each item's latest received purchase and its
+  // current average cost — the new-PO form's comparison. Writes nothing.
+  checkPurchaseLineCosts: (lines: Schemas['PurchaseLineCostCheckLine'][]) =>
+    api.post<Schemas['PurchaseLineCostCheck'][]>('/inventory/purchase-orders/line-cost-check', { lines }),
   updatePurchaseOrder: (id: string, d: Record<string, unknown>) =>
     api.put<PurchaseOrder>(`/inventory/purchase-orders/${id}`, d),
   submitPurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/submit`),

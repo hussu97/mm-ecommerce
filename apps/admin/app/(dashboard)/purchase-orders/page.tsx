@@ -27,6 +27,7 @@ import {
   periodIsValid,
   type MiscPeriodValue,
 } from '@/components/purchasing/MiscPeriodPicker';
+import { LineCostComparison, useLineCostChecks } from '@/components/purchasing/LineCostComparison';
 import { formatCost, formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
@@ -43,6 +44,9 @@ const STATUS_VARIANT: Record<
 };
 
 interface DraftLine {
+  // Stable across removals, so a line's price comparison never lands on its
+  // neighbour while an answer is in flight.
+  uid: string;
   item_id: string;
   quantity: string;
   entered_total: string;
@@ -58,6 +62,12 @@ interface MiscDraft {
 }
 
 const VAT_RATE = 0.05;
+
+let draftLineSeq = 0;
+function newDraftLine(): DraftLine {
+  draftLineSeq += 1;
+  return { uid: `line-${draftLineSeq}`, item_id: '', quantity: '1', entered_total: '0' };
+}
 
 const STATUS_OPTIONS: { value: PurchaseOrderStatus; label: string }[] = [
   { value: 'draft', label: 'Draft' },
@@ -560,7 +570,7 @@ function CreateOrder({
   const [invoiceDate, setInvoiceDate] = useState('');
   const [supplierReference, setSupplierReference] = useState('');
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
-  const [lines, setLines] = useState<DraftLine[]>([{ item_id: '', quantity: '1', entered_total: '0' }]);
+  const [lines, setLines] = useState<DraftLine[]>(() => [newDraftLine()]);
   const [miscLines, setMiscLines] = useState<MiscDraft[]>([]);
   // What misc lines are filed under, and the period presets. Alphabetical from
   // the API; admin-only categories arrive only for those allowed to use them.
@@ -571,6 +581,8 @@ function CreateOrder({
   const [supplierItems, setSupplierItems] = useState<SupplierItem[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Each inventory line against the item's last purchase and its average cost.
+  const costChecks = useLineCostChecks(lines);
 
   const supplier = suppliers.find((s) => s.id === supplierId) ?? null;
   const vatDeductible = supplier?.is_vat_deductible ?? false;
@@ -803,10 +815,14 @@ function CreateOrder({
         </thead>
         <tbody>
           {lines.map((line, index) => {
-            const qty = Number(line.quantity || 0);
-            const unit = qty > 0 ? Number(line.entered_total || 0) / qty : 0;
+            const check = costChecks.checks[line.uid];
+            // A quoted unit cost only while it answers this item — a swapped
+            // item shows nothing until its own answer arrives.
+            const quoted = check && check.item_id === line.item_id ? check : undefined;
+            const unit = unitFor(line.item_id);
             return (
-              <tr key={index} className={`border-b border-gray-100 ${interactiveRowClass}`}>
+              <Fragment key={line.uid}>
+              <tr className={`${line.item_id ? '' : 'border-b border-gray-100'} ${interactiveRowClass}`}>
                 <td className="py-2 pr-2">
                   <Select
                     value={line.item_id}
@@ -818,7 +834,7 @@ function CreateOrder({
                     placeholder="Choose item…"
                   />
                 </td>
-                <td className="py-2 pr-2 text-gray-500">{unitFor(line.item_id) || '—'}</td>
+                <td className="py-2 pr-2 text-gray-500">{unit || '—'}</td>
                 <td className="py-2 pr-2">
                   <Input
                     type="number"
@@ -835,7 +851,11 @@ function CreateOrder({
                     onChange={(e) => updateLine(index, { entered_total: e.target.value })}
                   />
                 </td>
-                <td className="py-2 text-right text-gray-500">{formatCost(unit)}</td>
+                <td
+                  className={`py-2 text-right tabular-nums text-gray-500 transition-opacity ${costChecks.loading ? 'opacity-60' : ''}`}
+                >
+                  {quoted?.unit_cost != null ? formatCost(quoted.unit_cost) : '—'}
+                </td>
                 <td className="py-2 text-right">
                   {lines.length > 1 && (
                     <button
@@ -847,6 +867,19 @@ function CreateOrder({
                   )}
                 </td>
               </tr>
+              {line.item_id && (
+                <tr className="border-b border-gray-100">
+                  <td colSpan={6} className="pb-3 pr-2">
+                    <LineCostComparison
+                      check={quoted}
+                      unit={unit}
+                      loading={costChecks.loading}
+                      failed={costChecks.failed}
+                    />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -856,7 +889,7 @@ function CreateOrder({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setLines((prev) => [...prev, { item_id: '', quantity: '1', entered_total: '0' }])}
+          onClick={() => setLines((prev) => [...prev, newDraftLine()])}
         >
           Add item line
         </Button>

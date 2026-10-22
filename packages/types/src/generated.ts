@@ -4464,6 +4464,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/purchase-orders/line-cost-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Purchase Line Costs
+         * @description Price draft PO lines against each item's latest received purchase and its
+         *     current average cost — the new-PO form's better / same / worse column.
+         *
+         *     A POST because it carries the draft lines, but it writes nothing. The latest
+         *     purchase is searched only among POs the caller can open, so the link the
+         *     form shows never leads to a 403.
+         */
+        post: operations["check_purchase_line_costs_api_v1_inventory_purchase_orders_line_cost_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/purchase-orders/{po_id}": {
         parameters: {
             query?: never;
@@ -8353,7 +8378,11 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Update Modifier Link
+         * @description Change a linked modifier's min / max / free / unique rules (admin only).
+         */
+        put: operations["update_modifier_link_api_v1_products__slug__modifiers__modifier_id__put"];
         post?: never;
         /**
          * Unlink Modifier
@@ -19892,6 +19921,22 @@ export interface components {
              */
             unique_options: boolean;
         };
+        /**
+         * ProductModifierLinkUpdate
+         * @description The rules on an existing product↔modifier link — omitted fields keep
+         *     their value, so the product page can change one number without resending
+         *     the rest.
+         */
+        ProductModifierLinkUpdate: {
+            /** Free Options */
+            free_options?: number | null;
+            /** Maximum Options */
+            maximum_options?: number | null;
+            /** Minimum Options */
+            minimum_options?: number | null;
+            /** Unique Options */
+            unique_options?: boolean | null;
+        };
         /** ProductModifierResponse */
         ProductModifierResponse: {
             /** Display Order */
@@ -20816,6 +20861,88 @@ export interface components {
             usage_limit: number | null;
             /** Used */
             used: number;
+        };
+        /** PurchaseLineCostCheck */
+        PurchaseLineCostCheck: {
+            /** Average Cost */
+            average_cost?: string | null;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            last_purchase?: components["schemas"]["PurchaseLineLastPurchase"] | null;
+            /** Unit Cost */
+            unit_cost?: string | null;
+            vs_average_cost?: components["schemas"]["PurchaseLineCostComparison"] | null;
+            vs_last_purchase?: components["schemas"]["PurchaseLineCostComparison"] | null;
+        };
+        /**
+         * PurchaseLineCostCheckLine
+         * @description One draft PO line to price. Zeros are allowed: a line with an item but no
+         *     total yet still gets the item's reference costs back, just no verdict.
+         */
+        PurchaseLineCostCheckLine: {
+            /**
+             * Entered Total
+             * @default 0
+             */
+            entered_total: number | string;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /**
+             * Quantity
+             * @default 0
+             */
+            quantity: number | string;
+        };
+        /** PurchaseLineCostCheckRequest */
+        PurchaseLineCostCheckRequest: {
+            /** Lines */
+            lines?: components["schemas"]["PurchaseLineCostCheckLine"][];
+        };
+        /**
+         * PurchaseLineCostComparison
+         * @description This line's unit cost against one reference cost.
+         */
+        PurchaseLineCostComparison: {
+            /** Change */
+            change?: string | null;
+            /** Difference */
+            difference: string;
+            /** Reference Cost */
+            reference_cost: string;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "better" | "same" | "worse";
+        };
+        /**
+         * PurchaseLineLastPurchase
+         * @description The most recent received purchase of the item the caller can see.
+         */
+        PurchaseLineLastPurchase: {
+            /** Branch Name */
+            branch_name?: string | null;
+            /**
+             * Purchase Order Id
+             * Format: uuid
+             */
+            purchase_order_id: string;
+            /** Purchased On */
+            purchased_on?: string | null;
+            /** Quantity */
+            quantity: string;
+            /** Reference */
+            reference: string;
+            /** Supplier Name */
+            supplier_name?: string | null;
+            /** Unit Cost */
+            unit_cost: string;
         };
         /** PurchaseOrderCreate */
         PurchaseOrderCreate: {
@@ -33103,6 +33230,39 @@ export interface operations {
             };
         };
     };
+    check_purchase_line_costs_api_v1_inventory_purchase_orders_line_cost_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurchaseLineCostCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseLineCostCheck"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_purchase_order_api_v1_inventory_purchase_orders__po_id__get: {
         parameters: {
             query?: never;
@@ -40189,6 +40349,42 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_modifier_link_api_v1_products__slug__modifiers__modifier_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                modifier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductModifierLinkUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

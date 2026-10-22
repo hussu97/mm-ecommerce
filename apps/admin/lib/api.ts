@@ -394,6 +394,8 @@ export const productsApi = {
   update: (slug: string, data: object) => api.put<Product>(`/products/${slug}`, data),
   delete: (slug: string) => api.delete<void>(`/products/${slug}`),
   linkModifier: (slug: string, data: object) => api.post<Product>(`/products/${slug}/modifiers`, data),
+  updateModifierLink: (slug: string, modifierId: string, data: Schemas['ProductModifierLinkUpdate']) =>
+    api.put<Product>(`/products/${slug}/modifiers/${modifierId}`, data),
   unlinkModifier: (slug: string, modifierId: string) => api.delete<Product>(`/products/${slug}/modifiers/${modifierId}`),
 
   /**

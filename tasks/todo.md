@@ -1,3 +1,37 @@
+# Admin: product modifiers up top + editable; PO line cost comparison
+
+Owner ask (2026-10-22): (1) on the admin product page, move the modifiers up
+next to the product details, make them larger and editable (option prices
+especially); (2) on PO creation, compare each inventory line's unit cost with
+the item's latest purchase (linking that PO in a new tab) and its current
+weighted average cost, as better / same / worse.
+
+Prod shape: 62 modifiers, each linked to exactly one product, ≤16 options.
+Option prices live on the modifier, so an edit reaches every linked product.
+
+- [x] API: `PUT /products/{slug}/modifiers/{modifier_id}` — edit a link's
+      min/max/free/unique without unlink + relink.
+- [x] API: `POST /inventory/purchase-orders/line-cost-check` — server-quoted
+      unit cost per draft line, latest received purchase of the item (scoped to
+      the caller's branches), current average cost (null when no costed stock),
+      and the comparison (difference, fraction, verdict). Money stays server-side.
+- [x] Tests for both; regenerate openapi.json + @mm/types.
+- [x] Admin: `ProductModifiers` panel right after Basic Information — option
+      table with inline price + on/off, per-modifier Save/Discard, rule editing.
+- [x] Admin: PO create — unit cost from the quote; a comparison row under each
+      inventory line with the latest PO as a new-tab link.
+- [ ] Lint / typecheck / tests; push to main; deploy; verify on prod.
+
+## Review (before push)
+- API: 5150 passed against a local Postgres 16 at head (incl. 4 new integration
+  tests: latest = newest invoice date among received, non-voided POs in the
+  caller's branches; unknown average stays null). ruff + format clean;
+  openapi.json and generated.ts current.
+- Admin: tsc, eslint (no new warnings), vitest 155 passed (8 new). Both screens
+  rendered in Chromium against mocked API responses and checked by eye.
+- "Same" is within ±0.5% of the reference (`SAME_WITHIN`); the % is always shown.
+
+
 # P&L accuracy: marketplace net to the fil (Sept 2026 and onward)
 
 Owner ask (2026-10-10): add Talabat's Order Compensation charges to the P&L and

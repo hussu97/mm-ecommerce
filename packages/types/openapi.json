@@ -29663,6 +29663,60 @@
         "title": "ProductModifierLink",
         "type": "object"
       },
+      "ProductModifierLinkUpdate": {
+        "description": "The rules on an existing product\u2194modifier link \u2014 omitted fields keep\ntheir value, so the product page can change one number without resending\nthe rest.",
+        "properties": {
+          "free_options": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Options"
+          },
+          "maximum_options": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Options"
+          },
+          "minimum_options": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum Options"
+          },
+          "unique_options": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unique Options"
+          }
+        },
+        "title": "ProductModifierLinkUpdate",
+        "type": "object"
+      },
       "ProductModifierResponse": {
         "properties": {
           "display_order": {
@@ -32601,6 +32655,240 @@
           "exhausted"
         ],
         "title": "PromotionUsageResponse",
+        "type": "object"
+      },
+      "PurchaseLineCostCheck": {
+        "properties": {
+          "average_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Cost"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "last_purchase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PurchaseLineLastPurchase"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unit_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Cost"
+          },
+          "vs_average_cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PurchaseLineCostComparison"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vs_last_purchase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PurchaseLineCostComparison"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "title": "PurchaseLineCostCheck",
+        "type": "object"
+      },
+      "PurchaseLineCostCheckLine": {
+        "description": "One draft PO line to price. Zeros are allowed: a line with an item but no\ntotal yet still gets the item's reference costs back, just no verdict.",
+        "properties": {
+          "entered_total": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Entered Total"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Quantity"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "title": "PurchaseLineCostCheckLine",
+        "type": "object"
+      },
+      "PurchaseLineCostCheckRequest": {
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/PurchaseLineCostCheckLine"
+            },
+            "maxItems": 200,
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "title": "PurchaseLineCostCheckRequest",
+        "type": "object"
+      },
+      "PurchaseLineCostComparison": {
+        "description": "This line's unit cost against one reference cost.",
+        "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "difference": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Difference",
+            "type": "string"
+          },
+          "reference_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reference Cost",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "better",
+              "same",
+              "worse"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference_cost",
+          "difference",
+          "verdict"
+        ],
+        "title": "PurchaseLineCostComparison",
+        "type": "object"
+      },
+      "PurchaseLineLastPurchase": {
+        "description": "The most recent received purchase of the item the caller can see.",
+        "properties": {
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "purchase_order_id": {
+            "format": "uuid",
+            "title": "Purchase Order Id",
+            "type": "string"
+          },
+          "purchased_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchased On"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "supplier_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Name"
+          },
+          "unit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Cost",
+            "type": "string"
+          }
+        },
+        "required": [
+          "purchase_order_id",
+          "reference",
+          "quantity",
+          "unit_cost"
+        ],
+        "title": "PurchaseLineLastPurchase",
         "type": "object"
       },
       "PurchaseOrderCreate": {
@@ -58803,6 +59091,57 @@
         ]
       }
     },
+    "/api/v1/inventory/purchase-orders/line-cost-check": {
+      "post": {
+        "description": "Price draft PO lines against each item's latest received purchase and its\ncurrent average cost \u2014 the new-PO form's better / same / worse column.\n\nA POST because it carries the draft lines, but it writes nothing. The latest\npurchase is searched only among POs the caller can open, so the link the\nform shows never leads to a 403.",
+        "operationId": "check_purchase_line_costs_api_v1_inventory_purchase_orders_line_cost_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseLineCostCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PurchaseLineCostCheck"
+                  },
+                  "title": "Response Check Purchase Line Costs Api V1 Inventory Purchase Orders Line Cost Check Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Check Purchase Line Costs",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
     "/api/v1/inventory/purchase-orders/{po_id}": {
       "get": {
         "operationId": "get_purchase_order_api_v1_inventory_purchase_orders__po_id__get",
@@ -72152,6 +72491,72 @@
           }
         ],
         "summary": "Unlink Modifier",
+        "tags": [
+          "Products"
+        ]
+      },
+      "put": {
+        "description": "Change a linked modifier's min / max / free / unique rules (admin only).",
+        "operationId": "update_modifier_link_api_v1_products__slug__modifiers__modifier_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "modifier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Modifier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductModifierLinkUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Modifier Link",
         "tags": [
           "Products"
         ]

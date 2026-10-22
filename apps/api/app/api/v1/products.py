@@ -31,6 +31,7 @@ from app.schemas.product import (
     ProductCostResponse,
     ProductCreate,
     ProductModifierLink,
+    ProductModifierLinkUpdate,
     ProductResponse,
     ProductUpdate,
 )
@@ -509,6 +510,22 @@ async def link_modifier(
     linked = await product_service.link_modifier(db, slug, data)
     await _invalidate_catalogue_caches()
     return linked
+
+
+@router.put("/{slug}/modifiers/{modifier_id}", response_model=ProductResponse)
+async def update_modifier_link(
+    slug: str,
+    modifier_id: uuid.UUID,
+    data: ProductModifierLinkUpdate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("catalogue.manage")),
+):
+    """Change a linked modifier's min / max / free / unique rules (admin only)."""
+    updated = await product_service.update_modifier_link(db, slug, modifier_id, data)
+    # The rules are part of the cached product payload (and of what the cart
+    # validates against), so retire them like a link or unlink does.
+    await _invalidate_catalogue_caches()
+    return updated
 
 
 @router.delete("/{slug}/modifiers/{modifier_id}", response_model=ProductResponse)

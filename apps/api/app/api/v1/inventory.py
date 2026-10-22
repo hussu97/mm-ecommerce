@@ -68,6 +68,8 @@ from app.schemas.inventory import (
     OpenCountRequest,
     PosInvoiceUpload,
     PosPurchaseOrderCreate,
+    PurchaseLineCostCheck,
+    PurchaseLineCostCheckRequest,
     PurchaseOrderCreate,
     PurchaseOrderItemOption,
     PurchaseOrderLineInput,
@@ -101,6 +103,7 @@ from app.services.inventory import (
     export_service,
     inventory_service,
     ledger_service,
+    po_cost_check_service,
     po_misc_service,
     recipe_service,
     supplier_service,
@@ -1439,15 +1442,21 @@ def _apply_po_filters(
     return stmt
 
 
+def _po_branch_scope(user: User):
+    """The branch ids whose POs the caller may see, as a subquery — ``None`` for
+    an admin or super-admin, who sees every branch."""
+    if user.is_admin or (user.role and user.role.is_super_admin):
+        return None
+    return access_service.branch_ids_for(user)
+
+
 def _scope_po_to_access(stmt, user: User, branch_id: uuid.UUID | None):
     """Restrict a PO query to the branches the caller may see (or the one asked
     for). The caller must still ``assert_branch_access`` when a branch is given."""
     if branch_id:
         stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
-    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        stmt = stmt.where(
-            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
-        )
+    elif (scope := _po_branch_scope(user)) is not None:
+        stmt = stmt.where(PurchaseOrder.branch_id.in_(scope))
     return stmt
 
 
@@ -1514,6 +1523,26 @@ async def list_purchase_order_item_options(
     )
     rows = (await db.execute(stmt)).all()
     return [PurchaseOrderItemOption(id=r.id, name=r.name, sku=r.sku) for r in rows]
+
+
+@purchase_orders_router.post(
+    "/line-cost-check", response_model=list[PurchaseLineCostCheck]
+)
+async def check_purchase_line_costs(
+    data: PurchaseLineCostCheckRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Price draft PO lines against each item's latest received purchase and its
+    current average cost — the new-PO form's better / same / worse column.
+
+    A POST because it carries the draft lines, but it writes nothing. The latest
+    purchase is searched only among POs the caller can open, so the link the
+    form shows never leads to a 403.
+    """
+    return await po_cost_check_service.check_lines(
+        db, data.lines, branch_scope=_po_branch_scope(user)
+    )
 
 
 @purchase_orders_router.get("/export")

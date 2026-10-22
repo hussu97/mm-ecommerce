@@ -717,6 +717,58 @@ class PurchaseOrderItemOption(BaseModel):
     sku: str | None = None
 
 
+class PurchaseLineCostCheckLine(BaseModel):
+    """One draft PO line to price. Zeros are allowed: a line with an item but no
+    total yet still gets the item's reference costs back, just no verdict."""
+
+    item_id: UUID
+    quantity: Decimal = Field(Decimal("0"), ge=0)
+    entered_total: Decimal = Field(Decimal("0"), ge=0)
+
+
+class PurchaseLineCostCheckRequest(BaseModel):
+    lines: list[PurchaseLineCostCheckLine] = Field(default_factory=list, max_length=200)
+
+
+class PurchaseLineLastPurchase(BaseModel):
+    """The most recent received purchase of the item the caller can see."""
+
+    purchase_order_id: UUID
+    reference: str
+    supplier_name: str | None = None
+    branch_name: str | None = None
+    #: The invoice date when one was keyed, else the PO's business date.
+    purchased_on: date | None = None
+    quantity: Decimal
+    unit_cost: Decimal
+
+
+class PurchaseLineCostComparison(BaseModel):
+    """This line's unit cost against one reference cost."""
+
+    reference_cost: Decimal
+    #: ``unit_cost − reference_cost``: positive means paying more per unit.
+    difference: Decimal
+    #: ``difference ÷ reference_cost`` as a fraction (0.0525 = 5.25%); null when
+    #: the reference is zero and a percentage would be meaningless.
+    change: Decimal | None = None
+    verdict: Literal["better", "same", "worse"]
+
+
+class PurchaseLineCostCheck(BaseModel):
+    item_id: UUID
+    #: Gross cost per storage unit, exactly as the PO line would store it; null
+    #: until the line has a quantity and a total above zero.
+    unit_cost: Decimal | None = None
+    last_purchase: PurchaseLineLastPurchase | None = None
+    vs_last_purchase: PurchaseLineCostComparison | None = None
+    #: The item's current weighted FIFO average per storage unit across every
+    #: branch (the inventory items page's figure); null when nothing is on hand
+    #: at a cost, which is "unknown", not "free".
+    average_cost: Decimal | None = None
+    vs_average_cost: PurchaseLineCostComparison | None = None
+
+
 class PurchaseOrderLineResponse(ORMModel):
     id: UUID
     item_id: UUID
