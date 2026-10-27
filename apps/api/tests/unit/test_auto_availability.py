@@ -569,8 +569,35 @@ async def test_no_changes_no_email(monkeypatch):
     assert sent == []
 
 
+async def test_no_recipients_by_default(monkeypatch):
+    # The owner switched the email off (2026-10-27); availability still moves.
+    assert email_service.AUTO_AVAILABILITY_RECIPIENTS == ()
+    sent = _stub_send(monkeypatch)
+    await email_service.send_auto_availability_change(
+        branches=[
+            {
+                "branch_name": "Al Barsha",
+                "branch_reference": "B001",
+                "changes": [
+                    {
+                        "direction": "OFF",
+                        "kind": "Product",
+                        "name": "Pistachio Kunafa",
+                        "reason": "stock_depleted",
+                        "items": [],
+                    }
+                ],
+            }
+        ]
+    )
+    assert sent == []
+
+
 async def test_one_email_carries_every_change_with_its_trigger(monkeypatch):
     sent = _stub_send(monkeypatch)
+    monkeypatch.setattr(
+        email_service, "AUTO_AVAILABILITY_RECIPIENTS", ("h_abbasi97@hotmail.com",)
+    )
     movement = {
         "transaction_id": str(uuid.uuid4()),
         "type": "consumption_from_orders",

@@ -103,7 +103,10 @@ CUSTOM_ORDER_ENQUIRY_RECIPIENTS = ("fatema_f@hotmail.co.uk",)
 TRANSFER_VARIANCE_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
 #: Who is told when the system takes a product/option off sale (or puts it back)
 #: because a produced good ran out — the experimental auto-availability pilot.
-AUTO_AVAILABILITY_RECIPIENTS = ("h_abbasi97@hotmail.com",)
+#: Empty since 2026-10-27: the owner asked to stop the Barsha (the only branch
+#: with the pilot on) in-stock/out-of-stock emails. The switching itself and
+#: its audit trail carry on; add an address here to turn the email back on.
+AUTO_AVAILABILITY_RECIPIENTS: tuple[str, ...] = ()
 #: Who is told when a local-first counter sale synced with totals the server's
 #: re-price did not reproduce (the printed receipt was booked as the invoice,
 #: and the difference kept on the order). An engineering alert, not a shop one.
