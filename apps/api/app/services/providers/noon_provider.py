@@ -979,7 +979,17 @@ class NoonClient(BaseAggregatorClient):
             business_date=placed_at.date().isoformat() if placed_at else None,
             placed_at=placed_at,
             accepted_at=_parse_datetime(order.get("estimatedAcceptedAt")),
-            delivered_at=_parse_datetime(order.get("estimatedDeliveryAt")),
+            # `estimatedDeliveryAt` is an ETA noon sets at order time and keeps
+            # after a cancel (see `_status_events_from`), so it is a delivery time
+            # only once the order really is delivered. Stamped on a cancel, it made
+            # promote read every noon cancellation as "refunded after delivery":
+            # all 11 in Oct 2026 were climbed to delivered and drew stock, though
+            # noon's own logistics status said cancelled.
+            delivered_at=(
+                _parse_datetime(order.get("estimatedDeliveryAt"))
+                if self._current_status(order) == "delivered"
+                else None
+            ),
             cancelled_at=None,
             status=_str_or_none(order.get("orderStatusCode")),
             currency=_str_or_none(order.get("currencyCode")) or "AED",

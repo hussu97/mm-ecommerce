@@ -623,49 +623,55 @@ def test_orders_from_csv_missing_item_reversal_sets_refund_amount():
     assert order.refund_amount == Decimal("70.00")  # missing-item reversal
 
 
-def test_orders_from_csv_vendor_refund_adds_to_reversal():
+def test_orders_from_csv_vendor_refund_is_talabat_funded_not_a_refund():
+    """Prod 3946944067: Talabat refunded the customer 30 of a 70 sale at its own
+    cost. It reports subtotal 40 and "Vendor Refunds" 30, bills commission on 70
+    and pays 44.16 = 40 - 21 - 0.84 - 4 + 30. The sale is 70 with nothing off it."""
     client = TalabatClient()
     csv_text = _csv_from_rows(
         [
             {
                 "Order ID": "TB-4005",
-                "Store ID": "793319",
+                "Store ID": "711571",
                 "Order status": "Delivered",
-                "Subtotal": "100.00",
-                "Order Items": "1 Cake",
-                "Operational Charges": "10.00",
-                "Vendor Refunds": "15.00",
-                "Order received at": "2026-09-09 12:00",
-                "Delivered at": "2026-09-09 12:40",
+                "Subtotal": "40.00",
+                "Order Items": "1 Brookie Cookie Melt (250 grams)",
+                "Operational Charges": "0.00",
+                "Vendor Refunds": "30.00",
+                "Order received at": "2026-10-09 21:05",
+                "Delivered at": "2026-10-09 22:02",
             }
         ]
     )
     order = client._orders_from_csv(csv_text)[0]
-    assert order.refund_amount == Decimal("25.00")
+    assert order.gross_sales == Decimal("70.00")
+    assert order.refund_amount is None
 
 
-def test_orders_from_csv_amount_owed_back_adds_to_reversal():
-    """'Amount owed back to Talabat' (a post-delivery recovery) joins the refund
-    reversal alongside Operational Charges and Vendor Refunds."""
+def test_orders_from_csv_amount_owed_back_is_not_more_refund():
+    """Prod 3959129572: a 45 order with a 40 quality refund (Operational Charges)
+    nets -8.79, and Talabat shows that shortfall as "Amount owed back" 8.79. The
+    refund is 40; adding the shortfall pushed it to the 45 cap."""
     client = TalabatClient()
     csv_text = _csv_from_rows(
         [
             {
                 "Order ID": "TB-4006",
-                "Store ID": "793319",
+                "Store ID": "711571",
                 "Order status": "Delivered",
-                "Subtotal": "100.00",
+                "Subtotal": "45.00",
                 "Order Items": "1 Cake",
-                "Operational Charges": "5.00",
+                "Operational Charges": "40.00",
                 "Vendor Refunds": "0.00",
-                "Amount owed back to Talabat": "8.00",
-                "Order received at": "2026-09-09 12:00",
-                "Delivered at": "2026-09-09 12:40",
+                "Amount owed back to Talabat": "8.79",
+                "Order received at": "2026-10-15 14:30",
+                "Delivered at": "2026-10-15 15:11",
             }
         ]
     )
     order = client._orders_from_csv(csv_text)[0]
-    assert order.refund_amount == Decimal("13.00")  # 5 + 8
+    assert order.gross_sales == Decimal("45.00")
+    assert order.refund_amount == Decimal("40.00")
 
 
 def test_orders_from_csv_reversal_capped_at_subtotal():
