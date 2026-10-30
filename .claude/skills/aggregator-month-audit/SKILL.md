@@ -101,13 +101,12 @@ Work in an isolated worktree off a freshly fetched `origin/main`, because the sh
 
 - Fix the root cause in the provider or ingest code, with a comment naming the prod order that proved it.
 - Add unit tests. For ingest and backfill changes, also add DB-gated integration tests, run against a local Postgres (`/opt/homebrew/bin/initdb` on port 5433, see `tests/integration`).
-- Correct the data already wrong with a **guarded migration**: match the exact wrong value so it is a no-op once fixed.
-- Validate the migration's SQL on prod inside `BEGIN; SET LOCAL lock_timeout='3s'; … ROLLBACK;` before shipping.
+- **No migration for order-level corrections.** Fixing individual orders the bug already mis-booked is done with direct `UPDATE`s on the prod DB, run by hand **after** the fix has deployed (before then, the next sweep can re-write the old values). Write each one guarded: match the exact wrong value so it is a no-op if it has already been corrected. Dry-run them inside `BEGIN; SET LOCAL lock_timeout='3s'; … ROLLBACK;` to check the row counts, then run them for real in one `BEGIN; SET LOCAL lock_timeout='3s'; … COMMIT;`. Keep them out of the repo, which is public.
 - Before committing, run `ruff check`, `ruff format`, and the unit suite.
 - Commit author `Hussain Abbasi <h_abbasi97@hotmail.com>`, with no Co-Authored-By trailer.
 - Push as the GitHub account `hussu97` (`gh auth switch --user hussu97`, then switch back to `h-abbasi`). The pre-push hook runs the full suite.
 - Open a PR, wait for checks, and merge it by hand (auto-merge is off). A merge to main deploys.
-- After the deploy, re-run the affected backfill if the fix needs re-parsing, then re-run the script to confirm.
+- After the deploy, run the order-level `UPDATE`s, re-run the affected backfill if the fix needs re-parsing, then re-run the script to confirm.
 
 ### Things code can't fix
 

@@ -23,7 +23,8 @@ month is not over). Prints one line, `JSON{...}`, with:
 
 Read-only: it loads sessions the way a sweep does (which may refresh a token)
 and writes nothing else. Fixing what it finds is a separate, deliberate step
-(`ingest.run_range`, a code change, or a migration).
+(`ingest.run_range`, a code change, or a guarded `UPDATE` on the
+orders it mis-booked).
 """
 
 from __future__ import annotations
