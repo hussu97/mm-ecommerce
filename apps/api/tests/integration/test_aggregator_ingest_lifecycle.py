@@ -575,6 +575,115 @@ async def test_settlement_backfill_never_overwrites_sales_feed_commission(db):
     assert agg.commission_amount == Decimal("12.60")  # untouched
 
 
+async def test_settlement_backfill_books_a_settled_zero_commission(db):
+    """A statement that billed no commission settles it at 0, not left null:
+    noon FGA4NNOBBXQSR8A (140 gross, 0 commission) read "fees pending" forever."""
+    branch_id = await _branch(db)
+    stmt = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    agg = await _agg_order(
+        db, channel="noon", branch_id=branch_id, commission_amount=None
+    )
+    await _stmt_line(
+        db,
+        channel="noon",
+        statement_id=stmt,
+        external_order_id=agg.external_order_id,
+        fee_category="commission",
+        amount="0",
+    )
+    assert await ingest.backfill_order_economics_from_statement(db, "noon", stmt) == 1
+    await db.refresh(agg)
+    assert agg.commission_amount == Decimal("0")
+    assert await ingest.backfill_order_economics_from_statement(db, "noon", stmt) == 0
+
+
+async def test_settlement_backfill_books_a_keeta_partial_refund(db):
+    """AGG-20261017-038: the feed said 130 sold, commission 31.50, and flagged a
+    partial refund with no amount. The bill billed gross 100, commission 24, net
+    69.60. The 30 shortfall is the refund and the bill's commission stands, and a
+    re-push of the feed's numbers changes neither."""
+    from app.services.aggregators.normalized import StandardOrder
+
+    branch_id = await _branch(db)
+    stmt = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    agg = await _agg_order(
+        db,
+        channel="keeta",
+        branch_id=branch_id,
+        status="40",
+        gross_sales=Decimal("130.00"),
+        commission_amount=Decimal("31.50"),
+    )
+    for category, amount in (
+        ("gross_sales", "100.00"),
+        ("commission", "-24.00"),
+        ("net_payable", "69.60"),
+    ):
+        await _stmt_line(
+            db,
+            channel="keeta",
+            statement_id=stmt,
+            external_order_id=agg.external_order_id,
+            fee_category=category,
+            amount=amount,
+        )
+    await ingest.backfill_order_economics_from_statement(db, "keeta", stmt)
+    agg.statement_id = stmt
+    await db.flush()
+    await db.refresh(agg)
+    assert agg.gross_sales == Decimal("130.00")
+    assert agg.refund_amount == Decimal("30.00")
+    assert agg.commission_amount == Decimal("24.00")
+    assert agg.net_payable == Decimal("69.60")
+
+    await ingest.upsert_order(
+        db,
+        "keeta",
+        StandardOrder(
+            external_order_id=agg.external_order_id,
+            status="40",
+            gross_sales=Decimal("130.00"),
+            commission_amount=Decimal("31.50"),
+            net_payable=Decimal("92.10"),
+        ),
+    )
+    await db.flush()
+    await db.refresh(agg)
+    assert agg.commission_amount == Decimal("24.00")
+    assert agg.refund_amount == Decimal("30.00")
+    assert agg.net_payable == Decimal("69.60")
+
+
+async def test_settlement_backfill_leaves_a_fully_billed_keeta_order_alone(db):
+    branch_id = await _branch(db)
+    stmt = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    agg = await _agg_order(
+        db,
+        channel="keeta",
+        branch_id=branch_id,
+        status="40",
+        gross_sales=Decimal("40.00"),
+        commission_amount=Decimal("9.00"),
+    )
+    for category, amount in (
+        ("gross_sales", "40.00"),
+        ("commission", "-9.00"),
+        ("net_payable", "26.20"),
+    ):
+        await _stmt_line(
+            db,
+            channel="keeta",
+            statement_id=stmt,
+            external_order_id=agg.external_order_id,
+            fee_category=category,
+            amount=amount,
+        )
+    await ingest.backfill_order_economics_from_statement(db, "keeta", stmt)
+    await db.refresh(agg)
+    assert agg.refund_amount is None
+    assert agg.commission_amount == Decimal("9.00")
+
+
 # ── a settled net survives the next push ──────────────────────────────────────
 
 

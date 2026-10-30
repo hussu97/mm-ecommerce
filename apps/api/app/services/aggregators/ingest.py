@@ -50,8 +50,11 @@ from app.core.database import (
 from app.core.phone import describe_phone
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
+    CHANNEL_CAREEM,
     CHANNEL_DELIVEROO,
     CHANNEL_KEETA,
+    CHANNEL_NOON,
+    CHANNEL_TALABAT,
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_MODE_BACKFILL,
@@ -72,6 +75,7 @@ from app.models.aggregator import (
     AggregatorSyncRun,
 )
 from app.models.base import utcnow
+from app.models.order import OrderStatusEnum
 from app.services.aggregators import (
     _isolation,
     address_geocoding,
@@ -613,6 +617,21 @@ async def upsert_order(
                 (AggregatorOrder.statement_id.is_not(None), column),
                 else_=func.coalesce(proposed, column),
             )
+        elif k == "commission_amount":
+            # A settled commission is the statement's, unless it is still a gap:
+            # Keeta re-pushes every recent order, and its feed keeps the
+            # pre-refund commission the bill corrected (see
+            # `backfill_order_economics_from_statement`).
+            update[k] = case(
+                (
+                    and_(
+                        AggregatorOrder.statement_id.is_not(None),
+                        column.is_not(None),
+                    ),
+                    column,
+                ),
+                else_=func.coalesce(proposed, column),
+            )
         elif k in _PRESERVE_IF_NULL:
             update[k] = func.coalesce(proposed, column)
         else:
@@ -1138,6 +1157,30 @@ async def backfill_order_economics_from_statement(
             v = Decimal(str(gross))
             values["gross_sales"] = func.coalesce(AggregatorOrder.gross_sales, v)
             changed.append(AggregatorOrder.gross_sales.is_(None))
+        # A Keeta partial refund: the feed marks the order (`partRefundTag`) but
+        # never says how much, and keeps the full gross and commission. The bill
+        # has the truth: its gross is what was left after the refund and its
+        # commission was charged on that. AGG-20261017-038 sold 130, was billed
+        # gross 100 and commission 24 (feed 31.50), net 69.60; the P&L counted
+        # the full 130 less the feed's commission. So on a sold Keeta order the
+        # shortfall is the refund, and the bill's commission is the commission
+        # (equal to the feed's on 691 of 693 Oct 2026 orders: the other two were
+        # these refunds).
+        if channel == CHANNEL_KEETA and gross is not None and gross > 0:
+            bill_gross = Decimal(str(gross))
+            short = AggregatorOrder.gross_sales - bill_gross
+            refunded = and_(AggregatorOrder.gross_sales.is_not(None), short > 0)
+            values["refund_amount"] = case(
+                (refunded, short), else_=AggregatorOrder.refund_amount
+            )
+            changed.append(
+                and_(refunded, AggregatorOrder.refund_amount.is_distinct_from(short))
+            )
+            if commission is not None:
+                cv = abs(Decimal(str(commission)))
+                values["commission_amount"] = cv
+                changed.append(AggregatorOrder.commission_amount.is_distinct_from(cv))
+            commission = None
         # Commission (VAT-inclusive magnitude): fill only a gap the sales feed left
         # (null or zero), so a statement-fed channel's order-details fee is never
         # blank once the week settles, without clobbering the sales feed's own value
@@ -1155,6 +1198,15 @@ async def backfill_order_economics_from_statement(
                 changed.append(
                     and_(gap, AggregatorOrder.commission_amount.is_distinct_from(cv))
                 )
+            else:
+                # A settled zero is a fact, not a gap: noon FGA4NNOBBXQSR8A
+                # (2026-10-04, 140 gross) was billed no commission, and with the
+                # column left null the P&L flagged its fees as pending forever.
+                # Only a null is filled, so a sales-feed value is never clobbered.
+                values["commission_amount"] = func.coalesce(
+                    AggregatorOrder.commission_amount, cv
+                )
+                changed.append(AggregatorOrder.commission_amount.is_(None))
         # Payment / cancellation fee (VAT-inclusive magnitude): the settled
         # statement is authoritative, zero included (see the docstring).
         for column, amount in (
@@ -2704,6 +2756,107 @@ async def _finalize_run_coverage(
         logger.exception("aggregator %s run-coverage finalize failed", mode)
 
 
+#: Days after its business date by which each channel has normally billed an
+#: order. Talabat and Careem bill the next day; noon and Deliveroo settle on a
+#: weekly statement published a day or two after the week closes. An order still
+#: fee-less past this is a gap, not a wait.
+_FEE_SETTLE_DAYS: dict[str, int] = {
+    CHANNEL_TALABAT: 2,
+    CHANNEL_CAREEM: 2,
+    CHANNEL_NOON: 9,
+    CHANNEL_DELIVEROO: 10,
+}
+#: How far back the catch-up looks, and how many Talabat days one pass re-sweeps
+#: (each is an export plus a detail fetch per order, minutes apiece).
+_FEE_CATCHUP_WINDOW_DAYS = 35
+_FEE_CATCHUP_MAX_TALABAT_DAYS = 7
+
+
+async def fee_gap_dates(db: AsyncSession, channel: str, today: date) -> list[date]:
+    """Business dates, oldest first, with a sold order the channel should have
+    billed by now that still has no commission.
+
+    A cancelled order is left out: most cancellations are never billed, so a
+    null there is the truth, not a gap."""
+    from app.services.aggregators import promote
+
+    lo = today - timedelta(days=_FEE_CATCHUP_WINDOW_DAYS)
+    hi = today - timedelta(days=_FEE_SETTLE_DAYS[channel])
+    rows = (
+        await db.execute(
+            select(AggregatorOrder.business_date, AggregatorOrder.status)
+            .where(
+                AggregatorOrder.channel == channel,
+                AggregatorOrder.business_date >= lo.isoformat(),
+                AggregatorOrder.business_date <= hi.isoformat(),
+                AggregatorOrder.commission_amount.is_(None),
+            )
+            .distinct()
+        )
+    ).all()
+    return sorted(
+        {
+            date.fromisoformat(business_date)
+            for business_date, status in rows
+            if business_date
+            and promote._target_status(channel, status) != OrderStatusEnum.CANCELLED
+        }
+    )
+
+
+async def sweep_fee_gaps_once() -> int:
+    """Re-fetch the fees of orders the nightly pass should have billed and didn't.
+
+    The nightly finance pass covers yesterday only, and Talabat's fees ride the
+    sales sweep's fail-soft enrichment, so one skipped night or one 403 from a
+    marketplace's finance API left a whole day fee-less for good: Careem 16 Oct
+    2026 (the pass skipped that night) and Talabat 22-26 Oct 2026 (205 orders,
+    the finance gateway answered 403 while billing landed). Both were only found
+    by a month-end audit. This finds each channel's gap days and re-runs them
+    through `run_range`, the same path a manual backfill takes: finance from the
+    first gap day to yesterday for the statement channels, and the sales sweep
+    day by day for Talabat. Returns the channels re-run.
+    """
+    if not is_enabled():
+        return 0
+    today = _start_of_today_dubai(utcnow()).date()
+    rerun = 0
+    for channel in _FEE_SETTLE_DAYS:
+        try:
+            async with AsyncSessionFactory() as db:
+                gaps = await fee_gap_dates(db, channel, today)
+        except Exception:  # noqa: BLE001 — one channel must not stop the rest
+            logger.exception("aggregator %s fee-gap scan failed", channel)
+            continue
+        if not gaps:
+            continue
+        logger.warning(
+            "aggregator %s: %d day(s) with unbilled sold orders past their settle "
+            "lag (%s) — re-fetching",
+            channel,
+            len(gaps),
+            ", ".join(d.isoformat() for d in gaps),
+        )
+        try:
+            if channel == CHANNEL_TALABAT:
+                for day in gaps[:_FEE_CATCHUP_MAX_TALABAT_DAYS]:
+                    await run_range(
+                        [channel], day, day, modes=(RUN_MODE_SALES,), reconcile=False
+                    )
+            else:
+                await run_range(
+                    [channel],
+                    gaps[0],
+                    today - timedelta(days=1),
+                    modes=(RUN_MODE_FINANCE,),
+                    reconcile=False,
+                )
+            rerun += 1
+        except Exception:  # noqa: BLE001 — one channel must not stop the rest
+            logger.exception("aggregator %s fee catch-up failed", channel)
+    return rerun
+
+
 async def run_daily_once() -> tuple[int, int]:
     """One full daily pass: sales → finance → promote → reconcile.
 
@@ -2721,6 +2874,9 @@ async def run_daily_once() -> tuple[int, int]:
     )
     sales = await sweep_sales_once()
     finance = await sweep_finance_once()
+    caught_up = await sweep_fee_gaps_once()
+    if caught_up:
+        logger.info("aggregator fee catch-up re-ran %s channel(s)", caught_up)
     promoted = await sweep_promote_once()
     if promoted:
         logger.info("aggregator promotion filed %s MM order(s)", promoted)

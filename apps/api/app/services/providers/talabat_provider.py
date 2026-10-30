@@ -2062,14 +2062,25 @@ class TalabatClient(BaseAggregatorClient):
             subtotal = _money(row.get("Subtotal"))
             # Item-level reversal on a delivered order: when the customer reports a
             # missing/wrong item, Talabat refunds them and bills it back to the
-            # vendor as an "Operational Charges" line (a vendor-agreed refund lands
-            # under "Vendor Refunds"; a later recovery under "Amount owed back to
-            # Talabat"). That money left the sale after delivery, so carry it as the
-            # order's `refund_amount` — the promote step books it onto
-            # `orders.refunded_amount`, which net revenue already subtracts, so the
-            # gross the customer was charged stays on the header while the net
-            # follows the ledger. Capped at the subtotal so net never goes below
-            # zero.
+            # vendor as an "Operational Charges" line. That money left the sale
+            # after delivery, so carry it as the order's `refund_amount` — the
+            # promote step books it onto `orders.refunded_amount`, which net
+            # revenue already subtracts, so the gross the customer was charged
+            # stays on the header while the net follows the ledger. Capped at the
+            # subtotal so net never goes below zero.
+            #
+            # The other two columns are NOT refunds on a standing order (prod, all
+            # five delivered orders with either, to 2026-10-30):
+            # - "Vendor Refunds" is a refund TALABAT funded. It cuts the subtotal
+            #   it reports by the refunded amount and pays that amount back to us,
+            #   commission still on the full sale: 3946944067, a 70 sale reported
+            #   as subtotal 40, commission 21, vendor refunds 30, payout 44.16 =
+            #   40 - 21 - 0.84 - 4 + 30. So the sale is subtotal + vendor refunds
+            #   and nothing came off it. Booked as a refund it cost the P&L 30
+            #   Talabat had paid us.
+            # - "Amount owed back to Talabat" is the shortfall of a negative payout
+            #   (3959129572: net -8.79, owed back 8.79), not more money refunded.
+            #   Added to the reversal it pushed that refund from 40 to the cap, 45.
             #
             # A *cancelled* order is different, and which way depends on whether it
             # was delivered first. Cancelled before delivery, its whole value goes
@@ -2088,11 +2099,10 @@ class TalabatClient(BaseAggregatorClient):
             cancelled = (status or "").strip().lower() == "cancelled"
             operational = _money(row.get("Operational Charges")) or Decimal("0")
             if not cancelled:
-                reversal = (
-                    operational
-                    + (_money(row.get("Vendor Refunds")) or Decimal("0"))
-                    + (_money(row.get("Amount owed back to Talabat")) or Decimal("0"))
-                )
+                reversal = operational
+                vendor_refunds = _money(row.get("Vendor Refunds")) or Decimal("0")
+                if subtotal is not None and vendor_refunds > 0:
+                    subtotal = subtotal + vendor_refunds
             elif _parse_dt(row.get("Delivered at")) is not None and (
                 subtotal is None or operational < subtotal
             ):

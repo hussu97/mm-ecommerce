@@ -580,7 +580,7 @@ def _money_fields(agg: AggregatorOrder, *, vat_registered: bool = True) -> dict:
         excl, vat = pos_pricing.split_inclusive_tax(total, VAT_RATE)
     else:
         excl, vat = total, Decimal("0")
-    # A post-delivery item reversal (Talabat "Operational Charges"/"Vendor Refunds",
+    # A post-delivery item reversal (Talabat "Operational Charges", noon outlet adj,
     # captured onto `agg.refund_amount` at ingest): the gross the customer was
     # charged stays on `total`, and the money that went back is booked on
     # `refunded_amount` — the exact field `order_economics`/`order_service` net
@@ -623,7 +623,7 @@ def _overlay_refund(order: Order, agg: AggregatorOrder) -> None:
 
     The standalone promote path books `refunded_amount` in `_money_fields`, but a
     GrubOps-owned order never runs that — its money header is GrubOps'. A
-    post-delivery reversal (Noon `outlet_adj`, a Talabat vendor refund), though,
+    post-delivery reversal (Noon `outlet_adj`, Talabat operational charges), though,
     is a fact only the scrape sees, so it is overlaid here the same way the actual
     fees are: the money already moved at the marketplace, net revenue subtracts
     `refunded_amount`, and gross stays on the header. Capped at the order total so

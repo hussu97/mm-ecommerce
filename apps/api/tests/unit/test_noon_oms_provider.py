@@ -234,6 +234,18 @@ class TestOrderFromOms:
         assert o.accepted_at == datetime(2026, 4, 21, 22, 17, 47)
         assert o.delivered_at == datetime(2026, 4, 21, 22, 43, 49)
 
+    def test_cancelled_order_has_no_delivered_at(self):
+        """noon keeps `estimatedDeliveryAt` (an ETA) on a cancel. Read as a delivery
+        time it made promote treat every noon cancellation as refunded after
+        delivery (FGATNNA86VZUI2A, rejected 2026-10-29)."""
+        for word in ("canceled", "rejected"):
+            order = {**_OMS_ORDER_SINGLE_MOD, "orderStatusCode": word}
+            assert _CLIENT._order_from_oms(order).delivered_at is None
+
+    def test_in_flight_order_has_no_delivered_at(self):
+        order = {**_OMS_ORDER_SINGLE_MOD, "orderStatusCode": "picked_up"}
+        assert _CLIENT._order_from_oms(order).delivered_at is None
+
     def test_gross_sales_from_outlet_subtotal(self):
         o = _CLIENT._order_from_oms(_OMS_ORDER_SINGLE_MOD)
         assert o.gross_sales == Decimal("45.0")
