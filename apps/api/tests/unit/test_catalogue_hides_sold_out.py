@@ -16,6 +16,7 @@ say, it was about which predicate reached the statement at all.
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.catalog import product_service
@@ -32,6 +33,8 @@ async def _sql_for(**kwargs) -> str:
         result = MagicMock()
         result.scalar.return_value = 0
         result.scalars.return_value.unique.return_value.all.return_value = []
+        # The website branch set, resolved once before the listing is built.
+        result.scalars.return_value.all.return_value = [uuid.uuid4()]
         return result
 
     db = AsyncMock()
@@ -88,8 +91,6 @@ async def test_the_pin_union_counts_only_online_branches():
     "promise nobody can keep". The set predicate must therefore constrain on
     `receives_online_orders`, exactly as the estate-wide union does.
     """
-    import uuid
-
     sql = await _sql_for(channel="web", branch_ids=[uuid.uuid4(), uuid.uuid4()])
 
     assert "branch_products" in sql, "the pin union still applies availability"
@@ -171,6 +172,7 @@ def _db_with_product(availability_answer):
         lookups.append(str(statement))
         result = MagicMock()
         result.scalar_one_or_none.return_value = MagicMock(id="p-1")
+        result.scalars.return_value.all.return_value = [uuid.uuid4()]
         return result
 
     async def scalar(statement):

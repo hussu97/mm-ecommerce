@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import or_
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
 from app.models.product import WEB_CHANNEL, Product, sells_on
@@ -40,20 +41,50 @@ def website_product_page_clause():
     )
 
 
+async def resolve_union_ids(
+    db: AsyncSession,
+    branch_id: uuid.UUID | None = None,
+    *,
+    branch_ids: Sequence[uuid.UUID] | None = None,
+) -> list[uuid.UUID] | None:
+    """
+    The branch set this shopper's union is taken over, resolved once, for
+    `union_ids=` below — or None for the single-branch answer, which has no set.
+
+    Call it once per request and hand the answer to every clause the request
+    builds (a listing's count and its page are two queries over one set).
+    """
+    if branch_ids:
+        return await availability_service.resolve_union_branch_ids(db, branch_ids)
+    if branch_id is not None:
+        return None
+    return await availability_service.resolve_union_branch_ids(db)
+
+
 def website_availability_clause(
     branch_id: uuid.UUID | None = None,
     *,
     branch_ids: Sequence[uuid.UUID] | None = None,
+    union_ids: Sequence[uuid.UUID] | None = None,
 ):
     """Whether some kitchen that can serve this shopper can make the product.
 
     The availability half of `website_product_visibility_clause`, on its own so
     the product page can *report* it instead of filtering on it.
+
+    `union_ids` is `resolve_union_ids`' answer for the same shopper. Given, the
+    union is taken over those literal ids; omitted, the same set is inlined as
+    a subquery — the same predicate either way (asserted in
+    `test_availability_union_ids`), the first just much cheaper to plan.
     """
     if branch_ids:
+        if union_ids is not None:
+            return ~availability_service.out_at_every_of_ids(union_ids)
         return ~availability_service.out_at_every_branch_in_set_subquery(branch_ids)
     if branch_id is not None:
         return ~availability_service.unsellable_at_branch_subquery(branch_id)
+    if union_ids is not None:
+        return ~availability_service.out_at_every_of_ids(union_ids)
     return ~availability_service.out_at_every_branch_subquery()
 
 
@@ -61,6 +92,7 @@ def website_product_visibility_clause(
     branch_id: uuid.UUID | None = None,
     *,
     branch_ids: Sequence[uuid.UUID] | None = None,
+    union_ids: Sequence[uuid.UUID] | None = None,
 ):
     """
     The complete database predicate for a product a shopper can buy — what a
@@ -92,7 +124,9 @@ def website_product_visibility_clause(
     """
     return (
         *website_product_page_clause(),
-        website_availability_clause(branch_id, branch_ids=branch_ids),
+        website_availability_clause(
+            branch_id, branch_ids=branch_ids, union_ids=union_ids
+        ),
     )
 
 

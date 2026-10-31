@@ -35,6 +35,8 @@ async def _sql_for(fn, *args, **kwargs) -> str:
         result.all.return_value = []
         result.scalar_one_or_none.return_value = None
         result.scalars.return_value.unique.return_value.all.return_value = []
+        # The website branch set, resolved once before the listing is built.
+        result.scalars.return_value.all.return_value = [uuid.uuid4()]
         return result
 
     db = AsyncMock()

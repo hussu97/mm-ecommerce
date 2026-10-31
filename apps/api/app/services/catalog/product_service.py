@@ -31,6 +31,7 @@ from app.services import indexnow_service
 from app.services.catalog import menu_group_service, product_cost_service
 from app.services.catalog.storefront_visibility import (
     active_website_category_clause,
+    resolve_union_ids,
     website_availability_clause,
     website_product_page_clause,
     website_product_visibility_clause,
@@ -213,15 +214,17 @@ async def get_all(
         # `get_by_slug`, which does use the shared clause, answered 404 for it.
         # Nine cakes were in that state: on the category page, gone when
         # clicked, which is worse than either answer on its own.
-        stmt = stmt.where(
-            *(
-                (sells_on(WEB_CHANNEL), active_website_category_clause())
-                if staff
-                else website_product_page_clause()
-                if include_unavailable
-                else website_product_visibility_clause(branch_id, branch_ids=branch_ids)
+        if staff:
+            web_clauses = (sells_on(WEB_CHANNEL), active_website_category_clause())
+        elif include_unavailable:
+            web_clauses = website_product_page_clause()
+        else:
+            # Resolved once, for both the count and the page below.
+            union_ids = await resolve_union_ids(db, branch_id, branch_ids=branch_ids)
+            web_clauses = website_product_visibility_clause(
+                branch_id, branch_ids=branch_ids, union_ids=union_ids
             )
-        )
+        stmt = stmt.where(*web_clauses)
     elif channel == "pos":
         # Purely the menu tree now — a product is on a register because a group
         # in that branch's tree holds it. Scoped to the terminal's branch when
@@ -320,10 +323,13 @@ async def get_by_slug(
     product = result.scalar_one_or_none()
     if not product:
         raise NotFoundError(f"Product '{slug}' not found")
+    union_ids = await resolve_union_ids(db, branch_id, branch_ids=branch_ids)
     available = await db.scalar(
         select(Product.id).where(
             Product.id == product.id,
-            website_availability_clause(branch_id, branch_ids=branch_ids),
+            website_availability_clause(
+                branch_id, branch_ids=branch_ids, union_ids=union_ids
+            ),
         )
     )
     return ProductResponse.model_validate(product).model_copy(
@@ -348,12 +354,15 @@ async def get_featured(
     branch_id: uuid.UUID | None = None,
     branch_ids: Sequence[uuid.UUID] | None = None,
 ) -> list[ProductResponse]:
+    union_ids = await resolve_union_ids(db, branch_id, branch_ids=branch_ids)
     stmt = (
         select(Product)
         .options(*_product_load_options())
         .where(
             has_label(BESTSELLER_LABEL),
-            *website_product_visibility_clause(branch_id, branch_ids=branch_ids),
+            *website_product_visibility_clause(
+                branch_id, branch_ids=branch_ids, union_ids=union_ids
+            ),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)
@@ -377,12 +386,15 @@ async def get_cart_addons(
     suggestion the customer did not ask for, and a suggestion that cannot be
     taken is just a smaller basket page.
     """
+    union_ids = await resolve_union_ids(db, branch_id, branch_ids=branch_ids)
     stmt = (
         select(Product)
         .options(*_product_load_options())
         .where(
             Product.is_cart_addon == True,  # noqa: E712
-            *website_product_visibility_clause(branch_id, branch_ids=branch_ids),
+            *website_product_visibility_clause(
+                branch_id, branch_ids=branch_ids, union_ids=union_ids
+            ),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)

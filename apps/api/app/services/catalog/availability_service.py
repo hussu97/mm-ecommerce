@@ -240,11 +240,17 @@ def _out_at_every_of(branch_ids_select):
     branch_count = (
         select(func.count()).select_from(branch_ids_select.subquery()).scalar_subquery()
     )
-    out_count = (
+    return and_(branch_count > 0, _out_count(branch_ids_select) >= branch_count)
+
+
+def _out_count(branch_ids):
+    """How many of *branch_ids* (an id-select or literal ids) have this
+    `Product` marked out, expiry applied — one correlated count."""
+    return (
         select(func.count(func.distinct(BranchProduct.branch_id)))
         .where(
             BranchProduct.product_id == Product.id,
-            BranchProduct.branch_id.in_(branch_ids_select),
+            BranchProduct.branch_id.in_(branch_ids),
             or_(
                 BranchProduct.is_active.is_(False),
                 and_(
@@ -256,7 +262,26 @@ def _out_at_every_of(branch_ids_select):
         .correlate(Product)
         .scalar_subquery()
     )
-    return and_(branch_count > 0, out_count >= branch_count)
+
+
+def out_at_every_of_ids(branch_ids: "Sequence[uuid.UUID]"):
+    """
+    `_out_at_every_of` over a branch set already resolved to ids.
+
+    The same count trick and the same empty-set guard — no branches is "we have
+    no shops here", never "out everywhere", so it is a false predicate — but the
+    set is literal ids rather than a subquery. Inlined, the website set
+    (`_website_delivery_branch_ids`, itself carrying the active-map subquery
+    twice) appeared three times in every catalogue query, and Postgres spent
+    longer planning it than running it (audit: ~18ms against ~4ms; measured on
+    prod 2026-11-01 for the listing count: 2.4–7.9ms planning + 2.3ms executing,
+    against 0.3ms + 0.9ms with literal ids, same 44 rows). Resolve it once with
+    `resolve_union_branch_ids` and pass the answer here.
+    """
+    ids = list(dict.fromkeys(branch_ids))
+    if not ids:
+        return literal(False)
+    return _out_count(ids) >= len(ids)
 
 
 def out_at_every_branch_subquery():
@@ -301,13 +326,19 @@ def out_at_every_branch_in_set_subquery(branch_ids: "Sequence[uuid.UUID]"):
     """
     if not branch_ids:
         return literal(False)
+    return _out_at_every_of(_pin_union_branch_ids(branch_ids))
+
+
+def _pin_union_branch_ids(branch_ids: "Sequence[uuid.UUID]"):
+    """The branch id-select a pin's union is taken over, all-closed fallback
+    included (see `out_at_every_branch_in_set_subquery`)."""
     pin_serving = select(Branch.id).where(
         Branch.is_active.is_(True),
         Branch.receives_online_orders.is_(True),
         ~Branch.is_busy,
         Branch.id.in_(list(branch_ids)),
     )
-    ids = select(Branch.id).where(
+    return select(Branch.id).where(
         or_(
             Branch.id.in_(pin_serving),
             and_(
@@ -316,7 +347,31 @@ def out_at_every_branch_in_set_subquery(branch_ids: "Sequence[uuid.UUID]"):
             ),
         )
     )
-    return _out_at_every_of(ids)
+
+
+async def resolve_union_branch_ids(
+    db: AsyncSession, branch_ids: "Sequence[uuid.UUID] | None" = None
+) -> list[uuid.UUID]:
+    """
+    The branches a website union is taken over, as ids, in one small query.
+
+    With *branch_ids* (a pin's serving branches) it is the pin's set, with the
+    all-closed fallback to the website-delivery set; without, the
+    website-delivery set itself, with its empty-map fallback. Exactly the sets
+    `out_at_every_branch_in_set_subquery` and `out_at_every_branch_subquery`
+    inline — the same id-selects, executed — so `out_at_every_of_ids` over this
+    answer is the same predicate, asked once per request instead of planned
+    into every query. An empty pin list resolves to nothing, as the inline one
+    returns a false predicate for it.
+    """
+    if branch_ids is not None and not list(branch_ids):
+        return []
+    select_ids = (
+        _pin_union_branch_ids(branch_ids)
+        if branch_ids
+        else _website_delivery_branch_ids()
+    )
+    return list((await db.execute(select_ids)).scalars().all())
 
 
 # ─── The predicate, in memory ─────────────────────────────────────────────────

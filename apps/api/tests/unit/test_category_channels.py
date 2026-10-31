@@ -42,7 +42,10 @@ def _category(**overrides) -> Category:
 
 
 def _capturing_db(rows):
-    """A session that records the statement it was handed and returns `rows`."""
+    """A session that records the statements it was handed and returns `rows`.
+
+    The last statement is the category query; a storefront listing first
+    resolves its branch set (`resolve_union_ids`)."""
     captured = []
     result = MagicMock()
     result.all = MagicMock(return_value=rows)
@@ -66,7 +69,7 @@ async def test_storefront_listing_counts_only_products_the_website_sells():
     db = _capturing_db([])
     await category_service.get_all(db)
 
-    sql = _sql(db.captured[0])
+    sql = _sql(db.captured[-1])
     assert "sales_channels @>" in sql
     assert "is_active" in sql
 
@@ -79,7 +82,7 @@ async def test_storefront_listing_drops_categories_with_nothing_to_sell():
     db = _capturing_db([])
     await category_service.get_all(db)
 
-    assert "HAVING" in _sql(db.captured[0]).upper()
+    assert "HAVING" in _sql(db.captured[-1]).upper()
 
 
 async def test_admin_still_sees_every_category_and_the_whole_catalogue():
@@ -91,7 +94,7 @@ async def test_admin_still_sees_every_category_and_the_whole_catalogue():
     db = _capturing_db([])
     await category_service.get_all(db, include_inactive=True)
 
-    sql = _sql(db.captured[0])
+    sql = _sql(db.captured[-1])
     assert "sales_channels" not in sql
     assert "HAVING" not in sql.upper()
 
