@@ -362,11 +362,17 @@ async def _checkout(world, order):
 
 
 async def _post(world, obj: dict):
-    return await world.client.post(
+    from app.core import post_commit
+
+    response = await world.client.post(
         f"{WEBHOOK}?hmac={_sign(obj)}",
         content=json.dumps({"type": "TRANSACTION", "obj": obj}),
         headers={"content-type": "application/json"},
     )
+    # The emails go out after the request's commit, on a task of their own
+    # (`post_commit`); wait for them so the counts below are not a race.
+    await post_commit.drain()
+    return response
 
 
 async def _admin_refund(world, order_id, amount: str):
@@ -538,6 +544,7 @@ async def test_a_payment_whose_webhook_never_came_is_reconciled_once(
 ):
     from datetime import timedelta
 
+    from app.core import post_commit
     from app.models.base import utcnow
     from app.models.order import OrderStatusEnum
     from app.services.payments import payment_reconcile_service as prs
@@ -554,6 +561,7 @@ async def test_a_payment_whose_webhook_never_came_is_reconciled_once(
     monkeypatch.setattr(prs, "AsyncSessionFactory", world.maker)
 
     assert await prs.sweep_once() == 1
+    await post_commit.drain()  # the sweep's commit releases the emails
     stored = await world.load(order.id)
     assert stored.status == OrderStatusEnum.CONFIRMED
     assert world.emails.confirmation.await_count == 1

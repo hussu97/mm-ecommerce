@@ -15,13 +15,14 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.aggregator import (
@@ -732,3 +733,147 @@ async def test_a_repushed_order_keeps_its_settled_net_and_fees(db):
     assert settled.net_payable == Decimal("-49.50")
     assert settled.payment_fee == Decimal("0.00")
     assert open_.net_payable == Decimal("48.10")
+
+
+# ── batched upsert: an unchanged re-push writes nothing ───────────────────────
+
+
+def _pushed_order(ext: str, *, status: str = "40", gross: str | None = "60.00"):
+    from app.services.aggregators.normalized import (
+        StandardOrder,
+        StandardOrderItem,
+        StandardStatusEvent,
+    )
+
+    return StandardOrder(
+        external_order_id=ext,
+        status=status,
+        business_date="2026-10-30",
+        placed_at=datetime(2026, 10, 30, 12, 0),
+        gross_sales=Decimal(gross) if gross is not None else None,
+        customer_name="C***",
+        raw={"orderViewId": ext, "status": status},
+        items=[
+            StandardOrderItem(
+                source_key=f"{ext}:1",
+                item_name="Cookie Melt",
+                quantity=Decimal("1"),
+                gross_sales=Decimal("60.00"),
+            )
+        ],
+        status_events=[
+            StandardStatusEvent(status="10", at=datetime(2026, 10, 30, 12, 0)),
+            StandardStatusEvent(status=status, at=datetime(2026, 10, 30, 12, 30)),
+        ],
+    )
+
+
+async def _row_versions(db, model, key, *where) -> dict:
+    """`(ctid, updated_at)` per row, by `key`. Any UPDATE — even one writing
+    identical values, even inside one transaction — moves the row to a new tuple,
+    so an unchanged ctid proves the upsert skipped the write."""
+    rows = await db.execute(
+        select(key, literal_column("ctid::text"), model.updated_at).where(*where)
+    )
+    return {k: (ctid, at) for k, ctid, at in rows.tuples()}
+
+
+async def test_upsert_orders_batches_and_skips_unchanged_rows(db):
+    from app.models.aggregator import AggregatorOrderItem, AggregatorOrderStatusEvent
+
+    ids = [f"{MARKER}-b-{uuid.uuid4().hex[:10]}" for _ in range(3)]
+    orders = [_pushed_order(ext) for ext in ids]
+
+    async def snapshot():
+        o = await _row_versions(
+            db,
+            AggregatorOrder,
+            AggregatorOrder.external_order_id,
+            AggregatorOrder.channel == "keeta",
+            AggregatorOrder.external_order_id.in_(ids),
+        )
+        i = await _row_versions(
+            db,
+            AggregatorOrderItem,
+            AggregatorOrderItem.source_key,
+            AggregatorOrderItem.channel == "keeta",
+            AggregatorOrderItem.source_key.in_([f"{ext}:1" for ext in ids]),
+        )
+        e = await _row_versions(
+            db,
+            AggregatorOrderStatusEvent,
+            AggregatorOrderStatusEvent.external_order_id
+            + ":"
+            + AggregatorOrderStatusEvent.status,
+            AggregatorOrderStatusEvent.channel == "keeta",
+            AggregatorOrderStatusEvent.external_order_id.in_(ids),
+        )
+        return o, i, e
+
+    assert await ingest.upsert_orders(db, "keeta", orders) == 3
+    first_orders, first_items, first_events = await snapshot()
+    assert (len(first_orders), len(first_items), len(first_events)) == (3, 3, 6)
+
+    # The same push again: nothing changed, nothing written, nothing counted.
+    assert await ingest.upsert_orders(db, "keeta", orders) == 0
+    assert await snapshot() == (first_orders, first_items, first_events)
+
+    # One order moves on (a new status + its trace step): only it is written.
+    moved = [_pushed_order(ids[0], status="50"), *orders[1:]]
+    assert await ingest.upsert_orders(db, "keeta", moved) == 1
+    after_orders, after_items, after_events = await snapshot()
+    assert after_orders[ids[0]][0] != first_orders[ids[0]][0]
+    assert after_orders[ids[0]][1] > first_orders[ids[0]][1]  # updated_at advanced
+    for ext in ids[1:]:
+        assert after_orders[ext] == first_orders[ext]
+    assert after_items == first_items
+    assert f"{ids[0]}:50" in after_events and len(after_events) == 7
+    status = await db.scalar(
+        select(AggregatorOrder.status).where(
+            AggregatorOrder.channel == "keeta",
+            AggregatorOrder.external_order_id == ids[0],
+        )
+    )
+    assert status == "50"
+
+
+async def test_upsert_orders_applies_a_repeated_order_in_sequence(db):
+    """An order on two pages of one push used to be upserted twice in a row; one
+    multi-row statement cannot touch a row twice, so repeats go in rounds — and
+    the outcome is the sequential one: the later NULL gross does not erase the
+    earlier value (`_PRESERVE_IF_NULL`), the later status wins, and a trace that
+    revisits a status is one row."""
+    from app.models.aggregator import AggregatorOrderStatusEvent
+    from app.services.aggregators.normalized import StandardStatusEvent
+
+    ext = f"{MARKER}-r-{uuid.uuid4().hex[:10]}"
+    first = _pushed_order(ext, status="40", gross="75.00")
+    second = _pushed_order(ext, status="50", gross=None)
+    revisit = dataclasses.replace(
+        _pushed_order(f"{ext}-v", status="40"),
+        status_events=[
+            StandardStatusEvent(status="40", sequence=1),
+            StandardStatusEvent(status="40", sequence=2),
+        ],
+    )
+
+    assert await ingest.upsert_orders(db, "keeta", [first, second, revisit]) == 2
+    row = (
+        await db.execute(
+            select(AggregatorOrder.status, AggregatorOrder.gross_sales).where(
+                AggregatorOrder.channel == "keeta",
+                AggregatorOrder.external_order_id == ext,
+            )
+        )
+    ).one()
+    assert row.status == "50"
+    assert row.gross_sales == Decimal("75.00")
+    seqs = (
+        await db.scalars(
+            select(AggregatorOrderStatusEvent.sequence).where(
+                AggregatorOrderStatusEvent.channel == "keeta",
+                AggregatorOrderStatusEvent.external_order_id == f"{ext}-v",
+            )
+        )
+    ).all()
+    assert seqs == [2]

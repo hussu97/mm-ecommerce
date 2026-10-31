@@ -37,11 +37,14 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.models.aggregator import AggregatorOrder
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
+    InventoryLineCost,
     InventoryTransaction,
     InventoryTransactionItem,
     PurchaseOrder,
@@ -57,6 +60,7 @@ from app.models.inventory_v2 import BranchInventorySettings
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.services.inventory import inventory_service
 from app.services.orders import pnl_purchase_orders
+from app.services.orders.order_pnl import in_pnl_clause
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -350,4 +354,180 @@ async def test_po_stock_consumed_is_traced_to_the_pnl_orders(engine):
                 db, date_from="2031-02-12", date_to="2031-02-12", branch_ids=[a.id]
             )
         ).rows == []
+        await db.rollback()
+
+
+async def test_which_orders_count_is_asked_once_and_matches_the_pnl(engine):
+    """Whether the P&L counts an order is asked once per order per trace, over
+    just the orders the draws name — and answers exactly as asking each draw
+    against every P&L order did.
+
+    PO-1 brings 10 kg of flour (200 net). Before it is keyed in, N (cancelled,
+    uncharged) sells 1 kg on credit, which the receipt pays back. Then:
+
+      P  delivered, sells 2 kg, then 4 more                     drawn      6
+      F  cancelled, but the marketplace's statement bills him   drawn      1
+      C  cancelled, uncharged                                   elsewhere  1
+      R  cancelled, uncharged, sells 2 kg and returns 1         elsewhere  1
+      N  cancelled, uncharged, on credit                        elsewhere  1
+
+    P's second sale takes the last 3 kg of the PO's layer and then the 1 kg R
+    returned — content that reaches P a round later, through R's sale, so P is
+    met in two rounds and asked about once. 7 of 10 kg consumed → 140.00; 3
+    used elsewhere → 60.00; nothing on the shelf.
+    """
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    async with Session() as db:
+        a, wa = await _branch(db, tag, "a")
+        flour = _item(tag, "Flour", "raw_material", "kg")
+        supplier = Supplier(name=f"po-stock {tag}")
+        db.add_all([flour, supplier])
+        await db.flush()
+
+        def order(suffix, status):
+            return Order(
+                order_number=f"POS-{tag}-{suffix}",
+                email="po-stock@example.com",
+                branch_id=a.id,
+                source="aggregator",
+                status=status,
+                delivery_method=DeliveryMethodEnum.DELIVERY,
+                subtotal=D("0"),
+                total=D("0"),
+                vat_rate=D("0.05"),
+                vat_amount=D("0"),
+                total_excl_vat=D("0"),
+                created_at=AT,
+            )
+
+        cancelled = OrderStatusEnum.CANCELLED
+        orders = {
+            "P": order("P", OrderStatusEnum.DELIVERED),
+            "F": order("F", cancelled),
+            "C": order("C", cancelled),
+            "R": order("R", cancelled),
+            "N": order("N", cancelled),
+        }
+        db.add_all(orders.values())
+        await db.flush()
+        # F's charge is the marketplace statement's: the correlated EXISTS
+        # against aggregator_order that made the old per-draw subquery slow.
+        db.add(
+            AggregatorOrder(
+                channel="noon",
+                external_order_id=f"po-stock-{tag}",
+                business_date=DAY,
+                status="cancelled",
+                net_payable=D("-12.00"),
+                mm_order_id=orders["F"].id,
+            )
+        )
+
+        async def sell(key, qty):
+            await _post(
+                db,
+                T.CONSUMPTION_FROM_ORDERS,
+                a,
+                wa,
+                [(flour, qty, "0")],
+                order_id=orders[key].id,
+            )
+
+        await sell("N", "1")
+        purchase_order = PurchaseOrder(
+            reference=f"PO-1-{tag}",
+            status="closed",
+            supplier_id=supplier.id,
+            branch_id=a.id,
+            business_date=DAY,
+        )
+        purchase_order.items.append(
+            PurchaseOrderItem(
+                item_id=flour.id,
+                quantity=D("10"),
+                received_quantity=D("10"),
+                entered_total=D("210"),
+                vat_amount=D("10"),
+                net_total=D("200"),
+                unit_cost=D("21"),
+                total_cost=D("210"),
+            )
+        )
+        db.add(purchase_order)
+        await db.flush()
+        await _post(
+            db,
+            T.PURCHASING,
+            a,
+            wa,
+            [(flour, "10", "21")],
+            purchase_order_id=purchase_order.id,
+        )
+        for key, qty in (("P", "2"), ("F", "1"), ("C", "1"), ("R", "2")):
+            await sell(key, qty)
+        await _post(
+            db,
+            T.RETURN_FROM_ORDERS,
+            a,
+            wa,
+            [(flour, "1", "0")],
+            order_id=orders["R"].id,
+            source_type="order_return",
+        )
+        await sell("P", "4")
+
+        report = await pnl_purchase_orders.build(
+            db, date_from=DAY, date_to=DAY, branch_ids=[a.id]
+        )
+        (row,) = report.rows
+        assert (row.received, row.consumed, row.net) == (D("200"), D("140"), D("60"))
+        assert (row.used_elsewhere, row.in_stock) == (D("60"), D("0"))
+
+        # The tracer itself: every draw's in_pnl is what the old per-draw
+        # `order_id IN (every P&L order)` said, and no order was asked twice.
+        receipts = (
+            await db.execute(
+                select(InventoryLineCost.line_id, InventoryLineCost.item_id)
+                .join(
+                    InventoryTransaction,
+                    InventoryTransaction.id == InventoryLineCost.transaction_id,
+                )
+                .where(InventoryTransaction.purchase_order_id == purchase_order.id)
+            )
+        ).all()
+        tracer = pnl_purchase_orders._Tracer(
+            db, {line: (purchase_order.id, item) for line, item in receipts}
+        )
+        asked: list[uuid.UUID] = []
+        resolve = tracer._resolve_in_pnl
+
+        async def counting(order_ids):
+            asked.extend(o for o in order_ids if o not in tracer.in_pnl)
+            await resolve(order_ids)
+
+        tracer._resolve_in_pnl = counting
+        await tracer.run()
+
+        every_pnl_order = set(
+            (await db.execute(select(Order.id).where(in_pnl_clause()))).scalars()
+        )
+        ours = {o.id for o in orders.values()}
+        seen = [
+            consumer
+            for draws in tracer.draws.values()
+            for _qty, consumer in draws
+            if consumer.order_id is not None
+        ]
+        assert {c.order_id for c in seen} == ours
+        for consumer in seen:
+            assert consumer.in_pnl == (consumer.order_id in every_pnl_order)
+        assert {o for o in ours if tracer.in_pnl[o]} == {
+            orders["P"].id,
+            orders["F"].id,
+        }
+        # Each order asked about exactly once, though P is met in two rounds:
+        # the PO's layer, and again through R's return.
+        assert sorted(asked) == sorted(ours)
+        assert sum(1 for c in seen if c.order_id == orders["P"].id) == 3
         await db.rollback()

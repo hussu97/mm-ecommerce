@@ -30,6 +30,7 @@ from app.app_setup import (
     start_storefront_schedulers,
     stop_storefront_schedulers,
 )
+from app.core import post_commit
 from app.core.config import settings
 
 logger = logging.getLogger("mm.api")
@@ -60,6 +61,10 @@ async def _run() -> None:
     await stop.wait()
     logger.info("scheduler process shutting down")
     await stop_storefront_schedulers(tasks)
+    # Pushes and emails a sweep queued behind its commit (`post_commit`) that are
+    # still on the wire — the arrival sweep's register pushes, the backstop's
+    # emails. Before the APNs client below is closed.
+    await post_commit.drain()
 
     # Release the reused APNs HTTP/2 client cleanly — the loops use it to push to
     # the registers, exactly as the HTTP app does (F-POS-12).

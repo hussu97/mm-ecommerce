@@ -10,6 +10,8 @@ __all__ = [
     "cache_delete",
     "cache_delete_pattern",
     "cache_get",
+    "cache_incr",
+    "cache_pop",
     "cache_set",
 ]
 
@@ -45,6 +47,23 @@ async def cache_get(key: str) -> Any | None:
         return None
 
 
+async def cache_pop(key: str) -> Any | None:
+    """Read a key and delete it in one atomic step (Redis GETDEL).
+
+    For a one-shot signal: a value written between a separate GET and DELETE
+    would be swallowed, so a consumer that must not lose a fresh signal pops it.
+    """
+    r = await _get_redis()
+    if not r:
+        return None
+    try:
+        value = await r.getdel(key)
+        return json.loads(value) if value is not None else None
+    except Exception as e:
+        logger.warning("Cache pop error for key=%s: %s", key, e)
+        return None
+
+
 async def cache_set(key: str, value: Any, ttl: int = 300) -> None:
     r = await _get_redis()
     if not r:
@@ -53,6 +72,19 @@ async def cache_set(key: str, value: Any, ttl: int = 300) -> None:
         await r.setex(key, ttl, json.dumps(value, default=str))
     except Exception as e:
         logger.warning("Cache set error for key=%s: %s", key, e)
+
+
+async def cache_incr(key: str) -> int | None:
+    """Atomically add one to an integer key (no TTL); its new value, or None
+    when Redis is unavailable."""
+    r = await _get_redis()
+    if not r:
+        return None
+    try:
+        return int(await r.incr(key))
+    except Exception as e:
+        logger.warning("Cache incr error for key=%s: %s", key, e)
+        return None
 
 
 async def cache_delete(key: str) -> None:

@@ -21,6 +21,11 @@ The body's sha256 over canonical JSON is its identity. It is persisted to
 `pos_config_bundles` the first time it is served, and `context_from_payload`
 turns a stored body back into a `counter_pricing.PricingContext` for ingest.
 
+A served body is not rebuilt per poll: `cached_body` reuses it while
+`counter_bundle_cache` says no input has changed (see that module for what
+"changed" covers and the five-minute ceiling on what it cannot see). The
+envelope is always read live.
+
 Nothing here writes money; it only reads the catalogue.
 """
 
@@ -29,13 +34,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import event, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,6 +85,7 @@ from app.services.orders import tax_identity_service
 from app.services.pos import (
     auto_promotion_service,
     business_day_service,
+    counter_bundle_cache,
     counter_pricing,
     promotion_rules,
 )
@@ -159,17 +166,29 @@ def _promotion(promo: Promotion, mode: str, rank: int) -> BundlePromotion:
     )
 
 
+@dataclass
+class BuildFacts:
+    """What a build read that can change without an edit: the usage limit of
+    each counter promotion that has one, and which of those were used up.
+    `counter_bundle_cache` re-checks them before reusing the body."""
+
+    usage_caps: dict[uuid.UUID, int] = field(default_factory=dict)
+    exhausted: frozenset[uuid.UUID] = frozenset()
+
+
 async def _counter_promotions(
-    db: AsyncSession, branch_id: uuid.UUID
+    db: AsyncSession, branch_id: uuid.UUID, facts: BuildFacts | None = None
 ) -> list[BundlePromotion]:
     """Every counter promotion that runs at the branch in some mode, best
     first — the rows `auto_promotion_service.available_at` lists, without its
     live-now reading (the register evaluates the schedule at sale time).
 
-    A promotion whose usage limit is used up is left out. The bundle is rebuilt
-    and re-hashed on every fetch, so the tills drop it within one refresh (60s)
-    of the sale that used it up, with no change to the pricing engine."""
-    rows = list(
+    A promotion whose usage limit is used up is left out, so the tills drop it
+    within one refresh (60s) of the sale that used it up, with no change to the
+    pricing engine. The cached body honours that: `facts` records the limits
+    read here, and `counter_bundle_cache` re-counts their usage before reusing
+    a body."""
+    rows = (
         (
             await db.execute(
                 select(Promotion).where(
@@ -181,8 +200,7 @@ async def _counter_promotions(
         .scalars()
         .all()
     )
-    rows = await auto_promotion_service.without_exhausted(db, rows)
-    ranked: list[tuple[tuple, Promotion, str]] = []
+    eligible: list[tuple[Promotion, promotion_rules.PromoRule, str]] = []
     for promo in rows:
         rule = promotion_rules.rule_from(promo)
         mode = promotion_rules.mode_at(rule, branch_id)
@@ -192,7 +210,23 @@ async def _counter_promotions(
             continue
         if rule.branch_ids and branch_id not in rule.branch_ids:
             continue
-        ranked.append(((*promotion_rules.rank(rule), str(promo.id)), promo, mode))
+        eligible.append((promo, rule, mode))
+    caps = {p.id: int(p.usage_limit) for p, _, _ in eligible if p.usage_limit}
+    spent: frozenset[uuid.UUID] = frozenset()
+    if caps:
+        spent = frozenset(
+            auto_promotion_service.spent(
+                caps, await auto_promotion_service.usage_counts(db, list(caps))
+            )
+        )
+    if facts is not None:
+        facts.usage_caps = caps
+        facts.exhausted = spent
+    ranked: list[tuple[tuple, Promotion, str]] = [
+        ((*promotion_rules.rank(rule), str(promo.id)), promo, mode)
+        for promo, rule, mode in eligible
+        if promo.id not in spent
+    ]
     ranked.sort(key=lambda row: row[0])
     return [_promotion(promo, mode, i) for i, (_, promo, mode) in enumerate(ranked)]
 
@@ -210,8 +244,11 @@ def _sorted_tree(nodes: list[dict]) -> list[dict]:
     return out
 
 
-async def build_body(db: AsyncSession, branch: Branch) -> CounterBundleBody:
-    """The hashed half of a branch's bundle, from current data."""
+async def build_body(
+    db: AsyncSession, branch: Branch, *, facts: BuildFacts | None = None
+) -> CounterBundleBody:
+    """The hashed half of a branch's bundle, from current data. `facts`, when
+    given, is filled with what `counter_bundle_cache` must re-check."""
     settings = await _settings(db)
     tz = await business_day_service.resolve_timezone(db)
 
@@ -462,7 +499,7 @@ async def build_body(db: AsyncSession, branch: Branch) -> CounterBundleBody:
         ],
         menu_tree=[MenuGroupNode.model_validate(n) for n in _sorted_tree(tree)],
         payment_methods=[PaymentMethodResponse.model_validate(m) for m in methods],
-        promotions=await _counter_promotions(db, branch.id),
+        promotions=await _counter_promotions(db, branch.id, facts),
         void_reasons=[ReasonResponse.model_validate(r) for r in reasons],
         kitchen_flows=[
             BundleKitchenFlow(id=f.id, name=f.name, is_default=bool(f.is_default))
@@ -667,10 +704,16 @@ def effective_mode(branch_flag: str, build_number: str | None) -> str:
 @dataclass
 class ServedBundle:
     hash: str
+    #: The cached body — shared with every other request that reuses it, so
+    #: read it, never mutate it.
     body: dict[str, Any]
-    envelope: CounterBundleEnvelope
     etag: str
-    extra_headers: dict[str, str] = field(default_factory=dict)
+    #: The mode this terminal must run (the `X-Counter-Mode` header).
+    mode: str
+    #: None when `not_modified`: a 304 needs no envelope.
+    envelope: CounterBundleEnvelope | None
+    #: The caller's `If-None-Match` still holds.
+    not_modified: bool = False
 
 
 async def availability(db: AsyncSession, branch_id: uuid.UUID) -> CounterAvailability:
@@ -690,23 +733,103 @@ async def availability(db: AsyncSession, branch_id: uuid.UUID) -> CounterAvailab
     )
 
 
+async def cached_body(db: AsyncSession, branch: Branch) -> counter_bundle_cache.Entry:
+    """The branch's hashed body and hash — reused from `counter_bundle_cache`
+    while it is current, else built, hashed and persisted."""
+    current = await counter_bundle_cache.generation()
+    entry = counter_bundle_cache.lookup(branch.id, current)
+    if entry is not None and entry.usage_caps:
+        used = await auto_promotion_service.usage_counts(db, list(entry.usage_caps))
+        if auto_promotion_service.spent(entry.usage_caps, used) != entry.exhausted:
+            entry = None
+    if entry is None:
+        facts = BuildFacts()
+        payload = body_payload(await build_body(db, branch, facts=facts))
+        entry = counter_bundle_cache.Entry(
+            hash=sha256_hex(payload),
+            payload=payload,
+            # Read BEFORE the build: a write committed mid-build moves the
+            # generation past this one, so the next poll rebuilds.
+            generation=current,
+            built_at=time.monotonic(),
+            usage_caps=facts.usage_caps,
+            exhausted=facts.exhausted,
+        )
+        counter_bundle_cache.store(branch.id, entry)
+    if not entry.persisted:
+        # Written on every reuse until a request that wrote it has committed,
+        # so ingest can always resolve a hash a terminal was handed: a request
+        # that rolled back leaves the next one to write the row.
+        await persist(
+            db, branch_id=branch.id, bundle_hash=entry.hash, payload=entry.payload
+        )
+        _mark_persisted_on_commit(db, entry)
+    return entry
+
+
+def _mark_persisted_on_commit(
+    db: AsyncSession, entry: counter_bundle_cache.Entry
+) -> None:
+    def _committed(session) -> None:
+        # A savepoint release (`ensure_ticket_prefix`) fires this too; only
+        # the outermost commit makes the row durable.
+        if not session.in_nested_transaction():
+            entry.persisted = True
+
+    sync = getattr(db, "sync_session", None)
+    if sync is not None:
+        event.listen(sync, "after_commit", _committed)
+
+
 async def serve(
-    db: AsyncSession, *, device: Device, build_number: str | None
+    db: AsyncSession,
+    *,
+    device: Device,
+    build_number: str | None,
+    if_none_match: str | None = None,
 ) -> ServedBundle:
-    """Build, hash, persist and wrap this device's branch bundle."""
+    """This device's branch bundle, wrapped in its envelope.
+
+    The body comes from `cached_body`. When `if_none_match` names the current
+    ETag the answer is `not_modified` and the envelope is never assembled — the
+    fields the ETag covers are all a 304 costs."""
     branch = await db.get(Branch, device.branch_id)
     if branch is None:  # pragma: no cover — FK
         raise LookupError("device has no branch")
-    body = await build_body(db, branch)
-    payload = body_payload(body)
-    bundle_hash = sha256_hex(payload)
-    await persist(db, branch_id=branch.id, bundle_hash=bundle_hash, payload=payload)
+    entry = await cached_body(db, branch)
 
     prefix = await ensure_ticket_prefix(db, device)
     business_date = await business_day_service.current_business_date(db, branch)
     branch_flag = getattr(branch, "counter_local_first", None) or "off"
+    mode = effective_mode(branch_flag, build_number)
+    available = await availability(db, branch.id)
+    # What the terminal must re-fetch for, beyond the bundle itself: the 86
+    # list, its mode and its prefix. `server_time` and the sequence are left
+    # out on purpose — the clock comes from the `Date` header and the device's
+    # own numbering is authoritative between reinstalls.
+    envelope_tag = sha256_hex(
+        {
+            "mode": mode,
+            "branch_mode": branch_flag,
+            "prefix": prefix,
+            "min_build": COUNTER_LOCAL_FIRST_MIN_BUILD,
+            "business_date": business_date,
+            "availability": available.model_dump(mode="json"),
+        }
+    )[:16]
+    etag = f'"{entry.hash}.{envelope_tag}"'
+    if if_none_match and if_none_match.strip() == etag:
+        return ServedBundle(
+            hash=entry.hash,
+            body=entry.payload,
+            etag=etag,
+            mode=mode,
+            envelope=None,
+            not_modified=True,
+        )
+
     envelope = CounterBundleEnvelope(
-        counter_local_first=effective_mode(branch_flag, build_number),  # type: ignore[arg-type]
+        counter_local_first=mode,  # type: ignore[arg-type]
         branch_counter_local_first=branch_flag,  # type: ignore[arg-type]
         pricing_engine_version=counter_pricing.ENGINE_VERSION,
         supported_engine_versions=sorted(counter_pricing.SUPPORTED_ENGINE_VERSIONS),
@@ -718,27 +841,10 @@ async def serve(
         last_ingested_ticket_seq=await last_ingested_seq(
             db, branch_id=branch.id, business_date=business_date, prefix=prefix
         ),
-        availability=await availability(db, branch.id),
+        availability=available,
     )
-    # What the terminal must re-fetch for, beyond the bundle itself: the 86
-    # list, its mode and its prefix. `server_time` and the sequence are left
-    # out on purpose — the clock comes from the `Date` header and the device's
-    # own numbering is authoritative between reinstalls.
-    envelope_tag = sha256_hex(
-        {
-            "mode": envelope.counter_local_first,
-            "branch_mode": envelope.branch_counter_local_first,
-            "prefix": envelope.ticket_prefix,
-            "min_build": envelope.min_build,
-            "business_date": envelope.business_date,
-            "availability": envelope.availability.model_dump(mode="json"),
-        }
-    )[:16]
     return ServedBundle(
-        hash=bundle_hash,
-        body=payload,
-        envelope=envelope,
-        etag=f'"{bundle_hash}.{envelope_tag}"',
+        hash=entry.hash, body=entry.payload, etag=etag, mode=mode, envelope=envelope
     )
 
 
@@ -753,10 +859,12 @@ async def current_context(
 
 __all__ = [
     "BUNDLE_RETENTION",
+    "BuildFacts",
     "ServedBundle",
     "availability",
     "body_payload",
     "build_body",
+    "cached_body",
     "canonical_json",
     "context_from_payload",
     "current_context",

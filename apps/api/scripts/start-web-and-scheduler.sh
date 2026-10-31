@@ -31,11 +31,14 @@ trap term TERM INT
 STOREFRONT_SCHEDULER_ENABLED=true python -m app.scheduler_runner &
 sched_pid=$!
 
+# --timeout-keep-alive must outlast nginx's upstream keepalive_timeout (5s,
+# nginx/runtime/upstreams.conf). At uvicorn's default of 5s the two raced: uvicorn
+# closed an idle connection just as nginx reused it, and the request got a 502.
 STOREFRONT_SCHEDULER_ENABLED=false uvicorn app.main:app \
   --host 0.0.0.0 --port 8000 \
   --proxy-headers --forwarded-allow-ips='*' \
   --workers "${UVICORN_WORKERS:-1}" --log-level warning \
-  --timeout-graceful-shutdown 8 &
+  --timeout-graceful-shutdown 8 --timeout-keep-alive 15 &
 web_pid=$!
 
 # Wait for whichever child exits first, capture its status, then bring the other

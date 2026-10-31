@@ -10,6 +10,13 @@ Every email the shop sends, and the one policy for sending them.
   told. An awaited send costs the request one Resend round-trip (pushed to a
   thread, so the event loop keeps serving) and can never be dropped without a
   trace.
+* **Except inside a transaction others queue on.** A caller holding an order
+  row or a branch's inventory lock to its commit — the payment webhook, a
+  courier's status push — registers the send with `app.core.post_commit`
+  instead: built inside the transaction, sent on a tracked task once it
+  commits, dropped if it rolls back. Shutdown drains those tasks, and the
+  confirmation emails have a sweep for any a crash still loses
+  (`orders.confirmation_email_backstop`).
 * **Through the funnel, which never raises.** Every send ends in `_send`, and
   every public coroutine here catches its own rendering failures. A typo in a
   Jinja template must cost an email, not an order — no caller needs a
@@ -42,6 +49,7 @@ import resend
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy import func, select
 
+from app.core import post_commit
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.core.trading_hours import DELIVERY_TIMEZONE
@@ -1832,11 +1840,19 @@ async def notify_status_change(order: OrderResponse) -> str | None:
     return status
 
 
-async def notify_order(db, order) -> str | None:
+async def notify_order(db, order) -> None:
     """
     `notify_status_change` for a caller holding the ORM row rather than the
-    response model — which is both couriers, since a webhook arrives with a
-    delivery record and works back to the order from it.
+    response model — which is the couriers, since a webhook arrives with a
+    delivery record and works back to the order from it, and the register.
+
+    **Sent after *db* commits, not awaited inside it** (`app.core.post_commit`).
+    Every caller has just moved the order inside a transaction that holds it —
+    a courier webhook its delivery and order rows, the register's pack the
+    branch's inventory lock for a channel that consumes at packing — and a
+    Resend round-trip awaited there is one everybody queued on those rows
+    waits behind. The response is built here, inside the transaction, so the
+    email describes what was committed; a rollback sends nothing.
 
     The row is re-read with the mailer's own load options rather than used as
     handed over. A courier selects an order to move its status, not to write
@@ -1853,7 +1869,7 @@ async def notify_order(db, order) -> str | None:
 
     try:
         loaded = await order_service.get_for_notification(db, order.id) or order
-        return await notify_status_change(await order_service.to_response(db, loaded))
+        response = await order_service.to_response(db, loaded)
     except Exception as exc:  # pragma: no cover — defensive
         # A courier push that moved an order must not be rejected because we
         # could not write about it. Lalamove would retry the whole event for a
@@ -1864,7 +1880,12 @@ async def notify_order(db, order) -> str | None:
             exc,
             exc_info=True,
         )
-        return None
+        return
+    await post_commit.defer(
+        db,
+        lambda: notify_status_change(response),
+        name=f"status-email:{response.order_number}:{response.status.value}",
+    )
 
 
 async def repair_after_reassignment(db, order) -> str | None:

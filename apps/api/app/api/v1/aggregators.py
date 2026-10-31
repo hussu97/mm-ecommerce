@@ -447,15 +447,16 @@ async def push_keeta_orders(
     raw payloads here. Each is parsed by the Keeta provider and upserted exactly
     as the sweep upserts the other channels. Returns the count of orders written.
     """
-    ingested = await ingest.ingest_keeta_payloads(db, body.payloads)
-    # Keeta is push-only and is meant to be the freshest channel, but promotion ran
-    # only on the hourly sweep — so a pushed order sat unlinked in aggregator_order
-    # for up to an hour (and after a redeploy, until the next tick). Kick a tracked
-    # promote+reconcile now so it lands in the MM tables within seconds. Idempotent
-    # and backstopped by the hourly sweep; fires only when something was ingested.
-    if ingested:
-        ingest.trigger_promote_reconcile_in_background()
-    return KeetaOrdersResult(ingested=ingested)
+    result = await ingest.ingest_keeta_payloads(db, body.payloads)
+    # Keeta is push-only and meant to be the freshest channel, but promotion runs
+    # on the hourly sweep — so ask the scheduler process to promote+reconcile now,
+    # landing the order in the MM tables within seconds. Only a signal: the work
+    # runs in the scheduler process, never on this web worker's event loop. Only
+    # when something actually changed — a re-push of unchanged history has nothing
+    # to promote.
+    if result.changed:
+        await ingest.request_push_promote()
+    return KeetaOrdersResult(ingested=result.ingested)
 
 
 @router.post("/keeta/finance", response_model=KeetaFinanceResult)

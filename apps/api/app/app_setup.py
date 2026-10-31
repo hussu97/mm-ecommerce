@@ -18,7 +18,6 @@ from contextlib import asynccontextmanager, suppress
 import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -26,13 +25,18 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.core import heartbeat
+from app.core import heartbeat, post_commit
 from app.core.background import spawn_tracked
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory, engine, scheduler_engine
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from app.services import firebase_auth_service
+
+# Imported for its session listeners: every process that writes the catalogue
+# (storefront API, register API, scheduler) must retire the cached counter
+# bundle on commit, not only the two that serve it.
+from app.services.pos import counter_bundle_cache  # noqa: F401
 from scripts.seed_i18n import seed as seed_i18n
 
 logger = logging.getLogger("mm.api")
@@ -458,6 +462,9 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
         await stop_storefront_schedulers(background)
+        # Emails and pushes queued behind a commit (`post_commit`) that are still
+        # on the wire. Before the APNs client closes, which the pushes need.
+        await post_commit.drain()
         # Close the reused APNs HTTP/2 client (F-POS-12) so its connection is
         # released cleanly rather than on GC after the loop is gone.
         from app.services.providers import apns_provider
@@ -555,7 +562,10 @@ def configure(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # No app-level GZip: nginx compresses JSON (`gzip_proxied any`, level 6) for
+    # both hosts. Starlette's GZipMiddleware ran at level 9 on the single worker's
+    # event loop and handed nginx bodies it could not touch — CPU spent on the
+    # one core every other request was waiting for.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

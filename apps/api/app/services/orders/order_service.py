@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
-from app.core import background, receipt_token
+from app.core import background, post_commit, receipt_token
 from app.core import search as search_text
 from app.core.exceptions import (
     BadRequestError,
@@ -125,6 +125,7 @@ __all__ = [
     "get_for_notification",
     "get_user_orders",
     "publish_to_register",
+    "send_confirmation_emails_after_commit",
     "stamp_packed",
     "update_status",
 ]
@@ -1886,6 +1887,29 @@ def _dispatch_confirmation_emails(order: OrderResponse) -> None:
     background.spawn_tracked(
         _send_confirmation_emails(order),
         name=f"confirmation-emails:{order.order_number}",
+    )
+
+
+async def send_confirmation_emails_after_commit(
+    db: AsyncSession, order: OrderResponse
+) -> None:
+    """
+    The customer's confirmation and the owners' notification, sent once *db*
+    commits — and never if it rolls back.
+
+    For a caller confirming inside a transaction that holds locks other requests
+    queue on: the payment webhook holds the order row and the branch's inventory
+    advisory lock until it commits, so three Resend round-trips awaited there
+    were three round-trips every till sale at that branch waited behind. `order`
+    is built inside the transaction and carries no session, so the send does
+    not need one. See `app.core.post_commit`; a send lost to a process dying
+    between the commit and the send is made good by
+    `confirmation_email_backstop`.
+    """
+    await post_commit.defer(
+        db,
+        lambda: _send_confirmation_emails(order),
+        name=f"confirmation-emails:{getattr(order, 'order_number', '?')}",
     )
 
 
