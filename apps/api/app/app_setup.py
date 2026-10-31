@@ -27,7 +27,12 @@ from sqlalchemy import text
 from app.core import heartbeat, post_commit
 from app.core.background import spawn_tracked
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory, engine, scheduler_engine
+from app.core.database import (
+    AsyncSessionFactory,
+    engine,
+    scheduler_engine,
+    set_application_name,
+)
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from app.middleware import RequestEnvelopeMiddleware
@@ -56,8 +61,12 @@ def configure_observability(*, service: str) -> None:
     below was a silent no-op. Every error at a till went nowhere.
 
     `service` is tagged on each event, because "an error in production" is not
-    actionable when two applications share a database and a DSN.
+    actionable when two applications share a database and a DSN. It is also the
+    `application_name` of every Postgres connection the process opens, so
+    `pg_stat_activity` (and the slow-statement log) says which process holds a
+    backend.
     """
+    set_application_name(service)
     _configure_logging()
 
     if not settings.SENTRY_DSN:

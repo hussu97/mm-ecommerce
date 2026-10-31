@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -13,6 +15,7 @@ __all__ = [
     "SchedulerSessionFactory",
     "engine",
     "scheduler_engine",
+    "set_application_name",
 ]
 
 # Pool sizing is bounded by Postgres `max_connections` (30 on the e2-small — see
@@ -127,6 +130,48 @@ def _connect_args(url: str) -> dict[str, object]:
     }
 
 
+#: What this process's connections call themselves in Postgres
+#: (`pg_stat_activity.application_name`, and the `%a` of a log line prefix).
+#:
+#: Every connection used to arrive nameless, so the storefront worker, the
+#: scheduler sibling in the same container and the register were
+#: indistinguishable on the database: a pinned or idle-in-transaction backend
+#: could only be traced back by guessing from its query. The name is the one each
+#: entrypoint already tags Sentry with — `configure_observability` passes it here
+#: (`mm-api`, `mm-scheduler`, `mm-pos-api`) — so it needs no new env var and
+#: cannot drift from the process's own idea of what it is. Anything that never
+#: declares itself (alembic, a script, the test suite) is plain `mm`.
+_application_name = "mm"
+
+
+def set_application_name(name: str) -> None:
+    """Name every connection this process opens from now on.
+
+    The pools are lazy and every entrypoint declares itself before its first
+    query, so in practice every connection carries the name; one opened earlier
+    would keep the old name until `pool_recycle` replaced it."""
+    global _application_name
+    # Postgres truncates at NAMEDATALEN-1; do it here so what we set is what
+    # `pg_stat_activity` shows.
+    _application_name = name[:63]
+
+
+def _name_connections(async_engine: AsyncEngine) -> None:
+    """Stamp `application_name` on each new asyncpg connection. Read at connect
+    time, not engine creation, because the engines are built on import — before
+    the entrypoint has said which process this is."""
+
+    @event.listens_for(async_engine.sync_engine, "do_connect")
+    def _stamp(dialect, conn_rec, cargs, cparams) -> None:
+        server_settings = cparams.get("server_settings")
+        if server_settings is None:  # not asyncpg — see `_connect_args`
+            return
+        cparams["server_settings"] = {
+            **server_settings,
+            "application_name": _application_name,
+        }
+
+
 #: The scheduler pool. Small and fixed — the loops are few and each holds a
 #: connection only briefly (a sweep) or exactly once (a leader lock). See the
 #: budget note above; kept a module constant, not a Setting, so it cannot be
@@ -170,6 +215,9 @@ scheduler_engine = create_async_engine(
     pool_recycle=3600,
     connect_args=_connect_args(settings.DATABASE_URL),
 )
+
+_name_connections(engine)
+_name_connections(scheduler_engine)
 
 AsyncSessionFactory = async_sessionmaker(
     engine,
