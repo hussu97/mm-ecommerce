@@ -367,7 +367,8 @@ async def push_deltas(
     """
     Send one location's changes and record what was sent, on one session.
 
-    The immediate-push path (`_push_many`, off a background session of its own).
+    The immediate-push path (`_push_many`), on a session that first touches the
+    database in `record_pushed` — so no connection is held across the send.
     The per-tick reconcile sweep does NOT use this — it drives `send_deltas` and
     `record_pushed` on separate sessions so a scheduler connection is never held
     across the GrubOps round-trip (WP5, F-OPS-5).
@@ -521,6 +522,15 @@ async def _push_many(
             )
             for m in mappings
         ]
+    # The reads' session is closed before the GrubOps round trip, and the one
+    # that records the result takes no connection until `record_pushed` first
+    # touches the database — after `send_deltas` has returned. This runs on the
+    # request pool (five connections on the register app), and holding one idle
+    # in a transaction for the length of somebody else's API call is how a few
+    # quick taps on the availability screen queue behind each other. The
+    # reconcile sweep has worked this way since WP5; `send_deltas` reads only
+    # plain columns off the now-detached `location`.
+    async with AsyncSessionFactory() as db:
         await push_deltas(db, location=location, deltas=deltas)
         await db.commit()
 

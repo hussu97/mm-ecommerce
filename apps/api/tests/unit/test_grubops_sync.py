@@ -698,3 +698,109 @@ def test_the_return_itself_is_still_pushed():
         available=False, until=datetime(2026, 8, 23, 18, 0, tzinfo=timezone.utc)
     )
     assert svc.needs_push(was_out, _desired(available=True)) is True
+
+
+# ── The immediate push holds no connection across the GrubOps call ───────────
+
+
+@pytest.mark.asyncio
+async def test_the_immediate_push_holds_no_connection_across_the_send():
+    """
+    `_push_many` runs on the request pool — five connections on the register
+    app. It used to read the mappings, then await the GrubOps round trip with
+    that session's connection still checked out (idle in transaction), then
+    record. Now the reads' session is closed first and the recording session
+    touches the database only after the send returns — what is sent and what
+    is recorded unchanged.
+    """
+    branch_id = uuid.uuid4()
+    location = type(
+        "L",
+        (),
+        {
+            "branch_id": branch_id,
+            "grubops_partner_id": PARTNER,
+            "grubops_location_id": LOCATION,
+        },
+    )()
+    mapping = type(
+        "M",
+        (),
+        {
+            "id": uuid.uuid4(),
+            "scope": BRAND,
+            "external_ref": "recipe-1",
+            "external_sub_ref": "mod-1",
+            "external_child_ref": None,
+            "external_type": "MODIFIER",
+        },
+    )()
+    held: list[str] = []  # sessions currently holding a connection
+
+    class _Result:
+        def __init__(self, value):
+            self._value = value
+
+        def scalar_one_or_none(self):
+            return self._value
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._value
+
+    class _Session:
+        def __init__(self, answers):
+            self._answers = answers
+            self.committed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            if self in held:
+                held.remove(self)
+
+        async def execute(self, _stmt):
+            if self not in held:
+                held.append(self)
+            return _Result(self._answers.pop(0))
+
+        async def commit(self):
+            self.committed = True
+            if self in held:
+                held.remove(self)
+
+    sessions = [_Session([location, [mapping]]), _Session([])]
+    factory = iter(sessions)
+    sent: list = []
+    recorded: list = []
+
+    async def send_deltas(*, location, deltas):
+        sent.append((location, deltas, len(held)))
+
+    async def record_pushed(db, *, branch_id, deltas):
+        recorded.append((db, branch_id, deltas))
+
+    with (
+        patch.object(svc, "AsyncSessionFactory", new=lambda: next(factory)),
+        patch.object(svc, "send_deltas", new=send_deltas),
+        patch.object(svc, "record_pushed", new=record_pushed),
+    ):
+        await svc._push_many(
+            branch_id=branch_id,
+            product_ids=[],
+            option_ids=[uuid.uuid4()],
+            in_stock=False,
+            until=None,
+        )
+
+    [(sent_location, deltas, connections_held)] = sent
+    assert connections_held == 0
+    assert sent_location is location
+    assert [d.item_map_id for d in deltas] == [mapping.id]
+    assert deltas[0].available is False and deltas[0].modifier_id == "mod-1"
+    [(record_db, record_branch, record_deltas)] = recorded
+    assert record_db is sessions[1] and sessions[1].committed
+    assert record_branch == branch_id and record_deltas == deltas
