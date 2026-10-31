@@ -53,6 +53,7 @@ from app.models import (
     Warehouse,
 )
 from app.models.base import utcnow
+from app.models.branch import branch_joined_loads
 from app.models.user import User
 from app.schemas.custom_order import CustomCakeProductionCreate
 from app.schemas.production import (
@@ -762,7 +763,7 @@ async def pos_claim_autoprint_transfers(
     await access_service.assert_branch_access(db, user, source_branch_id)
     # Read for its cut-off only; skip the branch's eager integration maps.
     source = await crud_service.get_or_404(
-        db, Branch, source_branch_id, options=[lazyload("*")]
+        db, Branch, source_branch_id, options=branch_joined_loads()
     )
     business_date = await business_day_service.current_business_date(db, source)
     today = date.fromisoformat(business_date)
@@ -1386,7 +1387,7 @@ async def pos_claim_autoprint_production(
     await access_service.assert_branch_access(db, user, source_branch_id)
     # Read for its cut-off and name only; skip the eager integration maps.
     source = await crud_service.get_or_404(
-        db, Branch, source_branch_id, options=[lazyload("*")]
+        db, Branch, source_branch_id, options=branch_joined_loads()
     )
     business_date = await business_day_service.current_business_date(db, source)
     claimed_ids = list(

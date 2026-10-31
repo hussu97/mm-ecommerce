@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, Header, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import lazyload
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
@@ -29,6 +28,7 @@ from app.models import (
     Printer,
 )
 from app.models.base import utcnow
+from app.models.branch import branch_joined_loads
 from app.models.device_push_token import DevicePushToken
 from app.models.user import User
 from app.schemas.pos import (
@@ -652,7 +652,7 @@ async def device_heartbeat(
     # Only the branch's own columns are serialised: skip the four relationships
     # `Branch` eager-loads by default (four more round trips per heartbeat).
     branch = await crud_service.get_or_404(
-        db, Branch, device.branch_id, options=[lazyload("*")]
+        db, Branch, device.branch_id, options=branch_joined_loads()
     )
     return DeviceSessionResponse(
         device=DeviceResponse.model_validate(device),
