@@ -48,6 +48,7 @@ from __future__ import annotations
 import base64
 import calendar
 import dataclasses
+import functools
 import json
 import logging
 import re
@@ -164,7 +165,13 @@ _GROSS_KEYS = (
 
 
 # ── Scalar coercion (all money is Decimal | None; None means "not stated") ───
+@functools.lru_cache(maxsize=4096)
 def _canonical_key(value: str) -> str:
+    # Memoised: `_get_value` re-canonicalises every key of a row for every lookup,
+    # ~15M regex substitutions for one Keeta push of ~30 orders — 80% of the
+    # push's wall time once the upsert stopped re-writing unchanged rows. The key
+    # vocabulary is the portal's field names, a few hundred strings, so the cache
+    # stays small.
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 

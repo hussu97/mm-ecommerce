@@ -105,6 +105,22 @@ def test_the_aggregator_supervisor_beats_while_leading():
     assert "aggregator_ingest" in heartbeat.LOOP_NAMES
 
 
+def test_push_triggered_promote_runs_in_the_scheduler_not_the_web_process():
+    # A Keeta push used to run promote+reconcile as a task on the HTTP worker's
+    # own event loop, undoing the web/scheduler process split. The push now only
+    # signals; the leader-elected supervisor answers it, under a budget.
+    from app.api.v1 import aggregators
+    from app.services.aggregators import ingest
+
+    supervisor = inspect.getsource(ingest.run_aggregator_schedulers_forever)
+    assert "run_push_promote_watcher_forever()" in supervisor
+    assert "asyncio.timeout" in inspect.getsource(ingest._run_requested_promote)
+    push = inspect.getsource(aggregators.push_keeta_orders)
+    assert "request_push_promote" in push
+    assert "sweep_promote_once" not in push
+    assert "create_task" not in inspect.getsource(ingest.request_push_promote)
+
+
 def test_heartbeat_names_match_the_spawned_loop_names():
     # The names `/health` reports must be exactly the names spawned. The loops
     # were lifted out of the lifespan into `start_storefront_schedulers` so a

@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from contextlib import suppress
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import String, and_, case, cast, func, not_, or_, select
@@ -38,7 +39,7 @@ from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock, alerting, heartbeat
+from app.core import advisory_lock, alerting, cache, heartbeat
 from app.core.background import report_result
 from app.core.config import settings
 from app.core.database import (
@@ -378,12 +379,18 @@ def _touched_at(model: Any, update: dict[str, Any]) -> Any:
     daily. This keeps `updated_at` stable when the proposed values (already
     COALESCE-adjusted for the preserve columns) are not distinct from the stored
     ones, so a no-op re-upsert stays a no-op downstream. The row is still written;
-    only the change signal is honest.
+    only the change signal is honest. (The order upserts go further and skip the
+    write itself — `_upsert_rows_skip_unchanged`.)
     """
-    changed = or_(
+    return case((_changed(model, update), utcnow()), else_=model.updated_at)
+
+
+def _changed(model: Any, update: dict[str, Any]) -> Any:
+    """True when an ON CONFLICT update would change a stored value: some merged
+    proposed value is distinct from the stored one."""
+    return or_(
         *[getattr(model, col).is_distinct_from(expr) for col, expr in update.items()]
     )
-    return case((changed, utcnow()), else_=model.updated_at)
 
 
 def _json_safe(value: Any) -> Any:
@@ -507,6 +514,180 @@ def _fit_word(
     return value[:width]
 
 
+#: Rows per multi-row upsert statement. asyncpg caps a statement at 32,767 bind
+#: parameters; the widest table here (`aggregator_order`, ~35 columns) stays well
+#: under that at this size, and a Keeta push (two pages) fits in one statement.
+_UPSERT_CHUNK_ROWS = 400
+
+_ORDER_UPSERT_COLUMNS = (
+    "channel",
+    "external_order_id",
+    "display_ref",
+    "branch_id",
+    "business_date",
+    "placed_at",
+    "accepted_at",
+    "delivered_at",
+    "cancelled_at",
+    "status",
+    "currency",
+    "customer_name",
+    "customer_phone",
+    "customer_phone_country",
+    "customer_address",
+    "address_geocode_status",
+    "driver_name",
+    "driver_phone",
+    "driver_status",
+    "gross_sales",
+    "net_sales",
+    "commission_amount",
+    "payment_fee",
+    "marketing_fee",
+    "delivery_fee",
+    "vat_amount",
+    "cancellation_fee",
+    "refund_amount",
+    "net_payable",
+    "statement_id",
+    "customer_is_member",
+    "raw",
+)
+
+
+def _rounds(rows: list[Any], key: Any) -> list[list[Any]]:
+    """Split rows into rounds in which every natural key appears at most once.
+
+    One `INSERT … ON CONFLICT DO UPDATE` cannot touch the same row twice, but the
+    per-row loop this replaced upserted a repeated key (an order on two pages of
+    one push, a status a trace revisits) in sequence, the later write landing on
+    the earlier. Occurrence n of a key goes into round n and rounds run in order,
+    so the outcome is that same sequence. Almost always one round.
+    """
+    rounds: list[list[Any]] = []
+    seen: dict[Any, int] = {}
+    for row in rows:
+        k = key(row)
+        n = seen.get(k, -1) + 1
+        seen[k] = n
+        if n == len(rounds):
+            rounds.append([])
+        rounds[n].append(row)
+    return rounds
+
+
+async def _upsert_rows_skip_unchanged(
+    db: AsyncSession,
+    model: Any,
+    rows: list[dict[str, Any]],
+    *,
+    constraint: str,
+    key_cols: tuple[str, ...],
+    update_for: Any,
+    returning: tuple[Any, ...],
+) -> list[Any]:
+    """Multi-row upsert that leaves an unchanged stored row unwritten.
+
+    `update_for(insert_stmt)` builds the ON CONFLICT SET (each column's merge rule,
+    read from `excluded`). The conflict WHERE skips a row whose merged values are
+    all not distinct from the stored ones — so an unchanged re-push writes no new
+    tuple, no WAL and no index entries, and `updated_at` stays put exactly as
+    `_touched_at` kept it; a changed row is written with `updated_at = now`.
+    Returns `returning` for each row inserted or changed (a skipped row returns
+    nothing). Rows go in key order so two concurrent batches lock overlapping rows
+    in the same order instead of deadlocking.
+    """
+    out: list[Any] = []
+    now = utcnow()
+    for round_rows in _rounds(rows, key=lambda r: tuple(r[c] for c in key_cols)):
+        round_rows.sort(key=lambda r: tuple(str(r[c]) for c in key_cols))
+        for start in range(0, len(round_rows), _UPSERT_CHUNK_ROWS):
+            # id/created_at/updated_at spelled out per row: they are Python-side
+            # defaults, and an explicit value is one rule for single- and multi-row.
+            chunk = [
+                {"id": uuid.uuid4(), "created_at": now, "updated_at": now, **r}
+                for r in round_rows[start : start + _UPSERT_CHUNK_ROWS]
+            ]
+            insert_stmt = pg_insert(model).values(chunk)
+            update = update_for(insert_stmt)
+            stmt = insert_stmt.on_conflict_do_update(
+                constraint=constraint,
+                set_={**update, "updated_at": now},
+                where=_changed(model, update),
+            ).returning(*returning)
+            out.extend((await db.execute(stmt)).all())
+    return out
+
+
+def _order_update_set(insert_stmt: Any) -> dict[str, Any]:
+    """The ON CONFLICT SET for `aggregator_order`: each column's merge rule."""
+    update: dict[str, Any] = {}
+    for k in _ORDER_UPSERT_COLUMNS:
+        if k in ("channel", "external_order_id"):
+            continue
+        proposed = getattr(insert_stmt.excluded, k)
+        column = getattr(AggregatorOrder, k)
+        if k in _PREFER_UNMASKED:
+            update[k] = _prefer_unmasked_update(column, proposed)
+        elif k in _SETTLEMENT_OWNED:
+            # `AggregatorOrder.statement_id` here is the STORED row's: settled
+            # stays settled, unsettled takes the feed's value as before.
+            update[k] = case(
+                (AggregatorOrder.statement_id.is_not(None), column),
+                else_=func.coalesce(proposed, column),
+            )
+        elif k == "commission_amount":
+            # A settled commission is the statement's, unless it is still a gap:
+            # Keeta re-pushes every recent order, and its feed keeps the
+            # pre-refund commission the bill corrected (see
+            # `backfill_order_economics_from_statement`).
+            update[k] = case(
+                (
+                    and_(
+                        AggregatorOrder.statement_id.is_not(None),
+                        column.is_not(None),
+                    ),
+                    column,
+                ),
+                else_=func.coalesce(proposed, column),
+            )
+        elif k in _PRESERVE_IF_NULL:
+            update[k] = func.coalesce(proposed, column)
+        else:
+            update[k] = proposed
+    return update
+
+
+def _item_update_set(insert_stmt: Any) -> dict[str, Any]:
+    """The ON CONFLICT SET for `aggregator_order_item`: the feed's values win."""
+    return {
+        k: getattr(insert_stmt.excluded, k)
+        for k in (
+            "aggregator_order_id",
+            "grain",
+            "item_name",
+            "category_name",
+            "quantity",
+            "unit_price",
+            "gross_sales",
+            "net_sales",
+            "amount_is_known",
+            "modifiers",
+            "modifiers_text",
+            "business_date",
+            "period_start",
+            "period_end",
+        )
+    }
+
+
+def _event_update_set(insert_stmt: Any) -> dict[str, Any]:
+    """The ON CONFLICT SET for `aggregator_order_status_event`. `status` is part of
+    the natural key — an order revisiting a status is the same step, upserted, not
+    a new row. `at`/`sequence`/`raw` still refresh."""
+    return {k: getattr(insert_stmt.excluded, k) for k in ("at", "sequence", "raw")}
+
+
 async def upsert_order(
     db: AsyncSession,
     channel: str,
@@ -516,51 +697,190 @@ async def upsert_order(
 ) -> None:
     """Upsert one marketplace order and enrich a missing address pin once.
 
-    Ordinary rolling pulls do not retry terminal geocoding outcomes. Explicit
-    ranged backfills pass ``retry_geocoding=True`` — an intentional operator
-    action that may spend quota after correcting a provider address.
+    `upsert_orders` for a single order. Ordinary rolling pulls do not retry
+    terminal geocoding outcomes. Explicit ranged backfills pass
+    ``retry_geocoding=True`` — an intentional operator action that may spend
+    quota after correcting a provider address.
     """
-    existing = await db.execute(
-        select(
-            AggregatorOrder.customer_address,
-            AggregatorOrder.address_geocode_status,
-        ).where(
-            AggregatorOrder.channel == channel,
-            AggregatorOrder.external_order_id == order.external_order_id,
+    await upsert_orders(db, channel, [order], retry_geocoding=retry_geocoding)
+
+
+async def upsert_orders(
+    db: AsyncSession,
+    channel: str,
+    orders: list[StandardOrder],
+    *,
+    retry_geocoding: bool = False,
+) -> int:
+    """Upsert a batch of marketplace orders with their items and status events.
+    Returns how many orders were inserted or changed in any way — an unchanged
+    re-pull writes nothing and counts zero.
+
+    Batched: one lookup of the stored rows, then one multi-row upsert per table,
+    instead of a lookup + a statement per order, item and event. Keeta re-pushes
+    ~2 months of orders every run and almost all are unchanged; the per-row loop
+    made every push hundreds of round trips (p50 ~21s) and re-wrote each row
+    under a row lock that the scheduler's promote then queued behind. The conflict
+    WHERE (`_upsert_rows_skip_unchanged`) is the same "would any value change"
+    test `_touched_at` already made, so a no-op re-push is now a no-op write, and
+    every column keeps its merge rule (`_PREFER_UNMASKED`, `_SETTLEMENT_OWNED`,
+    the settled commission, `_PRESERVE_IF_NULL`). An order repeated within the
+    batch is upserted in sequence (`_rounds`), as the per-order loop did.
+
+    No per-order isolation, as before: a caller that must not let one bad order
+    abort the rest (the httpx sweep) calls `upsert_order` per order under a
+    SAVEPOINT.
+    """
+    written: set[str] = set()
+    for round_orders in _rounds(orders, key=lambda o: o.external_order_id):
+        written |= await _upsert_order_round(
+            db, channel, round_orders, retry_geocoding=retry_geocoding
         )
-    )
-    existing_address, existing_geocode_status = existing.one_or_none() or (None, None)
-    existing_address = address_geocoding.normalise_coordinates(existing_address)
-    incoming_address = address_geocoding.normalise_coordinates(order.customer_address)
-    address, geocode_status = await _address_for_upsert(
-        channel,
-        incoming_address,
-        existing_address,
-        existing_geocode_status,
-        retry_geocoding=retry_geocoding,
-    )
-    branch_id = await _branch_for(db, channel, order.external_outlet_id)
-    # An order whose outlet does not resolve to a branch is stored with branch_id
-    # NULL and then NEVER promoted (promote_channel filters branch_id IS NULL), so
-    # it silently never reaches the MM order tables — the exact way a DSO/Karama (or
-    # a store-id-drifted) outlet goes dark with no signal. Warn once per unknown
-    # outlet so `aggregator_branch_map` drift is visible in the logs instead of
-    # showing up as "that branch has no orders". branch_id is _PRESERVE_IF_NULL, so
-    # this only bites an outlet that has NEVER mapped, not a transient re-resolve miss.
-    if branch_id is None and order.external_outlet_id:
-        key = (channel, order.external_outlet_id)
-        if key not in _UNMAPPED_OUTLETS_WARNED:
-            _UNMAPPED_OUTLETS_WARNED.add(key)
-            logger.warning(
-                "aggregator %s order %s: outlet %r is not in aggregator_branch_map — "
-                "order stored but will NOT be promoted to an MM order until the outlet "
-                "is mapped",
-                channel,
-                order.external_order_id,
-                order.external_outlet_id,
+    return len(written)
+
+
+async def _upsert_order_round(
+    db: AsyncSession,
+    channel: str,
+    orders: list[StandardOrder],
+    *,
+    retry_geocoding: bool,
+) -> set[str]:
+    """One `_rounds` round of `upsert_orders` (no external id appears twice).
+    Returns the external ids of the orders inserted or changed."""
+    ext_ids = [o.external_order_id for o in orders]
+    existing = {
+        row.external_order_id: row
+        for row in (
+            await db.execute(
+                select(
+                    AggregatorOrder.external_order_id,
+                    AggregatorOrder.id,
+                    AggregatorOrder.customer_address,
+                    AggregatorOrder.address_geocode_status,
+                ).where(
+                    AggregatorOrder.channel == channel,
+                    AggregatorOrder.external_order_id.in_(ext_ids),
+                )
             )
+        ).all()
+    }
+
+    branches: dict[str | None, uuid.UUID | None] = {}
+    order_rows: list[dict[str, Any]] = []
+    for order in orders:
+        stored = existing.get(order.external_order_id)
+        address, geocode_status = await _address_for_upsert(
+            channel,
+            address_geocoding.normalise_coordinates(order.customer_address),
+            address_geocoding.normalise_coordinates(
+                stored.customer_address if stored is not None else None
+            ),
+            stored.address_geocode_status if stored is not None else None,
+            retry_geocoding=retry_geocoding,
+        )
+        if order.external_outlet_id not in branches:
+            branches[order.external_outlet_id] = await _branch_for(
+                db, channel, order.external_outlet_id
+            )
+        branch_id = branches[order.external_outlet_id]
+        # An order whose outlet does not resolve to a branch is stored with
+        # branch_id NULL and then NEVER promoted (promote_channel filters
+        # branch_id IS NULL), so it silently never reaches the MM order tables —
+        # the exact way a DSO/Karama (or a store-id-drifted) outlet goes dark with
+        # no signal. Warn once per unknown outlet so `aggregator_branch_map` drift
+        # is visible in the logs instead of showing up as "that branch has no
+        # orders". branch_id is _PRESERVE_IF_NULL, so this only bites an outlet
+        # that has NEVER mapped, not a transient re-resolve miss.
+        if branch_id is None and order.external_outlet_id:
+            key = (channel, order.external_outlet_id)
+            if key not in _UNMAPPED_OUTLETS_WARNED:
+                _UNMAPPED_OUTLETS_WARNED.add(key)
+                logger.warning(
+                    "aggregator %s order %s: outlet %r is not in "
+                    "aggregator_branch_map — order stored but will NOT be promoted "
+                    "to an MM order until the outlet is mapped",
+                    channel,
+                    order.external_order_id,
+                    order.external_outlet_id,
+                )
+        order_rows.append(
+            _order_row(channel, order, branch_id, address, geocode_status)
+        )
+
+    written: set[str] = set()
+    order_pk: dict[str, uuid.UUID] = {ext: row.id for ext, row in existing.items()}
+    for ext, pk in await _upsert_rows_skip_unchanged(
+        db,
+        AggregatorOrder,
+        order_rows,
+        constraint="uq_aggregator_order",
+        key_cols=("channel", "external_order_id"),
+        update_for=_order_update_set,
+        returning=(AggregatorOrder.external_order_id, AggregatorOrder.id),
+    ):
+        written.add(ext)
+        order_pk[ext] = pk
+    missing = [ext for ext in ext_ids if ext not in order_pk]
+    if missing:
+        # Inserted by a concurrent writer between the lookup above and the
+        # upsert, and left unchanged by this one — so it came back from neither.
+        found = await db.execute(
+            select(AggregatorOrder.external_order_id, AggregatorOrder.id).where(
+                AggregatorOrder.channel == channel,
+                AggregatorOrder.external_order_id.in_(missing),
+            )
+        )
+        order_pk.update({ext: pk for ext, pk in found.all()})
+
+    pk_to_ext = {pk: ext for ext, pk in order_pk.items()}
+    item_rows = [
+        _item_row(channel, item, order_pk[order.external_order_id])
+        for order in orders
+        for item in order.items
+    ]
+    if item_rows:
+        for (order_id,) in await _upsert_rows_skip_unchanged(
+            db,
+            AggregatorOrderItem,
+            item_rows,
+            constraint="uq_aggregator_order_item",
+            key_cols=("channel", "source_key"),
+            update_for=_item_update_set,
+            returning=(AggregatorOrderItem.aggregator_order_id,),
+        ):
+            if order_id in pk_to_ext:
+                written.add(pk_to_ext[order_id])
+
+    event_rows = [
+        _event_row(channel, order.external_order_id, ev)
+        for order in orders
+        for ev in order.status_events
+    ]
+    if event_rows:
+        for (ext,) in await _upsert_rows_skip_unchanged(
+            db,
+            AggregatorOrderStatusEvent,
+            event_rows,
+            constraint="uq_aggregator_order_status_event",
+            key_cols=("channel", "external_order_id", "status"),
+            update_for=_event_update_set,
+            returning=(AggregatorOrderStatusEvent.external_order_id,),
+        ):
+            written.add(ext)
+    return written
+
+
+def _order_row(
+    channel: str,
+    order: StandardOrder,
+    branch_id: uuid.UUID | None,
+    address: dict[str, Any] | None,
+    geocode_status: str | None,
+) -> dict[str, Any]:
+    """The proposed `aggregator_order` values for one parsed order."""
     customer_phone = describe_phone(order.customer_phone)
-    values = {
+    return {
         "channel": channel,
         "external_order_id": order.external_order_id,
         "display_ref": order.display_ref,
@@ -601,103 +921,40 @@ async def upsert_order(
         "customer_is_member": order.customer_is_member,
         "raw": _json_safe(order.raw) if order.raw is not None else None,
     }
-    insert_stmt = pg_insert(AggregatorOrder).values(**values)
-    update = {}
-    for k in values:
-        if k in ("channel", "external_order_id"):
-            continue
-        proposed = getattr(insert_stmt.excluded, k)
-        column = getattr(AggregatorOrder, k)
-        if k in _PREFER_UNMASKED:
-            update[k] = _prefer_unmasked_update(column, proposed)
-        elif k in _SETTLEMENT_OWNED:
-            # `AggregatorOrder.statement_id` here is the STORED row's: settled
-            # stays settled, unsettled takes the feed's value as before.
-            update[k] = case(
-                (AggregatorOrder.statement_id.is_not(None), column),
-                else_=func.coalesce(proposed, column),
-            )
-        elif k == "commission_amount":
-            # A settled commission is the statement's, unless it is still a gap:
-            # Keeta re-pushes every recent order, and its feed keeps the
-            # pre-refund commission the bill corrected (see
-            # `backfill_order_economics_from_statement`).
-            update[k] = case(
-                (
-                    and_(
-                        AggregatorOrder.statement_id.is_not(None),
-                        column.is_not(None),
-                    ),
-                    column,
-                ),
-                else_=func.coalesce(proposed, column),
-            )
-        elif k in _PRESERVE_IF_NULL:
-            update[k] = func.coalesce(proposed, column)
-        else:
-            update[k] = proposed
-    update["updated_at"] = _touched_at(AggregatorOrder, update)
-    stmt = insert_stmt.on_conflict_do_update(
-        constraint="uq_aggregator_order",
-        set_=update,
-    ).returning(AggregatorOrder.id)
-    order_pk = (await db.execute(stmt)).scalar_one()
 
-    for item in order.items:
-        item_values = {
-            "channel": channel,
-            "source_key": item.source_key,
-            "aggregator_order_id": order_pk,
-            "grain": item.grain,
-            "item_name": item.item_name,
-            "category_name": item.category_name,
-            "quantity": item.quantity,
-            "unit_price": item.unit_price,
-            "gross_sales": item.gross_sales,
-            "net_sales": item.net_sales,
-            "amount_is_known": item.amount_is_known,
-            "modifiers": modifiers_to_json(item.modifiers),
-            "modifiers_text": item.modifiers_text,
-            "business_date": item.business_date,
-            "period_start": item.period_start,
-            "period_end": item.period_end,
-        }
-        item_update = {
-            k: v for k, v in item_values.items() if k not in ("channel", "source_key")
-        }
-        item_update["updated_at"] = _touched_at(AggregatorOrderItem, item_update)
-        await db.execute(
-            pg_insert(AggregatorOrderItem)
-            .values(**item_values)
-            .on_conflict_do_update(
-                constraint="uq_aggregator_order_item", set_=item_update
-            )
-        )
 
-    for ev in order.status_events:
-        ev_values = {
-            "channel": channel,
-            "external_order_id": order.external_order_id,
-            "status": ev.status,
-            "at": _aware_business(ev.at),
-            "sequence": ev.sequence,
-            "raw": _json_safe(ev.raw) if ev.raw is not None else None,
-        }
-        # `status` is part of the natural key — an order revisiting a status is
-        # the same step, upserted, not a new row. `at`/`sequence` still refresh.
-        ev_update = {
-            k: v
-            for k, v in ev_values.items()
-            if k not in ("channel", "external_order_id", "status")
-        }
-        ev_update["updated_at"] = _touched_at(AggregatorOrderStatusEvent, ev_update)
-        await db.execute(
-            pg_insert(AggregatorOrderStatusEvent)
-            .values(**ev_values)
-            .on_conflict_do_update(
-                constraint="uq_aggregator_order_status_event", set_=ev_update
-            )
-        )
+def _item_row(channel: str, item: Any, order_pk: uuid.UUID) -> dict[str, Any]:
+    """The proposed `aggregator_order_item` values for one parsed line."""
+    return {
+        "channel": channel,
+        "source_key": item.source_key,
+        "aggregator_order_id": order_pk,
+        "grain": item.grain,
+        "item_name": item.item_name,
+        "category_name": item.category_name,
+        "quantity": item.quantity,
+        "unit_price": item.unit_price,
+        "gross_sales": item.gross_sales,
+        "net_sales": item.net_sales,
+        "amount_is_known": item.amount_is_known,
+        "modifiers": modifiers_to_json(item.modifiers),
+        "modifiers_text": item.modifiers_text,
+        "business_date": item.business_date,
+        "period_start": item.period_start,
+        "period_end": item.period_end,
+    }
+
+
+def _event_row(channel: str, external_order_id: str, ev: Any) -> dict[str, Any]:
+    """The proposed `aggregator_order_status_event` values for one step."""
+    return {
+        "channel": channel,
+        "external_order_id": external_order_id,
+        "status": ev.status,
+        "at": _aware_business(ev.at),
+        "sequence": ev.sequence,
+        "raw": _json_safe(ev.raw) if ev.raw is not None else None,
+    }
 
 
 async def update_order_fees(
@@ -738,28 +995,38 @@ async def update_order_fees(
     return (result.rowcount or 0) > 0
 
 
-async def ingest_keeta_payloads(db: AsyncSession, payloads: list[dict]) -> int:
+class KeetaIngestResult(NamedTuple):
+    #: Orders parsed and upserted (the push response's `ingested`).
+    ingested: int
+    #: Of those, orders inserted or changed — zero for a re-push of unchanged
+    #: history, which is most of every run.
+    changed: int
+
+
+async def ingest_keeta_payloads(
+    db: AsyncSession, payloads: list[dict]
+) -> KeetaIngestResult:
     """Parse and upsert a batch of in-page-fetched Keeta `getOrders` payloads.
 
     Keeta is off the httpx sweep (its `mtgsig` signing lives in the page), so the
     bootstrap worker fetches each response in-page and pushes the raw payloads to
-    the `/keeta/orders` endpoint, which calls this. Each payload is isolated: a
-    single malformed one is logged and skipped, not fatal to the batch. Returns
-    the number of orders written.
+    the `/keeta/orders` endpoint, which calls this. Each payload's parse is
+    isolated: a single malformed one is logged and skipped, not fatal to the
+    batch. Every parsed order then goes through ONE batched `upsert_orders`, which
+    writes only what changed.
     """
     from app.services.providers import keeta_provider
 
-    ingested = 0
+    orders: list[StandardOrder] = []
     for payload in payloads:
         try:
-            orders = keeta_provider.provider.parse_orders(payload)
+            orders.extend(keeta_provider.provider.parse_orders(payload))
         except Exception:  # noqa: BLE001 — one bad payload must not fail the batch
             logger.exception("keeta payload parse failed — skipped")
             continue
-        for order in orders:
-            await upsert_order(db, CHANNEL_KEETA, order)
-            ingested += 1
-    return ingested
+    changed = await upsert_orders(db, CHANNEL_KEETA, orders) if orders else 0
+    logger.info("keeta push: %d order(s), %d new or changed", len(orders), changed)
+    return KeetaIngestResult(ingested=len(orders), changed=changed)
 
 
 async def ingest_keeta_finance_payloads(payloads: list[dict]) -> tuple[int, int]:
@@ -3181,37 +3448,95 @@ def _launch_tracked(coro) -> bool:
     return True
 
 
-async def _promote_reconcile_soon() -> None:
-    """Promote + reconcile shortly after a push, so a push-only channel (Keeta)
-    links into MM orders within seconds instead of waiting up to a full
-    `AGGREGATOR_SALES_REFRESH_MINUTES` for the next hourly sweep to promote it.
+#: The Redis key a push endpoint sets to ask the SCHEDULER process for a
+#: promote+reconcile. Its value is the push's wall-clock stamp (epoch seconds).
+_PUSH_PROMOTE_KEY = "aggregator:push_promote_requested"
+#: How long an unconsumed request lives. Only reached when no scheduler is leading
+#: (the ingest is off, or every slot is down) — the hourly sweep then promotes the
+#: orders anyway, so a stale request has nothing left to do.
+_PUSH_PROMOTE_SIGNAL_TTL_SECONDS = 3600
+#: How often the leader looks for a request. With the commit grace below and a
+#: typical promote, a pushed order reaches the MM tables within ~10s.
+_PUSH_PROMOTE_POLL_SECONDS = 3
+#: The push writes on the request session, which `get_db` commits only after the
+#: handler returns; the scheduler reads on its own connection. Wait this long past
+#: the push's stamp so its commit has landed before promote looks for its rows.
+_PUSH_PROMOTE_COMMIT_GRACE_SECONDS = 2
+#: Budget for one push-triggered promote+reconcile, so a wedged pass cannot pin
+#: the scheduler connections it holds. Generous: the hourly sweep runs the same
+#: two passes with no budget at all, and these are incremental.
+_PUSH_PROMOTE_BUDGET_SECONDS = 900
 
-    The brief sleep lets the request that launched this commit its upserts first —
-    the push handler's `get_db` commits only after the handler returns, and this
-    task reads on its own session. The sweeps are idempotent and the hourly refresh
-    is a backstop, so the rare case where the commit has not landed in time simply
-    resolves on the next tick rather than losing anything. Cancellation-safe; a
-    failure is logged and never propagates (it is fire-and-forget)."""
+
+async def request_push_promote() -> None:
+    """Ask the scheduler process to promote + reconcile soon (after a push).
+
+    Keeta is push-only and meant to be the freshest channel, but promotion runs
+    only on the hourly sweep — so a pushed order would sit unlinked in
+    `aggregator_order` for up to an hour. This used to run the promote+reconcile
+    as a tracked task on the HTTP process's own event loop, which undid the
+    web/scheduler process split: every Keeta push window then ran minutes of
+    promotion beside customer requests (cheap endpoints p50 7ms → 255ms).
+
+    Now the push only leaves a stamp in Redis; the leader-elected scheduler picks
+    it up within seconds (`run_push_promote_watcher_forever`). Many pushes in a
+    run coalesce into one key, so a burst costs one pass, not one per push. If
+    Redis is unavailable the write is a logged no-op and the hourly sweep is the
+    backstop — exactly as before when the in-process task failed.
+    """
+    await cache.cache_set(
+        _PUSH_PROMOTE_KEY, time.time(), ttl=_PUSH_PROMOTE_SIGNAL_TTL_SECONDS
+    )
+
+
+async def _run_requested_promote() -> None:
+    """One push-triggered pass, if a push asked for one. Never raises."""
+    stamp = await cache.cache_pop(_PUSH_PROMOTE_KEY)
+    if stamp is None:
+        return
+    # Popped atomically: a push landing after this point sets a fresh key, which
+    # the next poll answers — so no request is ever swallowed by this pass.
     try:
-        await asyncio.sleep(2)
-        promoted = await sweep_promote_once()
-        if promoted:
-            logger.info("aggregator push-triggered promote: %s MM order(s)", promoted)
-        await sweep_reconcile_once()
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 — fire-and-forget must never surface
-        logger.exception("aggregator push-triggered promote/reconcile failed")
+        wait = float(stamp) + _PUSH_PROMOTE_COMMIT_GRACE_SECONDS - time.time()
+    except (TypeError, ValueError):
+        wait = _PUSH_PROMOTE_COMMIT_GRACE_SECONDS
+    if wait > 0:
+        await asyncio.sleep(min(wait, _PUSH_PROMOTE_COMMIT_GRACE_SECONDS))
+    try:
+        async with asyncio.timeout(_PUSH_PROMOTE_BUDGET_SECONDS):
+            promoted = await sweep_promote_once()
+            if promoted:
+                logger.info(
+                    "aggregator push-triggered promote: %s MM order(s)", promoted
+                )
+            await sweep_reconcile_once()
+    except TimeoutError:
+        logger.error(
+            "aggregator push-triggered promote/reconcile exceeded its %ss budget "
+            "— the hourly sweep will finish it",
+            _PUSH_PROMOTE_BUDGET_SECONDS,
+        )
 
 
-def trigger_promote_reconcile_in_background() -> bool:
-    """Kick promote+reconcile as a tracked background task (convention #5 — a
-    module-held `asyncio.Task`, never `BackgroundTasks`). Used by the Keeta push
-    endpoints so pushed orders promote near-realtime. Returns whether it started
-    (False when disabled or there is no running loop, e.g. in a test)."""
-    if not is_enabled():
-        return False
-    return _launch_tracked(_promote_reconcile_soon())
+async def run_push_promote_watcher_forever() -> None:
+    """Answer push-triggered promote requests, in the scheduler process.
+
+    A child of the leader-elected supervisor (`run_aggregator_schedulers_forever`),
+    so exactly one slot answers, and its liveness is the supervisor's
+    `aggregator_ingest` heartbeat. Each poll is one Redis GETDEL; a request runs
+    `sweep_promote_once` then `sweep_reconcile_once` under their own advisory
+    locks (a pass already holding one makes that sweep a no-op, and the hourly
+    sweep is the backstop). Cancellation-safe; a failed pass is logged and the
+    loop lives on.
+    """
+    while True:
+        await asyncio.sleep(_PUSH_PROMOTE_POLL_SECONDS)
+        try:
+            await _run_requested_promote()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one bad pass must not stop the watcher
+            logger.exception("aggregator push-triggered promote/reconcile failed")
 
 
 async def session_readiness(
@@ -3701,6 +4026,10 @@ async def run_aggregator_schedulers_forever() -> None:
                     asyncio.create_task(_leader_heartbeat_forever()),
                     asyncio.create_task(run_scheduler_forever()),
                     asyncio.create_task(run_sales_refresh_scheduler_forever()),
+                    # Push-triggered promote+reconcile (Keeta): the push endpoint
+                    # only leaves a Redis stamp; the work runs here, off the web
+                    # process, within seconds of the push.
+                    asyncio.create_task(run_push_promote_watcher_forever()),
                     # Standing multi-day coverage backfill — re-pulls dates a long
                     # outage left uncovered once the session is live again. Self-
                     # disabling unless AGGREGATOR_COVERAGE_BACKFILL_MINUTES/_DAYS > 0.

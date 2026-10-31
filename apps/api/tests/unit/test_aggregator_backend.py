@@ -233,12 +233,18 @@ async def test_keeta_orders_push_ingests_parsed_orders(client, monkeypatch):
         lambda payload: parsed,
     )
 
-    upserts: list = []
+    batches: list = []
 
-    async def fake_upsert(db, channel, order):
-        upserts.append((channel, order))
+    async def fake_upsert_orders(db, channel, orders):
+        batches.append((channel, list(orders)))
+        return len(orders)
 
-    monkeypatch.setattr("app.services.aggregators.ingest.upsert_order", fake_upsert)
+    monkeypatch.setattr(
+        "app.services.aggregators.ingest.upsert_orders", fake_upsert_orders
+    )
+    monkeypatch.setattr(
+        "app.services.aggregators.ingest.request_push_promote", AsyncMock()
+    )
 
     resp = await client.post(
         "/api/v1/aggregators/keeta/orders",
@@ -247,33 +253,36 @@ async def test_keeta_orders_push_ingests_parsed_orders(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"ingested": 2}
-    assert [c for c, _ in upserts] == ["keeta", "keeta"]
+    # One batched upsert for the whole push, not one call per order.
+    assert batches == [("keeta", parsed)]
 
 
-async def test_keeta_orders_push_triggers_promote_when_something_ingested(
+async def test_keeta_orders_push_signals_promote_only_when_something_changed(
     client, monkeypatch
 ):
-    """Keeta is push-only and meant to be the freshest channel, so a push kicks a
-    promote immediately instead of waiting for the hourly sweep — but only when it
-    actually ingested something."""
+    """Keeta is push-only and meant to be the freshest channel, so a push asks the
+    scheduler process to promote now instead of waiting for the hourly sweep —
+    but only when it changed something, and only as a signal: no promote/reconcile
+    runs on the web process."""
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "tok")
     monkeypatch.setattr(
         "app.services.providers.keeta_provider.provider.parse_orders",
         lambda payload: [object()],
     )
+    changed = {"n": 1}
 
-    async def fake_upsert(db, channel, order):
-        return None
+    async def fake_upsert_orders(db, channel, orders):
+        return changed["n"]
 
-    monkeypatch.setattr("app.services.aggregators.ingest.upsert_order", fake_upsert)
-
-    calls = {"n": 0}
     monkeypatch.setattr(
-        "app.services.aggregators.ingest.trigger_promote_reconcile_in_background",
-        lambda: calls.__setitem__("n", calls["n"] + 1) or True,
+        "app.services.aggregators.ingest.upsert_orders", fake_upsert_orders
     )
+    signal = AsyncMock()
+    monkeypatch.setattr("app.services.aggregators.ingest.request_push_promote", signal)
+    promote = AsyncMock()
+    monkeypatch.setattr("app.services.aggregators.ingest.sweep_promote_once", promote)
 
-    # Something ingested → promote kicked.
+    # Something changed → promote requested.
     resp = await client.post(
         "/api/v1/aggregators/keeta/orders",
         json={"payloads": [{"a": 1}]},
@@ -281,9 +290,19 @@ async def test_keeta_orders_push_triggers_promote_when_something_ingested(
     )
     assert resp.status_code == 200
     assert resp.json() == {"ingested": 1}
-    assert calls["n"] == 1
+    assert signal.await_count == 1
 
-    # Nothing ingested → no promote kicked.
+    # Ingested but unchanged (a re-push of known history) → nothing to promote.
+    changed["n"] = 0
+    resp = await client.post(
+        "/api/v1/aggregators/keeta/orders",
+        json={"payloads": [{"a": 1}]},
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.json() == {"ingested": 1}
+    assert signal.await_count == 1
+
+    # Nothing ingested → no promote requested.
     resp = await client.post(
         "/api/v1/aggregators/keeta/orders",
         json={"payloads": []},
@@ -291,7 +310,9 @@ async def test_keeta_orders_push_triggers_promote_when_something_ingested(
     )
     assert resp.status_code == 200
     assert resp.json() == {"ingested": 0}
-    assert calls["n"] == 1
+    assert signal.await_count == 1
+    # The web process never runs the sweep itself.
+    promote.assert_not_awaited()
 
 
 async def test_keeta_orders_push_isolates_a_bad_payload(client, monkeypatch):
@@ -308,10 +329,12 @@ async def test_keeta_orders_push_isolates_a_bad_payload(client, monkeypatch):
         "app.services.providers.keeta_provider.provider.parse_orders", flaky_parse
     )
 
-    async def fake_upsert(db, channel, order):
-        return None
+    async def fake_upsert_orders(db, channel, orders):
+        return 0
 
-    monkeypatch.setattr("app.services.aggregators.ingest.upsert_order", fake_upsert)
+    monkeypatch.setattr(
+        "app.services.aggregators.ingest.upsert_orders", fake_upsert_orders
+    )
 
     resp = await client.post(
         "/api/v1/aggregators/keeta/orders",
@@ -320,6 +343,46 @@ async def test_keeta_orders_push_isolates_a_bad_payload(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"ingested": 2}
+
+
+async def test_push_promote_watcher_runs_promote_then_reconcile_once_per_signal(
+    monkeypatch,
+):
+    """The scheduler side of the push signal: a stamp is popped atomically and
+    answered with promote → reconcile; no stamp, no work."""
+    store: dict = {}
+
+    async def fake_set(key, value, ttl=300):
+        store[key] = value
+
+    async def fake_pop(key):
+        return store.pop(key, None)
+
+    monkeypatch.setattr("app.core.cache.cache_set", fake_set)
+    monkeypatch.setattr("app.core.cache.cache_pop", fake_pop)
+    monkeypatch.setattr(ingest, "_PUSH_PROMOTE_COMMIT_GRACE_SECONDS", 0)
+    calls: list[str] = []
+
+    async def fake_promote():
+        calls.append("promote")
+        return 1
+
+    async def fake_reconcile():
+        calls.append("reconcile")
+        return 0
+
+    monkeypatch.setattr(ingest, "sweep_promote_once", fake_promote)
+    monkeypatch.setattr(ingest, "sweep_reconcile_once", fake_reconcile)
+
+    await ingest._run_requested_promote()
+    assert calls == []
+
+    await ingest.request_push_promote()
+    await ingest.request_push_promote()  # a burst coalesces into one pass
+    await ingest._run_requested_promote()
+    assert calls == ["promote", "reconcile"]
+    await ingest._run_requested_promote()
+    assert calls == ["promote", "reconcile"]
 
 
 # ── rolling sales-only refresh (frequent cadence) ─────────────────────────────

@@ -11,6 +11,7 @@ __all__ = [
     "cache_delete_pattern",
     "cache_get",
     "cache_incr",
+    "cache_pop",
     "cache_set",
 ]
 
@@ -43,6 +44,23 @@ async def cache_get(key: str) -> Any | None:
         return json.loads(value) if value is not None else None
     except Exception as e:
         logger.warning("Cache get error for key=%s: %s", key, e)
+        return None
+
+
+async def cache_pop(key: str) -> Any | None:
+    """Read a key and delete it in one atomic step (Redis GETDEL).
+
+    For a one-shot signal: a value written between a separate GET and DELETE
+    would be swallowed, so a consumer that must not lose a fresh signal pops it.
+    """
+    r = await _get_redis()
+    if not r:
+        return None
+    try:
+        value = await r.getdel(key)
+        return json.loads(value) if value is not None else None
+    except Exception as e:
+        logger.warning("Cache pop error for key=%s: %s", key, e)
         return None
 
 
