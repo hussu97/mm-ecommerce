@@ -23,7 +23,6 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core import heartbeat, post_commit
 from app.core.background import spawn_tracked
@@ -31,6 +30,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionFactory, engine, scheduler_engine
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
+from app.middleware import RequestEnvelopeMiddleware
 from app.services import firebase_auth_service
 
 # Imported for their session listeners: every process that writes the catalogue
@@ -44,8 +44,6 @@ from app.services.pos import (
 from scripts.seed_i18n import seed as seed_i18n
 
 logger = logging.getLogger("mm.api")
-
-MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
 def configure_observability(*, service: str) -> None:
@@ -480,16 +478,6 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
     return lifespan
 
 
-class MaxBodySizeMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_BODY_BYTES:
-            return JSONResponse(
-                status_code=413, content={"detail": "Request body too large"}
-            )
-        return await call_next(request)
-
-
 #: Health/liveness paths that must answer even when the request pool is full —
 #: shedding these would make the container mark ITSELF unhealthy under load and
 #: trigger a restart loop, turning a transient saturation into an outage.
@@ -559,13 +547,28 @@ def configure(
     """
     Apply the shared middleware stack and error handlers.
 
-    Order matters and is the same in both apps: first added is outermost, so
-    an unknown Host is rejected before anything else runs.
+    Order matters and is the same in both apps. Starlette makes the LAST
+    `add_middleware` call the OUTERMOST layer, so the calls below run bottom-up.
+    A request meets, outermost first:
+
+    1. `PoolSaturationMiddleware` — a saturated server sheds before any other
+       work is spent on the request.
+    2. `RequestEnvelopeMiddleware` — request id, the 10 MB body cap, the access
+       log line and the security headers. It sits outside the two below so the
+       400 for an unknown Host and a CORS preflight still carry `X-Request-ID`
+       and the security headers and are still logged, as they always were.
+    3. `TrustedHostMiddleware` — an unknown Host is refused before CORS (or
+       anything that routes) sees it.
+    4. `CORSMiddleware`.
+
+    Until 2026-11 this docstring said "first added is outermost" and the code
+    followed it, so the Host check actually ran INNERMOST, after CORS: a
+    preflight with a forged Host was answered 200 and a refused Host's 400
+    carried CORS headers. `test_middleware_order.py` pins the order.
     """
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     # No app-level GZip: nginx compresses JSON (`gzip_proxied any`, level 6) for
     # both hosts. Starlette's GZipMiddleware ran at level 9 on the single worker's
     # event loop and handed nginx bodies it could not touch — CPU spent on the
@@ -584,32 +587,8 @@ def configure(
             "X-Device-Token",
         ],
     )
-    app.add_middleware(MaxBodySizeMiddleware)
-
-    from app.middleware import LoggingMiddleware, RequestIDMiddleware
-
-    app.add_middleware(LoggingMiddleware)
-    app.add_middleware(RequestIDMiddleware)
-
-    @app.middleware("http")
-    async def add_security_headers(request: Request, call_next):
-        response = await call_next(request)
-        # The full set, on the app rather than only in nginx's TLS server blocks.
-        # They were `add_header` directives in `nginx/conf.d/ssl.conf` and
-        # `pos.conf`, so the HTTP-only path (`http.conf`, used before a
-        # certificate is issued) and any response that did not traverse a TLS
-        # block carried none of them. Setting them here means every response from
-        # either app carries them regardless of the nginx path it took.
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        # HSTS only in production: it is an HTTPS-only instruction, and asserting
-        # it over plain-HTTP local development would be wrong. Value matches the
-        # nginx blocks (two years, subdomains, preload).
-        if settings.is_production:
-            response.headers["Strict-Transport-Security"] = (
-                "max-age=63072000; includeSubDomains; preload"
-            )
-        return response
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    app.add_middleware(RequestEnvelopeMiddleware)
 
     # Added LAST so it is the OUTERMOST middleware: a saturated server sheds the
     # request before any other work (routing, a DB session, a `pool_timeout`

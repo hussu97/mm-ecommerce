@@ -3,7 +3,7 @@ Security headers ride on the app, not only in nginx's TLS blocks (F-OPS-26).
 
 They were `add_header` directives in the TLS server blocks, so the HTTP-only
 nginx path and any response that did not traverse a TLS block carried none of
-them. The app's `add_security_headers` middleware now sets the full set, so every
+them. The app's `RequestEnvelopeMiddleware` now sets the full set, so every
 response from either app carries them regardless of how it was routed.
 """
 

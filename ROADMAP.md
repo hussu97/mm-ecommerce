@@ -24,7 +24,7 @@ _Must fix before production launch._
 - [x] **Docker Compose secrets in plain text** — `docker-compose.yml` uses `${POSTGRES_USER:-mm_user}` etc. with `.env.example` template added.
 - [x] **Stripe webhook secret not enforced at startup** — Startup guard in `main.py` raises `RuntimeError` if `STRIPE_WEBHOOK_SECRET` is empty in production.
 - [x] **Missing security headers** — `X-Content-Type-Options: nosniff` always; `Strict-Transport-Security` in production; `TrustedHostMiddleware` added.
-- [x] **No request payload size limit** — `MaxBodySizeMiddleware` rejects bodies >10 MB.
+- [x] **No request payload size limit** — `RequestEnvelopeMiddleware` (app/middleware.py) rejects bodies >10 MB.
 
 ### Data Integrity
 
