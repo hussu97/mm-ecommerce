@@ -1556,14 +1556,40 @@ async def _create_report(
     # count by category and the admin review shows the same grouping — both read
     # these off the line rather than re-fetching the catalogue.
     categories = await _category_map(db, [row.item_id for row in template.items])
+    # The template's items and their levels in two reads, not two per line: a
+    # count sheet runs to dozens of items and every read here is made holding
+    # the branch inventory lock.
+    template_items = sorted(template.items, key=lambda row: row.display_order)
+    items_by_id = (
+        {
+            item.id: item
+            for item in (
+                await db.execute(
+                    select(InventoryItem).where(
+                        InventoryItem.id.in_({row.item_id for row in template_items})
+                    )
+                )
+            ).scalars()
+        }
+        if template_items
+        else {}
+    )
+    # Skip items since deactivated or deleted — a stale template line must not
+    # put an item nobody stocks any more onto the count sheet (nor be given a
+    # level row it never had).
+    counted = [
+        (row, item)
+        for row in template_items
+        if (item := items_by_id.get(row.item_id)) is not None
+        and item.deleted_at is None
+        and item.is_active
+    ]
+    levels = await inventory_service.levels_for(
+        db, [item.id for _, item in counted], warehouse.id
+    )
     created_lines: list[ShiftInventoryReportLine] = []
-    for template_item in sorted(template.items, key=lambda row: row.display_order):
-        item = await db.get(InventoryItem, template_item.item_id)
-        # Skip items since deactivated or deleted — a stale template line must not
-        # put an item nobody stocks any more onto the count sheet.
-        if item is None or item.deleted_at is not None or not item.is_active:
-            continue
-        level = await inventory_service.level_for(db, item.id, warehouse.id)
+    for template_item, item in counted:
+        level = levels[item.id]
         # Level as of the shift's close: back out any order draw the sale-time window
         # hands to another shift (see `_movement_totals`), so the count reconciles
         # against what was on the shelf when it was taken.
@@ -1643,8 +1669,13 @@ async def refresh_report(
         if latest is not None
         else set()
     )
+    # One read for every line's level rather than one per line, all of it under
+    # the branch inventory lock.
+    levels = await inventory_service.levels_for(
+        db, [line.item_id for line in report.lines], warehouse.id
+    )
     for line in report.lines:
-        level = await inventory_service.level_for(db, line.item_id, warehouse.id)
+        level = levels[line.item_id]
         # Level as of the shift's close (see `_movement_totals` / `_create_report`).
         expected = quantity(
             level.quantity - level_adjustment.get(line.item_id, Decimal("0"))

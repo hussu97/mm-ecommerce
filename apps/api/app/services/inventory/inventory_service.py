@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -286,6 +286,48 @@ async def level_for(
         db.add(level)
         await db.flush()
     return level
+
+
+async def levels_for(
+    db: AsyncSession, item_ids: Iterable[uuid.UUID], warehouse_id: uuid.UUID
+) -> dict[uuid.UUID, InventoryLevel]:
+    """
+    `level_for` for many items in one read, keyed by item id.
+
+    For the read paths that used to call `level_for` once per line — a count
+    sheet of eighty items was eighty round trips, all inside the branch
+    inventory lock. A missing row is created at zero exactly as `level_for`
+    creates it, so swapping a per-line loop for this leaves the same rows
+    behind. Not for the mutation path: it takes no row locks (`level_for(...,
+    for_update=True)` is still the way to hold a balance).
+    """
+    wanted = list(dict.fromkeys(item_ids))
+    if not wanted:
+        return {}
+    levels = {
+        level.item_id: level
+        for level in (
+            await db.execute(
+                select(InventoryLevel).where(
+                    InventoryLevel.warehouse_id == warehouse_id,
+                    InventoryLevel.item_id.in_(wanted),
+                )
+            )
+        ).scalars()
+    }
+    missing = [item_id for item_id in wanted if item_id not in levels]
+    for item_id in missing:
+        level = InventoryLevel(
+            item_id=item_id,
+            warehouse_id=warehouse_id,
+            quantity=Decimal("0"),
+            average_cost=Decimal("0"),
+        )
+        db.add(level)
+        levels[item_id] = level
+    if missing:
+        await db.flush()
+    return levels
 
 
 def apply_movement(

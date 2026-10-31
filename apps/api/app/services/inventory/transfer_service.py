@@ -755,6 +755,7 @@ async def mark_transfer_sent(
     db.add(transaction)
     await db.flush()
 
+    shipped: list[tuple[TransferLine, Decimal]] = []
     for line in transfer.items:
         if sent is not None and line.id in sent:
             quantity = _q(sent[line.id])
@@ -768,12 +769,34 @@ async def mark_transfer_sent(
         # reads as a shipped 0 (a variance against its request) rather than the
         # requested amount. Only a positive quantity moves stock.
         line.sent_quantity = quantity
-        if quantity <= 0:
-            continue
-        item = await db.get(InventoryItem, line.item_id)
-        if item is None:
+        if quantity > 0:
+            shipped.append((line, quantity))
+
+    # The shipped lines' items and source levels in two reads rather than two
+    # per line, all of them under the branch inventory lock taken above.
+    items_by_id = (
+        {
+            item.id: item
+            for item in (
+                await db.execute(
+                    select(InventoryItem).where(
+                        InventoryItem.id.in_({line.item_id for line, _ in shipped})
+                    )
+                )
+            ).scalars()
+        }
+        if shipped
+        else {}
+    )
+    for line, _ in shipped:
+        if line.item_id not in items_by_id:
             raise BadRequestError(f"Inventory item {line.item_id} not found")
-        level = await inventory_service.level_for(db, line.item_id, source_warehouse.id)
+    levels = await inventory_service.levels_for(
+        db, [line.item_id for line, _ in shipped], source_warehouse.id
+    )
+    for line, quantity in shipped:
+        item = items_by_id[line.item_id]
+        level = levels[line.item_id]
         ingredient_cost = _c(level.average_cost)
         if ingredient_cost == 0:
             ingredient_cost = inventory_service.inventory_item_cost_for_unit(
