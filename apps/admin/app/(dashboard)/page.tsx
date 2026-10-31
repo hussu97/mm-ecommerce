@@ -23,6 +23,7 @@ import {
   type OrderFilters,
 } from '@/lib/order-filters';
 import { DateRangePresets } from '@/components/orders/DateRangePresets';
+import { pollWhileVisible } from '@/lib/poll-while-visible';
 import {
   formatCurrency,
   formatTime,
@@ -523,12 +524,13 @@ export default function DashboardPage() {
   }, [dashKey, ordersKey]);
 
   // Re-run whenever a filter changes. The 60s live refresh runs only for the
-  // current-day view — a historical range does not move, so polling it is noise.
+  // current-day view — a historical range does not move, so polling it is noise —
+  // and only while the tab is visible: a background tab refreshes the moment it
+  // is looked at again instead of polling all day for nobody.
   useEffect(() => {
     void load();
     if (!isCurrentDay) return;
-    const id = setInterval(() => void load(), REFRESH_MS);
-    return () => clearInterval(id);
+    return pollWhileVisible(() => void load(), REFRESH_MS);
   }, [load, isCurrentDay]);
 
   const s = data?.summary;
