@@ -10,6 +10,7 @@ __all__ = [
     "cache_delete",
     "cache_delete_pattern",
     "cache_get",
+    "cache_incr",
     "cache_set",
 ]
 
@@ -53,6 +54,19 @@ async def cache_set(key: str, value: Any, ttl: int = 300) -> None:
         await r.setex(key, ttl, json.dumps(value, default=str))
     except Exception as e:
         logger.warning("Cache set error for key=%s: %s", key, e)
+
+
+async def cache_incr(key: str) -> int | None:
+    """Atomically add one to an integer key (no TTL); its new value, or None
+    when Redis is unavailable."""
+    r = await _get_redis()
+    if not r:
+        return None
+    try:
+        return int(await r.incr(key))
+    except Exception as e:
+        logger.warning("Cache incr error for key=%s: %s", key, e)
+        return None
 
 
 async def cache_delete(key: str) -> None:

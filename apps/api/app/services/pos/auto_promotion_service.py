@@ -201,13 +201,17 @@ async def usage_counts(
     return {pid: int(n) for pid, n in (await db.execute(stmt)).all()}
 
 
+def spent(caps: dict[uuid.UUID, int], used: dict[uuid.UUID, int]) -> set[uuid.UUID]:
+    """The ids in `caps` (id → usage limit) whose `used` count reached it."""
+    return {pid for pid, cap in caps.items() if used.get(pid, 0) >= cap}
+
+
 async def exhausted_ids(db: AsyncSession, promos: list[Promotion]) -> set[uuid.UUID]:
     """The promotions among `promos` whose usage limit is used up."""
     limited = {p.id: p.usage_limit for p in promos if p.usage_limit}
     if not limited:
         return set()
-    used = await usage_counts(db, list(limited))
-    return {pid for pid, cap in limited.items() if used.get(pid, 0) >= cap}
+    return spent(limited, await usage_counts(db, list(limited)))
 
 
 async def without_exhausted(

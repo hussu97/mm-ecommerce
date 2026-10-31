@@ -66,12 +66,14 @@ def reset_courier_caches():
         slider_service,
     )
     from app.services.delivery import delivery_promise
+    from app.services.pos import counter_bundle_cache
 
     for reset in (
         lalamove_service.clear_caches,
         slider_service.clear_caches,
         noon_send_service.invalidate_limits,
         delivery_promise.clear_caches,
+        counter_bundle_cache.clear,
     ):
         reset()
     yield
@@ -80,6 +82,7 @@ def reset_courier_caches():
         slider_service.clear_caches,
         noon_send_service.invalidate_limits,
         delivery_promise.clear_caches,
+        counter_bundle_cache.clear,
     ):
         reset()
 

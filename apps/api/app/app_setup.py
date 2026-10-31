@@ -32,6 +32,11 @@ from app.core.database import AsyncSessionFactory, engine, scheduler_engine
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from app.services import firebase_auth_service
+
+# Imported for its session listeners: every process that writes the catalogue
+# (storefront API, register API, scheduler) must retire the cached counter
+# bundle on commit, not only the two that serve it.
+from app.services.pos import counter_bundle_cache  # noqa: F401
 from scripts.seed_i18n import seed as seed_i18n
 
 logger = logging.getLogger("mm.api")

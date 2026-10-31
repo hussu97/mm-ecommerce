@@ -10,7 +10,9 @@ main API (`router.py`). Contracts: `app/schemas/pos_counter.py`.
     Send the last ETag as `If-None-Match` → 304 (no body, same headers) when
     neither the bundle nor the envelope's 86 list / mode / prefix / business
     date changed. Every call also assigns the terminal its ticket prefix on first
-    use and records the bundle for re-pricing.
+    use; every newly built bundle is recorded for re-pricing. The body is
+    rebuilt only when an input changed (`counter_bundle_cache`), and a 304 is
+    decided before the rest of the envelope is read.
 
 `POST /pos/counter/sales` (device token) → `CounterSaleResponse`
     201 ingested · 200 replayed (same id, same fingerprint) · 202 quarantined
@@ -122,15 +124,15 @@ async def get_bundle(
     """The config bundle this terminal prices counter sales from. See the
     module docstring for the ETag/304 behaviour."""
     served = await counter_bundle_service.serve(
-        db, device=device, build_number=x_app_build
+        db, device=device, build_number=x_app_build, if_none_match=if_none_match
     )
     headers = {
         "ETag": served.etag,
         "Cache-Control": "no-cache",
         "X-Counter-Bundle-Hash": served.hash,
-        "X-Counter-Mode": served.envelope.counter_local_first,
+        "X-Counter-Mode": served.mode,
     }
-    if if_none_match and if_none_match.strip() == served.etag:
+    if served.not_modified or served.envelope is None:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     # Served as the very dict that was hashed (and stored), not re-validated
     # through the response model, so what the register holds is byte-for-byte
