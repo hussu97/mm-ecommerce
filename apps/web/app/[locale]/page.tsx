@@ -314,18 +314,22 @@ export default async function HomePage({
   // estate-wide homepage.
   const zoneId = await browsingZone();
 
-  const [c, featuredProducts, categories, promo] = await Promise.all([
-    getHomeContent(locale),
+  // Product deep-links in the hero are gated on the product still being live,
+  // the way category slides are gated on their category. They need only the
+  // CMS content, so they are chained off it rather than waiting for the whole
+  // batch below — otherwise the slowest of four fetches came before they could
+  // even start, one extra round trip on every homepage render.
+  const content = getHomeContent(locale);
+  const [c, featuredProducts, categories, promo, liveHeroProductPaths] = await Promise.all([
+    content,
     getFeaturedProducts(zoneId),
     getCategories(),
     getFeaturedPromo(),
+    content.then(home => getLiveHeroProductPaths(home.hero ?? {})),
   ]);
 
   const jsonLd = buildJsonLd(categories, featuredProducts, promo, locale === 'ar' ? 'ar' : 'en');
   const activeCategories = categories.filter(cat => cat.is_active);
-  // Product deep-links in the hero are gated on the product still being live,
-  // the way category slides are gated on their category.
-  const liveHeroProductPaths = await getLiveHeroProductPaths(c.hero ?? {});
 
   const sections: Record<SectionKey, React.ReactNode> = {
     hero: (
