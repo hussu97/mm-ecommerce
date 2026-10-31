@@ -32,7 +32,7 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, heartbeat
@@ -446,6 +446,39 @@ async def evaluate_day(db: AsyncSession, day: date) -> int:
 # ─── Loop ─────────────────────────────────────────────────────────────────────
 
 
+async def _pending_days(db: AsyncSession, yesterday: date) -> list[date]:
+    """Days holding rows that can be scored now and have not been.
+
+    Yesterday's production rows are excluded: they are stamped only when
+    *today* is evaluated (the batch protects the next day), so counting them as
+    pending re-ran `evaluate_day(yesterday)` — 56 days of facts — on every tick
+    until the rollover. Yesterday's actuals still land through `tick`'s
+    `rebuilt_yesterday` pass and through its transfer rows.
+    """
+    return list(
+        (
+            await db.execute(
+                select(ReplenishmentForecast.business_date)
+                .where(
+                    ReplenishmentForecast.evaluated_at.is_(None),
+                    ReplenishmentForecast.business_date <= yesterday,
+                    not_(
+                        and_(
+                            ReplenishmentForecast.kind == "production",
+                            ReplenishmentForecast.business_date == yesterday,
+                        )
+                    ),
+                )
+                .distinct()
+                .order_by(ReplenishmentForecast.business_date)
+                .limit(_CATCH_UP_PER_TICK)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def tick(db: AsyncSession) -> None:
     """One pass of the loop, on the loop's own `held_session` (no request owns
     it). It commits after each unit of work — a day's facts, a day's scores, the
@@ -497,22 +530,7 @@ async def tick(db: AsyncSession) -> None:
             await db.commit()
 
     # Score every day whose facts now exist and whose rows are not yet scored.
-    pending = (
-        (
-            await db.execute(
-                select(ReplenishmentForecast.business_date)
-                .where(
-                    ReplenishmentForecast.evaluated_at.is_(None),
-                    ReplenishmentForecast.business_date <= yesterday,
-                )
-                .distinct()
-                .order_by(ReplenishmentForecast.business_date)
-                .limit(_CATCH_UP_PER_TICK)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    pending = await _pending_days(db, yesterday)
     days = set(pending)
     # A day's production rows are scored when the day after it is evaluated.
     days.update(d + timedelta(days=1) for d in pending if d < yesterday)

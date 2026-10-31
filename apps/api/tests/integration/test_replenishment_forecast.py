@@ -449,3 +449,38 @@ async def test_snapshot_is_unlinked_and_evaluation_matches_actuals_by_date(
         0.0, float(retain.pool_at_snapshot) - 5
     )
     assert ("production", source.id) in rows
+
+
+async def test_yesterdays_production_rows_do_not_keep_yesterday_pending(maker, world):
+    """Yesterday's production rows are scored only once today is evaluated, so
+    they must not make `tick` re-evaluate yesterday on every pass (it reloaded
+    56 days of facts every ten minutes until the rollover)."""
+    await _build(maker)
+    source = world["source"]
+    yesterday = TODAY - timedelta(days=1)
+    async with maker() as db:
+        await db.execute(
+            update(ReplenishmentSettings).values(production_branch_id=source.id)
+        )
+        await db.commit()
+        await history.snapshot_day(db, as_of=_local(yesterday, 9), mode="backtest")
+        await db.commit()
+        await history.evaluate_day(db, yesterday)
+        await db.commit()
+
+        left = (
+            (
+                await db.execute(
+                    select(ReplenishmentForecast.kind).where(
+                        ReplenishmentForecast.business_date == yesterday,
+                        ReplenishmentForecast.evaluated_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert left and set(left) == {"production"}
+        assert yesterday not in await history._pending_days(db, yesterday)
+        # A day later the same rows are scoreable, and pending again.
+        assert yesterday in await history._pending_days(db, TODAY)
