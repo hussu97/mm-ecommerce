@@ -29,6 +29,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money
+from app.models.inventory import MISC_PNL_LEVELS
 from app.models.order import Order
 from app.models.pos_order import OrderSourceEnum
 from app.services.aggregators.period_charges import (
@@ -175,7 +176,7 @@ async def build(
         for row in misc:
             _add_misc(total, row.level, *row.unallocated)
 
-    return PnlReport(
+    report = PnlReport(
         date_from=date_from,
         date_to=date_to,
         channels=ordered,
@@ -186,6 +187,17 @@ async def build(
         keep=keep,
         unfiltered=unfiltered,
     )
+    # Within each level, the category that cost most first — measured as the
+    # Total column shows it under these filters, so the order follows the
+    # figures on screen; the name breaks a tie.
+    report.misc.sort(
+        key=lambda r: (
+            MISC_PNL_LEVELS.index(r.level),
+            -report.misc_amounts(r)["total"][0],
+            r.category.lower(),
+        )
+    )
+    return report
 
 
 def _add_misc(column: PnlTotals, level: str, gross: Decimal, vat: Decimal) -> None:

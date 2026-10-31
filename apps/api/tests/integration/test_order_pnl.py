@@ -687,6 +687,69 @@ async def test_misc_spend_placed_higher_moves_pc1_but_never_pc4(engine, world):
         await db.rollback()
 
 
+async def test_misc_categories_list_the_biggest_cost_first(engine, world):
+    """Within a level the category that cost most leads; "b" sorts after "A"
+    by name but costs more, so name order would put it second."""
+    from datetime import date
+
+    from app.models.inventory import (
+        PurchaseOrder,
+        PurchaseOrderMiscCategory,
+        PurchaseOrderMiscItem,
+        Supplier,
+    )
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    async with Session() as db:
+        small = PurchaseOrderMiscCategory(name=f"A misc {tag}")
+        big = PurchaseOrderMiscCategory(name=f"b misc {tag}")
+        supplier = Supplier(
+            name=f"pnl-order {tag}",
+            allows_misc_items=True,
+            misc_pnl_branch_ids=[world["branch"]],
+        )
+        db.add_all([small, big, supplier])
+        await db.flush()
+        po = PurchaseOrder(
+            reference=f"PO-ORD-{tag}",
+            status="closed",
+            supplier_id=supplier.id,
+            branch_id=world["branch"],
+            legal_entity_id=world["entities"][0],
+            business_date=DAY,
+        )
+        db.add(po)
+        await db.flush()
+        for category, gross in ((small, "21.00"), (big, "105.00")):
+            db.add(
+                PurchaseOrderMiscItem(
+                    purchase_order_id=po.id,
+                    name="Supplies",
+                    quantity=D("1"),
+                    storage_unit="month",
+                    entered_total=D(gross),
+                    vat_amount=D(gross) / 21,
+                    net_total=D(gross) - D(gross) / 21,
+                    unit_cost=D(gross),
+                    category_id=category.id,
+                    period_from=date.fromisoformat(DAY),
+                    period_to=date.fromisoformat(DAY),
+                )
+            )
+        await db.flush()
+        report = await pnl_report.build(
+            db,
+            date_from=DAY,
+            date_to=DAY,
+            branch_ids=[world["branch"]],
+            include_gated_misc=True,
+        )
+        ours = [r.category for r in report.misc if r.category.endswith(tag)]
+        assert ours == [f"b misc {tag}", f"A misc {tag}"]
+        await db.rollback()
+
+
 async def test_period_charges_book_the_monthly_fees_with_their_vat(engine, world):
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
