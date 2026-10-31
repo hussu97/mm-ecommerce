@@ -301,6 +301,17 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         spawn_tracked(replenishment_history.run_forever(), name="replenishment")
     )
 
+    # The customer directory rebuild. Same lifespan reasons as its neighbours —
+    # no cron here, an advisory lock so a second copy is harmless. It used to run
+    # inside the admin request under a row lock every order write also took, so
+    # the Customers page took 30-80s and stalled checkout and the register while
+    # it did (migration 317). Readers now serve the cache and ask for a refresh.
+    from app.services import customer_service
+
+    background.append(
+        spawn_tracked(customer_service.run_forever(), name="customer_cache")
+    )
+
     # The VAT ledger refresh. Same lifespan reasons as its neighbours —
     # no cron here, an advisory lock so a second copy across blue/green is
     # harmless, storefront only. Own flag so the derived VAT cache can be

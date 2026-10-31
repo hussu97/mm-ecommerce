@@ -11,7 +11,16 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Identity,
+    Numeric,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +28,12 @@ from .base import Base, TimestampMixin
 
 
 class CustomerCacheState(Base):
-    """One dirty bit set by source-table triggers and consumed by the reader."""
+    """Whether the directory is behind its sources.
+
+    Written only by the scheduler's rebuild and by migrations. Source writes
+    append to `CustomerCacheChange` instead -- a trigger updating this one row
+    made every order write in the system wait on every other (migration 317).
+    """
 
     __tablename__ = "customer_cache_state"
 
@@ -29,6 +43,18 @@ class CustomerCacheState(Base):
     dirty: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
+
+
+class CustomerCacheChange(Base):
+    """One source write to ``orders`` or ``users``, queued by trigger.
+
+    Append-only so concurrent writers never wait on each other; the rebuild
+    deletes what it has folded into `CustomerCacheState.dirty`.
+    """
+
+    __tablename__ = "customer_cache_changes"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
 
 
 class CustomerCache(Base, TimestampMixin):
