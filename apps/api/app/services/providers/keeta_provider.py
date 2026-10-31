@@ -454,6 +454,19 @@ def _has_finance_file(row: dict[str, Any]) -> bool:
     return any(_get_value(row, key) for key in _FINANCE_FILE_KEYS)
 
 
+#: Keys Keeta stamps per *fetch*, not per order. `serverTime` is the response's
+#: clock: stored in `raw`, it made every re-pulled order look changed on every
+#: push (`ingest._touched_at` compares `raw`), so each push bumped `updated_at` on
+#: ~1,000 untouched orders and promote/reconcile re-processed all of them in one
+#: minutes-long transaction holding the order-write locks.
+_PER_FETCH_KEYS = frozenset({"serverTime"})
+
+
+def _order_raw(row: dict[str, Any]) -> dict[str, Any]:
+    """The order row as stored in `raw`: everything but the per-fetch stamps."""
+    return {k: v for k, v in row.items() if k not in _PER_FETCH_KEYS}
+
+
 def _strip_blobs(row: dict[str, Any]) -> dict[str, Any]:
     """The row minus the base64 file blobs — so `raw` JSONB stays small."""
     if not isinstance(row, dict):
@@ -1550,7 +1563,7 @@ class KeetaClient(BaseAggregatorClient):
             # (`_stamp_orders_from_settled_ids`). The detail id stays in `raw`.
             statement_id=None,
             items=self._items_from(row, order_id),
-            raw=row,
+            raw=_order_raw(row),
         )
 
     def _items_from(

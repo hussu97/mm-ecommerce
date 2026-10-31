@@ -2605,7 +2605,7 @@ async def sweep_promote_once() -> int:
         touched = 0
         for channel in AGGREGATOR_CHANNELS:
             try:
-                touched += await promote.promote_channel(db, channel)
+                touched += await promote.promote_channel(db, channel, commit_each=True)
                 await db.commit()
             except Exception:  # noqa: BLE001 — one channel must not stop the rest
                 await db.rollback()
@@ -2655,7 +2655,9 @@ async def sweep_reconcile_once() -> int:
                 # `drn_id`, not the sales UUID / short display_ref.
                 await link_orders_to_statements(db, channel)
                 await link_statements_to_payouts(db, channel)
-                touched += await reconcile.reconcile_channel(db, channel)
+                touched += await reconcile.reconcile_channel(
+                    db, channel, commit_each=True
+                )
                 # Reverse pass: MM orders the scrape never captured (GrubOps-only)
                 # have no aggregator_order to walk, so the forward pass cannot see
                 # them — this surfaces them as `unmatched_mm`.

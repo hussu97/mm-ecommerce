@@ -1710,6 +1710,18 @@ def test_keeta_order_from_raw_roundtrips_placed_at_to_correct_instant():
     assert aware.astimezone(timezone.utc).hour == 19
 
 
+def test_keeta_raw_drops_the_per_fetch_server_time():
+    """`serverTime` is the fetch's clock. Kept in `raw`, two pulls of an
+    unchanged order differ, so every push re-promoted ~1,000 untouched orders."""
+    from app.services.providers import keeta_provider
+
+    row = {"orderId": "K-28", "orderTime": "2026-10-14T21:31:22+04:00"}
+    first = keeta_provider.provider.order_from_raw({**row, "serverTime": 1})
+    second = keeta_provider.provider.order_from_raw({**row, "serverTime": 2})
+    assert "serverTime" not in first.raw
+    assert first.raw == second.raw
+
+
 async def test_renormalize_stored_reingests_each_row_from_raw(monkeypatch):
     from unittest.mock import AsyncMock, MagicMock
 

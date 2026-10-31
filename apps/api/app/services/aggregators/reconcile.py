@@ -523,7 +523,9 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
     )
 
 
-async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> int:
+async def reconcile_channel(
+    db: AsyncSession, channel: str, *, run_id=None, commit_each: bool = False
+) -> int:
     """Reconcile the channel's new-or-changed orders. Returns rows written.
 
     Incremental, not a full re-scan: an order is (re)reconciled only when it has
@@ -532,6 +534,10 @@ async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> i
     rather than the whole history every time, while still catching a late
     statement — that re-upserts the order and bumps `updated_at` above the prior
     `reconciled_at`, pulling it back in. Idempotent and safe to re-run.
+
+    `commit_each` commits after every order, for a caller that owns its session
+    (the scheduler sweep), as `promote.promote_channel` does and for the same
+    reason: one transaction per channel sat idle-in-transaction for minutes.
     """
     recon = AggregatorReconciliation
     orders = await db.scalars(
@@ -588,6 +594,9 @@ async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> i
         try:
             async with db.begin_nested():
                 await reconcile_order(db, agg, run_id=run_id)
+            if commit_each:
+                # Deliberate service commit (convention 2) — see `commit_each`.
+                await db.commit()
             count += 1
         except _isolation._SYSTEMIC_DB_ERRORS:
             raise
