@@ -503,6 +503,11 @@ async def _dispatch_once(
         delivery.provider, delivery.courier_status
     ):
         return delivery
+    # The same guard for a booking Slider may have made and not confirmed: asking
+    # again — Slider or anyone else — could send a second rider. Slider's own
+    # push completes it; a person moves it if that never comes.
+    if slider_service.is_awaiting_confirmation(delivery):
+        return delivery
 
     # Cleared before the attempt, so a re-dispatch that now succeeds on the
     # zone's own courier leaves no stale "fell back" note behind. Set again below
@@ -514,7 +519,13 @@ async def _dispatch_once(
         allowed, refusal = await slider_service.may_serve(db, order)
         if allowed:
             result = await slider_service.dispatch_order(db, order)
-            if result is not None and result.courier_order_id:
+            if result is not None and (
+                result.courier_order_id
+                # No answer is not a no (MM-20261031-003): Slider created the
+                # delivery three seconds before our wait ran out, and falling
+                # through here booked Lalamove on top of it.
+                or slider_service.is_awaiting_confirmation(result)
+            ):
                 return result
             refusal = result.last_error if result is not None else "Slider failed"
         # Slider publishes no serviceability endpoint, so an address outside
@@ -621,6 +632,13 @@ async def _record_outcome(
         await order_service.stamp_packed(
             db, order, note=f"{delivery.provider} booking accepted"
         )
+        return delivery
+
+    if slider_service.is_awaiting_confirmation(delivery):
+        # Not a failure to retry: a second create could be a second rider. It
+        # waits for Slider's push, and stays on the needs-attention list (its
+        # `last_error`, no `next_attempt_at`) until that push clears it.
+        delivery.next_attempt_at = None
         return delivery
 
     if not delivery.last_error:

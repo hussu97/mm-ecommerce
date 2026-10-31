@@ -1,3 +1,34 @@
+# MM-20261031-003: two couriers for one order; P&L redo double count
+
+## Incident (2026-10-31, Barsha → International City)
+- 15:31:05 our Slider create (8 s timeout) → 15:31:13 Slider creates delivery
+  36949736 → 15:31:16 our ReadTimeout, logged "Slider is unreachable: " →
+  courier_service fell through to Lalamove (AED 40, driver assigned 15:32).
+  Slider's pushes (rider 15:31:45, at pickup 15:39) named our reference 2342330
+  and matched nothing: the row was Lalamove's.
+- Lalamove refused an API cancel once a driver had accepted ("Cannot cancel
+  order") — the shop cancels in the Lalamove app. Row switched to Slider
+  36949736 (car, AED 41.56) by hand; `slider_service.refresh` moved the order
+  to out for delivery and sent the customer's out-for-delivery email (15:58).
+  Pre-switch row saved in the session scratchpad.
+- Only Slider timeout in 30 days of logs; only stray Slider booking since
+  webhook logging began (25 Oct). The one time it happened, Slider had booked.
+
+## Fix
+- [x] `SliderError.ambiguous`: a create that may have reached Slider (read/
+      write timeout, dropped reply, 5xx). Connect-phase failures are not.
+      Timeouts now name themselves (httpx's carry no message).
+- [x] `slider_service.dispatch_order`: ambiguous → `AWAITING_CONFIRMATION`,
+      a `last_error` naming the reference, committed. No fallback, no retry
+      ladder, no re-dispatch (`courier_service` guards). Slider's first push
+      matches by our reference and `_confirm_booking` completes it (id,
+      tracking, stamp packed, clear the hold). No push → needs attention.
+- [x] P&L: `order_pnl._cogs_lateral` drops a sale movement that was reversed
+      and redone (the order has another consumption). Sept −227.01, Oct
+      (1–30) −26.39 on prod; July unchanged; AGG-20261004-028 (reversed, no
+      redo) still counted.
+- [x] Tests (both fail on the old code); 4568 unit + 46 integration pass.
+
 # P&L: purchase-order stock not yet in COGS
 
 Owner ask (2026-10-31): below the P&L, the window's completed purchase orders —

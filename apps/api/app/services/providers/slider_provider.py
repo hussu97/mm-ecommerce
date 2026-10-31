@@ -102,11 +102,21 @@ class SliderError(RuntimeError):
     ever learn that an address is outside their area — which makes this property
     load-bearing rather than a nicety. A refusal misread as an outage is a paid,
     packed order with nobody coming for it.
+
+    `ambiguous` is the other half: a create whose request may have reached
+    Slider — a read timeout, a connection dropped mid-reply, a 5xx — and so may
+    have engaged a rider we have no id for. It is neither a refusal nor a
+    failure, and booking another courier on it is how MM-20261031-003 got a
+    Slider car *and* a Lalamove van: Slider created the delivery three seconds
+    before our 8-second wait ran out.
     """
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, status: int | None = None, ambiguous: bool = False
+    ) -> None:
         super().__init__(message)
         self.status = status
+        self.ambiguous = ambiguous
 
     @property
     def is_unserviceable(self) -> bool:
@@ -227,10 +237,16 @@ class SliderClient:
                     )
             except httpx.HTTPError as exc:
                 last = exc
-                retriable = idempotent or isinstance(exc, _CONNECT_PHASE_ERRORS)
+                never_sent = isinstance(exc, _CONNECT_PHASE_ERRORS)
+                retriable = idempotent or never_sent
                 if retriable and attempt + 1 < attempts:
                     continue
-                raise SliderError(f"Slider is unreachable: {exc}") from exc
+                # httpx's timeouts carry no message, which logged as "Slider is
+                # unreachable: " and said nothing about which wait ran out.
+                raise SliderError(
+                    f"Slider is unreachable: {str(exc) or type(exc).__name__}",
+                    ambiguous=not idempotent and not never_sent,
+                ) from exc
 
             if response.status_code in retry_statuses and attempt + 1 < attempts:
                 last = SliderError(
@@ -239,7 +255,13 @@ class SliderClient:
                 )
                 continue
 
-            return _unwrap(response)
+            try:
+                return _unwrap(response)
+            except SliderError as exc:
+                # A 5xx on a create may still have dispatched (F-COU-15).
+                if not idempotent and response.status_code >= 500:
+                    exc.ambiguous = True
+                raise
 
         raise SliderError(str(last) if last else "Slider call failed")
 

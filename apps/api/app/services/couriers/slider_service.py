@@ -73,6 +73,7 @@ from app.services.providers.slider_provider import SliderError, aed, provider
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AWAITING_CONFIRMATION",
     "PROVIDERS",
     "SLIDER_BIKE",
     "SLIDER_CAR",
@@ -81,6 +82,7 @@ __all__ = [
     "dispatch_order",
     "estimate_for_point",
     "handle_webhook",
+    "is_awaiting_confirmation",
     "is_enabled",
     "may_serve",
     "provider_for_vehicle",
@@ -99,6 +101,27 @@ SLIDER_CAR = FulfilmentProviderEnum.SLIDER_CAR.value
 #: `slider` was retired in `241_drop_legacy_slider`; its rows are now
 #: `slider_car`.)
 PROVIDERS = frozenset({SLIDER_BIKE, SLIDER_CAR})
+
+#: Ours, not one of Slider's words: a create that may have reached them and came
+#: back with no answer (`SliderError.ambiguous`). The row stays on Slider with no
+#: id, and nothing books another courier for it — the first push Slider sends
+#: names our reference, which `_delivery_for` matches, and `apply_webhook`
+#: completes the booking from it. Unranked in `SLIDER_STATUS_RANK`, so any push
+#: outranks it. Its `last_error` puts the order on the needs-attention list in
+#: the meantime, which is where it belongs if Slider never answers: a person
+#: checks the Slider dashboard and moves it, rather than a guess sending two.
+AWAITING_CONFIRMATION = "awaiting_confirmation"
+
+
+def is_awaiting_confirmation(delivery: OrderDelivery | None) -> bool:
+    """A Slider create that may have dispatched a rider we have no id for."""
+    return (
+        delivery is not None
+        and delivery.provider in PROVIDERS
+        and delivery.courier_status == AWAITING_CONFIRMATION
+        and not delivery.courier_order_id
+    )
+
 
 BIKE = "bike"
 CAR = "car"
@@ -698,6 +721,26 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             cod_type="cash",
         )
     except SliderError as exc:
+        if exc.ambiguous:
+            delivery.courier_previous_status = delivery.courier_status
+            delivery.courier_status = AWAITING_CONFIRMATION
+            delivery.last_error = (
+                f"Slider did not confirm the booking ({exc}). It may already have "
+                f"a rider coming: waiting for Slider's update on reference "
+                f"{reference}. If none arrives, check the Slider "
+                "dashboard before moving this order to another courier."
+            )
+            logger.warning(
+                "Slider booking for %s unconfirmed, holding for their update: %s",
+                order.order_number,
+                exc,
+            )
+            # Committed for the reason a booking is: a rider may have been
+            # engaged outside our transaction, and if the request rolled this
+            # back, the next dispatch would see a row with no booking and send
+            # a second courier for the same cake.
+            await db.commit()
+            return delivery
         delivery.last_error = f"Slider: {exc}"
         logger.warning("Slider dispatch failed for %s: %s", order.order_number, exc)
         return delivery
@@ -1135,6 +1178,7 @@ async def apply_webhook(
     """
     updated_at = parse_time(payload.get("timestamp") or payload.get("updated_at"))
     status = _status(payload)
+    awaited = is_awaiting_confirmation(delivery)
     # Slider names the rider inline on every push, so unlike noon Send there is
     # no detail call to make. `record` decides whether anything actually moved.
     info = payload.get("driver_info") or payload.get("driver") or payload.get("rider")
@@ -1216,8 +1260,42 @@ async def apply_webhook(
     elif status:
         delivery.status_updated_at = datetime.now(timezone.utc)
 
+    if awaited and delivery.courier_order_id and status not in SLIDER_FAILED_STATUSES:
+        await _confirm_booking(db, delivery, at=updated_at)
     await _advance_order(db, delivery, at=updated_at)
     return delivery
+
+
+async def _confirm_booking(
+    db: AsyncSession, delivery: OrderDelivery, *, at: datetime | None = None
+) -> None:
+    """Finish a booking Slider made but never answered for (`AWAITING_CONFIRMATION`).
+
+    What a create reply would have done, from their first push instead: the row
+    already holds their id and tracking link (set above), so this clears the
+    hold and stamps the order `packed` — before `_advance_order`, which moves a
+    packed order on to out-for-delivery and would skip one that never got there.
+    The fare stays empty: a push carries none, and a figure on this row is only
+    ever one of Slider's.
+    """
+    from app.services.orders import order_service
+
+    delivery.last_error = None
+    delivery.booked_at = at or datetime.now(timezone.utc)
+    delivery.dispatch_attempts = 0
+    delivery.next_attempt_at = None
+    order = (
+        (await db.execute(select(Order).where(Order.id == delivery.order_id)))
+        .scalars()
+        .first()
+    )
+    if order is not None:
+        await order_service.stamp_packed(db, order, note="slider booking confirmed")
+    logger.info(
+        "Slider confirmed booking %s for delivery %s by push",
+        delivery.courier_order_id,
+        delivery.id,
+    )
 
 
 async def refresh(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery | None:

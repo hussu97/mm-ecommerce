@@ -649,6 +649,67 @@ async def test_create_delivery_retries_a_connect_failure_but_not_a_read_timeout(
     assert len(read_attempts) == 1
 
 
+@pytest.mark.asyncio
+async def test_a_create_that_timed_out_is_ambiguous_and_says_which_wait_ran_out(
+    monkeypatch,
+):
+    """MM-20261031-003: an 8-second read timeout on a create Slider had already
+    made. It must not read as a refusal (so nobody books another courier), and
+    the message must name the timeout — httpx's carries no text, which logged as
+    "Slider is unreachable: " and nothing else."""
+
+    class _ReadTimeout:
+        def __init__(self, **_kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def request(self, *_a, **_kw):
+            raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(slider_provider.httpx, "AsyncClient", _ReadTimeout)
+    with pytest.raises(SliderError) as caught:
+        await _create(_client(None))
+    assert caught.value.ambiguous
+    assert "ReadTimeout" in str(caught.value)
+    # A read that times out did nothing on their side: not ambiguous.
+    with pytest.raises(SliderError) as caught:
+        await _client(None).get_delivery("1")
+    assert not caught.value.ambiguous
+
+
+@pytest.mark.asyncio
+async def test_a_create_that_5xxs_is_ambiguous_and_one_never_sent_is_not(
+    monkeypatch,
+):
+    _counting_client(monkeypatch, lambda _n: httpx.Response(502, json={"message": "x"}))
+    with pytest.raises(SliderError) as caught:
+        await _create(_client(None))
+    assert caught.value.ambiguous
+
+    class _Refused:
+        def __init__(self, **_kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def request(self, *_a, **_kw):
+            raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(slider_provider.httpx, "AsyncClient", _Refused)
+    with pytest.raises(SliderError) as caught:
+        await _create(_client(None))
+    assert not caught.value.ambiguous
+
+
 def test_the_base_url_carries_its_v1_prefix():
     """
     There is one host now — the sandbox and the `SLIDER_ENV` override went when
@@ -937,6 +998,27 @@ async def test_a_refusal_leaves_the_error_and_no_id_and_no_commit(booked, monkey
 
 
 @pytest.mark.asyncio
+async def test_an_unanswered_create_holds_on_slider_and_commits(booked, monkeypatch):
+    """No answer is not a no. The row stays Slider's, waiting for their push,
+    and is committed: a rider may be out, and a rolled-back row would let the
+    next dispatch send another."""
+
+    async def unanswered(**_kwargs):
+        raise SliderError("Slider is unreachable: ReadTimeout", ambiguous=True)
+
+    monkeypatch.setattr(slider_service.provider, "create_delivery", unanswered)
+    db = _Db(_row())
+    delivery = await slider_service.dispatch_order(db, _order())
+
+    assert delivery.courier_order_id is None
+    assert delivery.courier_status == slider_service.AWAITING_CONFIRMATION
+    assert slider_service.is_awaiting_confirmation(delivery)
+    assert "did not confirm" in delivery.last_error
+    assert "4820193" in delivery.last_error  # the reference to look for
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
 async def test_a_failed_fare_call_still_books_and_prices_off_the_booking(
     booked, monkeypatch
 ):
@@ -1106,6 +1188,75 @@ async def test_a_status_push_moves_the_delivery_forward(inbound):
     assert delivery.courier_status == "picked_up"
     assert delivery.courier_previous_status == "rider_assigned"
     assert inbound == ["picked_up"]
+
+
+@pytest.mark.asyncio
+async def test_the_first_push_completes_a_booking_slider_never_answered(
+    inbound, monkeypatch
+):
+    """MM-20261031-003's pushes arrived 29 s after the timeout, named our
+    reference, and matched nothing because the row had gone to Lalamove. Held
+    on Slider, the first one carries their id, and confirms the booking."""
+    confirmed: list = []
+
+    async def confirm(db, delivery, at=None):
+        confirmed.append(delivery.courier_order_id)
+
+    monkeypatch.setattr(slider_service, "_confirm_booking", confirm)
+    delivery = _row()
+    delivery.courier_status = slider_service.AWAITING_CONFIRMATION
+    await slider_service.apply_webhook(
+        None,
+        {
+            "order_id": "2342330",
+            "order_number": 36949736,
+            "status": "rider_assigned",
+            "timestamp": "2026-10-31T11:31:45+00:00",
+            "tracking_link": "https://www.slider-app.com/t/abc",
+        },
+        delivery,
+    )
+    assert delivery.courier_order_id == "36949736"
+    assert delivery.courier_status == "rider_assigned"
+    assert confirmed == ["36949736"]
+    assert inbound == ["rider_assigned"]
+
+    # A cancellation as the first word is not a booking to confirm.
+    confirmed.clear()
+    held = _row()
+    held.courier_status = slider_service.AWAITING_CONFIRMATION
+    await slider_service.apply_webhook(
+        None, {"order_id": "1", "order_number": 2, "status": "cancelled"}, held
+    )
+    assert confirmed == []
+
+
+@pytest.mark.asyncio
+async def test_confirming_clears_the_hold_and_stamps_the_order_packed(monkeypatch):
+    from app.services.orders import order_service
+
+    stamped: list[str] = []
+
+    async def stamp_packed(db, order, *, note):
+        stamped.append(note)
+        return True
+
+    monkeypatch.setattr(order_service, "stamp_packed", stamp_packed)
+    order = _order()
+
+    class _OneOrder:
+        async def execute(self, _stmt):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: order))
+
+    delivery = _row()
+    delivery.courier_order_id = "36949736"
+    delivery.last_error = "Slider did not confirm the booking"
+    delivery.dispatch_attempts = 1
+    await slider_service._confirm_booking(_OneOrder(), delivery)
+
+    assert delivery.last_error is None and delivery.dispatch_attempts == 0
+    assert delivery.booked_at is not None
+    assert stamped == ["slider booking confirmed"]
 
 
 @pytest.mark.asyncio

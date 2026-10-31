@@ -402,6 +402,39 @@ async def test_a_slider_refusal_falls_through_rather_than_stranding_the_order(
 
 
 @pytest.mark.asyncio
+async def test_an_unanswered_slider_booking_is_held_and_never_doubled(
+    slider_ready, monkeypatch, slider_spies
+):
+    """MM-20261031-003: Slider created the delivery three seconds before our
+    wait ran out, and the fall-through booked Lalamove on top of it — two
+    drivers for one order. An unconfirmed booking falls through to nobody, is
+    not put on the retry ladder, and a second dispatch (the sweep, a click, the
+    `packed` consequence) asks nobody either. It waits for Slider's push, on the
+    needs-attention list."""
+
+    async def unconfirmed(db, order):
+        slider_spies.append("slider")
+        db.delivery.courier_status = (
+            courier_service.slider_service.AWAITING_CONFIRMATION
+        )
+        db.delivery.last_error = "Slider did not confirm the booking"
+        return db.delivery
+
+    monkeypatch.setattr(courier_service.slider_service, "dispatch_order", unconfirmed)
+    db = _Db(_slider_delivery())
+    result = await courier_service.dispatch(db, _order())
+
+    assert slider_spies == ["slider"]
+    assert result.courier_order_id is None and result.provider == "slider_car"
+    assert result.next_attempt_at is None
+    assert result.needs_attention
+    assert result.fallback_reason is None
+
+    await courier_service.dispatch(db, _order())
+    assert slider_spies == ["slider"]
+
+
+@pytest.mark.asyncio
 async def test_a_silent_fallback_now_records_its_reason_and_alerts(
     slider_ready, monkeypatch, slider_spies
 ):
