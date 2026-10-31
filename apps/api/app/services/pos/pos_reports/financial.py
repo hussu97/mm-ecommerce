@@ -109,10 +109,10 @@ async def tills_report(
         device_names = {
             str(d.id): d.name
             for d in (
-                (await db.execute(select(Device).where(Device.id.in_(device_ids))))
-                .scalars()
-                .all()
-            )
+                await db.execute(
+                    select(Device.id, Device.name).where(Device.id.in_(device_ids))
+                )
+            ).all()
         }
 
     return [

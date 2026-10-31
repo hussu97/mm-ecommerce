@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import lazyload, selectinload
 
 from app.core import search as search_text
 from app.core.deps import get_db
@@ -174,6 +174,33 @@ async def _serialise_child(db: AsyncSession, transfer: Transfer) -> TransferResp
     payload = TransferResponse.model_validate(transfer)
     await _backfill_lines(db, payload.items, transfer.items)
     return payload
+
+
+async def _serialise_children(
+    db: AsyncSession, transfers: list[Transfer]
+) -> list[TransferResponse]:
+    """`_serialise_child` for a list: the items and categories every child's
+    lines name are read once for the whole list rather than once per child —
+    the same lookups, so each payload is filled exactly as it would be alone."""
+    ids = {line.item_id for transfer in transfers for line in transfer.items}
+    lookup: dict = {}
+    categories: dict = {}
+    if ids:
+        lookup = {
+            row.id: row
+            for row in (
+                await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids)))
+            ).scalars()
+        }
+        categories = await _category_map(db, list(ids))
+    payloads = []
+    for transfer in transfers:
+        payload = TransferResponse.model_validate(transfer)
+        await _backfill_lines(
+            db, payload.items, transfer.items, lookup=lookup, categories=categories
+        )
+        payloads.append(payload)
+    return payloads
 
 
 async def _serialise_order(
@@ -643,7 +670,7 @@ async def pos_incoming_transfers(
     if q and q.strip():
         stmt = stmt.where(_transfer_search_clause(q))
     transfers = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_child(db, t) for t in transfers]
+    return await _serialise_children(db, transfers)
 
 
 @pos_transfers_router.get("/transfers/outgoing", response_model=list[TransferResponse])
@@ -674,7 +701,7 @@ async def pos_outgoing_transfers(
     if q and q.strip():
         stmt = stmt.where(_transfer_search_clause(q))
     transfers = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_child(db, t) for t in transfers]
+    return await _serialise_children(db, transfers)
 
 
 @pos_transfers_router.get("/transfers/completed", response_model=list[TransferResponse])
@@ -715,7 +742,7 @@ async def pos_completed_transfers(
     if q and q.strip():
         stmt = stmt.where(_transfer_search_clause(q))
     transfers = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_child(db, t) for t in transfers]
+    return await _serialise_children(db, transfers)
 
 
 @pos_transfers_router.post(
@@ -733,7 +760,10 @@ async def pos_claim_autoprint_transfers(
     day gets nothing, so nothing reprints. A future-dated order is claimed on its
     date, not before. The manual Print button is independent of all this."""
     await access_service.assert_branch_access(db, user, source_branch_id)
-    source = await crud_service.get_or_404(db, Branch, source_branch_id)
+    # Read for its cut-off only; skip the branch's eager integration maps.
+    source = await crud_service.get_or_404(
+        db, Branch, source_branch_id, options=[lazyload("*")]
+    )
     business_date = await business_day_service.current_business_date(db, source)
     today = date.fromisoformat(business_date)
     # Orders due today: an explicit required_date of today, or (none set) raised
@@ -780,7 +810,7 @@ async def pos_claim_autoprint_transfers(
         .unique()
         .all()
     )
-    return [await _serialise_child(db, t) for t in rows]
+    return await _serialise_children(db, rows)
 
 
 @pos_transfers_router.post(
@@ -1354,7 +1384,10 @@ async def pos_claim_autoprint_production(
     """Claim, once, the production orders due today for the source till to
     auto-print when it opens — the production analogue of the transfer claim."""
     await access_service.assert_branch_access(db, user, source_branch_id)
-    source = await crud_service.get_or_404(db, Branch, source_branch_id)
+    # Read for its cut-off and name only; skip the eager integration maps.
+    source = await crud_service.get_or_404(
+        db, Branch, source_branch_id, options=[lazyload("*")]
+    )
     business_date = await business_day_service.current_business_date(db, source)
     claimed_ids = list(
         (
@@ -1505,66 +1538,101 @@ async def branches_dashboard(
     tills and terminals that have gone quiet.
     """
 
-    branches = await crud_service.list_all(db, Branch, include_inactive=False)
+    # Five grouped reads for the whole estate, not five per branch: this is
+    # polled by the manager app, and the per-branch loop it replaced cost
+    # 5 × branches round trips on a pool the register shares. Only the branch's
+    # own columns are read, so its default eager relationships are skipped.
+    branches = await crud_service.list_all(
+        db, Branch, include_inactive=False, options=[lazyload("*")]
+    )
+    branch_ids = [branch.id for branch in branches]
     rows: list[BranchLive] = []
     now = utcnow()
 
-    for branch in branches:
-        active = (
-            await db.execute(
-                select(
-                    func.count(Order.id), func.coalesce(func.sum(Order.total), 0)
-                ).where(
-                    Order.is_pos.is_(True),
-                    Order.branch_id == branch.id,
-                    Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
-                )
-            )
-        ).one()
-
-        tables = (
-            await db.execute(
-                select(
-                    func.count(PosTable.id),
-                    func.count(PosTable.id).filter(
-                        PosTable.status == TableStatusEnum.OCCUPIED.value
-                    ),
-                )
-                .select_from(PosTable)
-                .join(Section, Section.id == PosTable.section_id)
-                .where(
-                    Section.branch_id == branch.id,
-                    PosTable.deleted_at.is_(None),
-                )
-            )
-        ).one()
-
-        open_tills = int(
-            (
+    active_by_branch: dict[uuid.UUID, tuple] = {}
+    tables_by_branch: dict[uuid.UUID, tuple] = {}
+    open_tills_by_branch: dict[uuid.UUID, int] = {}
+    devices_by_branch: dict[uuid.UUID, list[Device]] = {}
+    last_order_by_branch: dict[uuid.UUID, datetime | None] = {}
+    if branch_ids:
+        active_by_branch = {
+            branch_id: (count, amount)
+            for branch_id, count, amount in (
                 await db.execute(
-                    select(func.count())
+                    select(
+                        Order.branch_id,
+                        func.count(Order.id),
+                        func.coalesce(func.sum(Order.total), 0),
+                    )
+                    .where(
+                        Order.is_pos.is_(True),
+                        Order.branch_id.in_(branch_ids),
+                        Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
+                    )
+                    .group_by(Order.branch_id)
+                )
+            ).all()
+        }
+        tables_by_branch = {
+            branch_id: (total, occupied)
+            for branch_id, total, occupied in (
+                await db.execute(
+                    select(
+                        Section.branch_id,
+                        func.count(PosTable.id),
+                        func.count(PosTable.id).filter(
+                            PosTable.status == TableStatusEnum.OCCUPIED.value
+                        ),
+                    )
+                    .select_from(PosTable)
+                    .join(Section, Section.id == PosTable.section_id)
+                    .where(
+                        Section.branch_id.in_(branch_ids),
+                        PosTable.deleted_at.is_(None),
+                    )
+                    .group_by(Section.branch_id)
+                )
+            ).all()
+        }
+        open_tills_by_branch = {
+            branch_id: int(count)
+            for branch_id, count in (
+                await db.execute(
+                    select(Till.branch_id, func.count())
                     .select_from(Till)
                     .where(
-                        Till.branch_id == branch.id,
+                        Till.branch_id.in_(branch_ids),
                         Till.status == TillStatusEnum.OPEN.value,
                     )
+                    .group_by(Till.branch_id)
                 )
-            ).scalar_one()
-        )
-
-        devices = list(
-            (
-                await db.execute(
-                    select(Device).where(
-                        Device.branch_id == branch.id,
-                        Device.deleted_at.is_(None),
-                        Device.type.in_(["cashier", "sub_cashier"]),
-                    )
+            ).all()
+        }
+        for device in (
+            await db.execute(
+                select(Device).where(
+                    Device.branch_id.in_(branch_ids),
+                    Device.deleted_at.is_(None),
+                    Device.type.in_(["cashier", "sub_cashier"]),
                 )
             )
-            .scalars()
-            .all()
-        )
+        ).scalars():
+            devices_by_branch.setdefault(device.branch_id, []).append(device)
+        last_order_by_branch = {
+            branch_id: opened_at
+            for branch_id, opened_at in (
+                await db.execute(
+                    select(Order.branch_id, func.max(Order.opened_at))
+                    .where(Order.is_pos.is_(True), Order.branch_id.in_(branch_ids))
+                    .group_by(Order.branch_id)
+                )
+            ).all()
+        }
+
+    for branch in branches:
+        active = active_by_branch.get(branch.id, (0, 0))
+        tables = tables_by_branch.get(branch.id, (0, 0))
+        devices = devices_by_branch.get(branch.id, [])
         offline = sum(
             1
             for d in devices
@@ -1575,14 +1643,6 @@ async def branches_dashboard(
             (d.last_seen_at for d in devices if d.last_seen_at), default=None
         )
 
-        last_order = (
-            await db.execute(
-                select(func.max(Order.opened_at)).where(
-                    Order.is_pos.is_(True), Order.branch_id == branch.id
-                )
-            )
-        ).scalar_one_or_none()
-
         rows.append(
             BranchLive(
                 branch_id=branch.id,
@@ -1592,10 +1652,10 @@ async def branches_dashboard(
                 active_orders_amount=Decimal(str(active[1] or 0)),
                 total_tables=int(tables[0] or 0),
                 occupied_tables=int(tables[1] or 0),
-                open_tills=open_tills,
+                open_tills=open_tills_by_branch.get(branch.id, 0),
                 total_devices=len(devices),
                 offline_devices=offline,
-                last_order_at=last_order,
+                last_order_at=last_order_by_branch.get(branch.id),
                 last_device_seen_at=last_seen,
             )
         )
@@ -1686,8 +1746,11 @@ async def terminals_dashboard(
     branch_filters = [Branch.is_active.is_(True), Branch.deleted_at.is_(None)]
     if branch_id:
         branch_filters.append(Branch.id == branch_id)
+    # Only the branch's own columns are read; skip its default eager loads.
     branches = list(
-        (await db.execute(select(Branch).where(*branch_filters))).scalars().all()
+        (await db.execute(select(Branch).where(*branch_filters).options(lazyload("*"))))
+        .scalars()
+        .all()
     )
     branch_names = {b.id: b.name for b in branches}
 
@@ -1709,59 +1772,98 @@ async def terminals_dashboard(
 
     # One business date per branch, resolved once: two terminals in the same
     # branch must be measured against the same day or their totals will not sum
-    # to the branch's.
-    business_dates: dict[uuid.UUID, str] = {}
-    for branch in branches:
-        business_dates[branch.id] = await business_day_service.current_business_date(
-            db, branch
-        )
+    # to the branch's. The shop's timezone is one setting, so it is read once
+    # rather than once per branch.
+    tz = await business_day_service.resolve_timezone(db)
+    business_dates: dict[uuid.UUID, str] = {
+        branch.id: business_day_service.business_date_for(branch, utcnow(), tz)
+        for branch in branches
+    }
 
     now = utcnow()
     rows: list[TerminalLive] = []
 
+    # Grouped reads for every terminal at once — at most four per call, rather
+    # than three or four per terminal on a pool the register shares.
+    device_ids = [device.id for device in devices]
+    active_by_device: dict[uuid.UUID, tuple] = {}
+    today_by_device: dict[tuple[uuid.UUID, str], tuple] = {}
+    till_by_device: dict[uuid.UUID, Till] = {}
+    operator_names: dict[uuid.UUID, str] = {}
+    if device_ids:
+        active_by_device = {
+            device_id: (count, amount)
+            for device_id, count, amount in (
+                await db.execute(
+                    select(
+                        Order.device_id,
+                        func.count(Order.id),
+                        func.coalesce(func.sum(Order.total), 0),
+                    )
+                    .where(
+                        Order.is_pos.is_(True),
+                        Order.device_id.in_(device_ids),
+                        Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
+                    )
+                    .group_by(Order.device_id)
+                )
+            ).all()
+        }
+        today_by_device = {
+            (device_id, business_date): (count, amount)
+            for device_id, business_date, count, amount in (
+                await db.execute(
+                    select(
+                        Order.device_id,
+                        Order.business_date,
+                        func.count(Order.id),
+                        func.coalesce(func.sum(Order.total), 0),
+                    )
+                    .where(
+                        Order.is_pos.is_(True),
+                        Order.device_id.in_(device_ids),
+                        Order.business_date.in_(sorted(set(business_dates.values()))),
+                        Order.pos_status == PosOrderStatusEnum.CLOSED.value,
+                    )
+                    .group_by(Order.device_id, Order.business_date)
+                )
+            ).all()
+        }
+        # The most recently opened open till on each terminal.
+        till_by_device = {
+            till.device_id: till
+            for till in (
+                await db.execute(
+                    select(Till)
+                    .where(
+                        Till.device_id.in_(device_ids),
+                        Till.status == TillStatusEnum.OPEN.value,
+                    )
+                    .distinct(Till.device_id)
+                    .order_by(Till.device_id, Till.opened_at.desc())
+                )
+            ).scalars()
+        }
+        operator_ids = {till.user_id for till in till_by_device.values()}
+        if operator_ids:
+            operator_names = {
+                user_id: display_name or email
+                for user_id, display_name, email in (
+                    await db.execute(
+                        select(User.id, User.display_name, User.email).where(
+                            User.id.in_(operator_ids)
+                        )
+                    )
+                ).all()
+            }
+
     for device in devices:
-        active = (
-            await db.execute(
-                select(
-                    func.count(Order.id), func.coalesce(func.sum(Order.total), 0)
-                ).where(
-                    Order.is_pos.is_(True),
-                    Order.device_id == device.id,
-                    Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
-                )
-            )
-        ).one()
-
-        today = (
-            await db.execute(
-                select(
-                    func.count(Order.id), func.coalesce(func.sum(Order.total), 0)
-                ).where(
-                    Order.is_pos.is_(True),
-                    Order.device_id == device.id,
-                    Order.business_date == business_dates.get(device.branch_id),
-                    Order.pos_status == PosOrderStatusEnum.CLOSED.value,
-                )
-            )
-        ).one()
-
-        till = (
-            await db.execute(
-                select(Till)
-                .where(
-                    Till.device_id == device.id,
-                    Till.status == TillStatusEnum.OPEN.value,
-                )
-                .order_by(Till.opened_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-
-        till_user: str | None = None
-        if till is not None:
-            operator = await db.get(User, till.user_id)
-            if operator is not None:
-                till_user = operator.display_name or operator.email
+        active = active_by_device.get(device.id, (0, 0))
+        today = today_by_device.get(
+            (device.id, business_dates.get(device.branch_id)), (0, 0)
+        )
+        till = till_by_device.get(device.id)
+        till_user = operator_names.get(till.user_id) if till is not None else None
 
         online = (
             device.last_seen_at is not None

@@ -101,8 +101,8 @@ def test_today_means_the_branch_business_date_not_the_wall_clock():
     import inspect
 
     body = inspect.getsource(operations.terminals_dashboard)
-    assert "business_day_service.current_business_date" in body
-    assert "Order.business_date ==" in body
+    assert "business_day_service.business_date_for" in body
+    assert "Order.business_date.in_(" in body
 
 
 # ─── The aggregate ────────────────────────────────────────────────────────────
@@ -316,13 +316,10 @@ async def test_device_rows_come_back_named_rather_than_as_uuids():
     drive = _Device(uuid.uuid4(), "Drive-thru")
 
     class _Result:
-        def scalars(self):
-            class _Scalars:
-                @staticmethod
-                def all():
-                    return [front, drive]
-
-            return _Scalars()
+        # The lookup reads `(id, name)` rows rather than whole devices.
+        @staticmethod
+        def all():
+            return [front, drive]
 
     class _DB:
         @staticmethod

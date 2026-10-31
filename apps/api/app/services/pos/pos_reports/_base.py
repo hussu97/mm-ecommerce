@@ -240,11 +240,20 @@ SUPPORTED_DIMENSIONS = (
 
 
 async def _staff_labels(db: AsyncSession, rows: Sequence[Any]) -> dict[str, str]:
-    """Display names for grouped user ids, keyed by id string."""
+    """Display names for grouped user ids, keyed by id string.
+
+    The label lookups read the name columns alone: loading whole rows dragged
+    in each model's eager relationships (a user's role, a branch's four
+    integration maps) — extra round trips for a name.
+    """
     ids = {r[0] for r in rows if r[0] is not None}
     if not ids:
         return {}
-    users = (await db.execute(select(User).where(User.id.in_(ids)))).scalars().all()
+    users = (
+        await db.execute(
+            select(User.id, User.display_name, User.email).where(User.id.in_(ids))
+        )
+    ).all()
     return {str(u.id): (u.display_name or u.email) for u in users}
 
 
@@ -295,8 +304,8 @@ async def _labels_for(
 
     if dimension == "branch":
         branches = (
-            (await db.execute(select(Branch).where(Branch.id.in_(ids)))).scalars().all()
-        )
+            await db.execute(select(Branch.id, Branch.name).where(Branch.id.in_(ids)))
+        ).all()
         return {str(b.id): b.name for b in branches}
 
     if dimension == "legal_entity":
@@ -317,8 +326,8 @@ async def _labels_for(
 
     if dimension == "device":
         devices = (
-            (await db.execute(select(Device).where(Device.id.in_(ids)))).scalars().all()
-        )
+            await db.execute(select(Device.id, Device.name).where(Device.id.in_(ids)))
+        ).all()
         return {str(d.id): d.name for d in devices}
 
     return {}
