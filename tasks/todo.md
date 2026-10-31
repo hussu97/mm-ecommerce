@@ -34,7 +34,20 @@ counted twice with COGS), and net. Misc lines excluded (already in the P&L).
 - Found, not fixed (changes P&L figures; needs the owner's call): the P&L's
   COGS lateral counts order consumption that was later reversed by a
   `correction` (stock audits of pre-go-live backfills). Overstates COGS by
-  ~4,500 in July, 227 in Sept, 55 in Oct.
+  ~4,500 in July, 227 in Sept, 26 in Oct.
+- Audit of the Sept/Oct cases (22 orders): 21 are `reconsume_order` re-dos —
+  the old stock record reversed and a new one posted — and the P&L counts
+  both, so the old one is double-counted. 17 re-dos added an item the first
+  record missed (a product with no recipe yet, e.g. Lotus Cookie Melt on
+  7 orders re-run 09-19 22:15; mixed-box options not expanded, the 09-19
+  combo remediation; a marketplace option not mapped). 1 swapped a wrong item
+  (Red Velvet cookies → Eggless Fudge Brownie, AGG-20260920-047). 3 re-posted
+  exactly the same lines (AGG-20260918-052, a race in the combo remediation;
+  MM-20260921-002 and MM-20260924-001, edits that changed nothing). The 22nd,
+  AGG-20261004-028 (29.01), is a late-recovered sale whose stock counts had
+  already taken: its COGS is real and the P&L is right to keep it. So a fix
+  must drop only the reversed half of a re-do pair (same
+  `correction_group_id`), not every reversed record.
 
 # Admin: product modifiers up top + editable; PO line cost comparison
 
