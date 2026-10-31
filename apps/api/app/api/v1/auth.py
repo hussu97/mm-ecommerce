@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -422,7 +423,11 @@ async def login(
     if (
         not user
         or not user.hashed_password
-        or not verify_password(body.password, user.hashed_password)
+        # bcrypt is ~0.3s of CPU: off the event loop so a sign-in does not
+        # stall every other request on the single worker.
+        or not await asyncio.to_thread(
+            verify_password, body.password, user.hashed_password
+        )
     ):
         raise UnauthorizedError("Invalid email or password")
     if not user.is_active:
