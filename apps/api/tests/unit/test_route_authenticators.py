@@ -28,7 +28,11 @@ import pytest
 from fastapi.routing import APIRoute
 
 from app.api.v1.aggregators import _require_push_token
-from app.api.v1.devices import authenticate_device, get_current_device
+from app.api.v1.devices import (
+    authenticate_device,
+    get_current_device,
+    get_heartbeat_device,
+)
 from app.core.deps import (
     get_admin_user,
     get_current_active_user,
@@ -50,6 +54,7 @@ ACCEPTED = {
     get_admin_user,
     get_optional_user,
     get_current_device,
+    get_heartbeat_device,
     authenticate_device,
     _require_push_token,
 }

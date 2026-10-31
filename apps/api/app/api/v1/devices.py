@@ -6,13 +6,15 @@ import hashlib
 import logging
 import secrets
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
@@ -211,6 +213,45 @@ async def authenticate_device(
     minute to record it would mean a terminal that updates and then goes quiet
     reports the old build until it next speaks.
     """
+    device = await _resolve_device(db, token)
+    stamp = _note_seen(device, build)
+    if stamp is not None:
+        # The durable write goes through `_stamp_last_seen` — never
+        # `db.commit()` here, which used to commit the whole request session
+        # from inside an auth dependency.
+        await _stamp_last_seen(device.id, *stamp)
+
+    return device
+
+
+def _note_seen(
+    device: Device, build: ReportedBuild | None
+) -> tuple[datetime, ReportedBuild | None] | None:
+    """
+    Apply the throttled "we heard from it" stamp to the in-memory row, and say
+    whether it still has to be written — as `(now, build)` for
+    `_stamp_last_seen`, or None when nothing is due.
+
+    The in-memory copy is refreshed so the throttle and anything else this
+    request reads off the row agree with what is written.
+    """
+    now = utcnow()
+    seen_is_stale = (
+        device.last_seen_at is None
+        or (now - device.last_seen_at).total_seconds() >= SEEN_REFRESH_SECONDS
+    )
+    build_is_news = build is not None and build.changed_from(device)
+    if not (seen_is_stale or build_is_news):
+        return None
+    device.last_seen_at = now
+    if build is not None:
+        for field, value in build.as_updates().items():
+            setattr(device, field, value)
+    return now, build
+
+
+async def _resolve_device(db: AsyncSession, token: str | None) -> Device:
+    """The paired, enabled device a token names — or the 401 that says why not."""
     if not token:
         raise UnauthorizedError("Device token required")
     stmt = select(Device).where(
@@ -236,25 +277,6 @@ async def authenticate_device(
         # the console into a trip to the shop with a pairing code.
         raise UnauthorizedError("This device has been disabled")
 
-    now = utcnow()
-    seen_is_stale = (
-        device.last_seen_at is None
-        or (now - device.last_seen_at).total_seconds() >= SEEN_REFRESH_SECONDS
-    )
-    build_is_news = build is not None and build.changed_from(device)
-
-    if seen_is_stale or build_is_news:
-        # The in-memory copy is refreshed too, so the throttle above and
-        # anything else this request reads off the row agree with what was
-        # just written. The durable write goes through `_stamp_last_seen` —
-        # never `db.commit()` here, which used to commit the whole request
-        # session from inside an auth dependency.
-        device.last_seen_at = now
-        if build is not None:
-            for field, value in build.as_updates().items():
-                setattr(device, field, value)
-        await _stamp_last_seen(device.id, now, build)
-
     return device
 
 
@@ -269,8 +291,18 @@ async def get_current_device(
     x_app_platform: str | None = Header(None, alias="X-App-Platform"),
     db: AsyncSession = Depends(get_db),
 ) -> Device:
+    """Resolve a paired device, and only on the register API."""
+    _refuse_off_register_host(request)
+    return await authenticate_device(
+        db,
+        x_device_token,
+        ReportedBuild.from_headers(x_app_version, x_app_build, x_app_platform),
+    )
+
+
+def _refuse_off_register_host(request: Request) -> None:
     """
-    Resolve a paired device, and only on the register API.
+    A device token works on the register API only.
 
     A device token is a long-lived credential sitting on a shop counter, and
     the register has its own application and hostname precisely so that
@@ -288,11 +320,48 @@ async def get_current_device(
             "Device token used against the storefront API — point this terminal "
             "at the register host, then set POS_REQUIRE_POS_HOST=true"
         )
-    return await authenticate_device(
-        db,
-        x_device_token,
-        ReportedBuild.from_headers(x_app_version, x_app_build, x_app_platform),
+
+
+async def get_heartbeat_device(
+    request: Request,
+    x_device_token: str | None = Header(None, alias="X-Device-Token"),
+    x_app_version: str | None = Header(None, alias="X-App-Version"),
+    x_app_build: str | None = Header(None, alias="X-App-Build"),
+    x_app_platform: str | None = Header(None, alias="X-App-Platform"),
+    db: AsyncSession = Depends(get_db),
+) -> AsyncIterator[Device]:
+    """
+    `get_current_device` for the heartbeat, which writes the device row itself.
+
+    The ordinary dependency stamps `last_seen_at` (and the reported build) on a
+    session of its own, so the stamp survives a request that rolls back. The
+    heartbeat then wrote the same row again on the request session — so every
+    stale heartbeat held two of the register app's five pool connections and
+    wrote the row twice, the second write superseding the first.
+
+    Here the stamp is left on the in-memory row, where the heartbeat's own
+    UPDATE carries it in the request transaction. Only if the handler fails —
+    when that transaction will roll back — is the side-session stamp written,
+    so "this terminal spoke to us" survives exactly as it did before.
+    """
+    _refuse_off_register_host(request)
+    device = await _resolve_device(db, x_device_token)
+    device_id = device.id
+    stamp = _note_seen(
+        device, ReportedBuild.from_headers(x_app_version, x_app_build, x_app_platform)
     )
+    try:
+        yield device
+    except Exception:
+        if stamp is not None:
+            # End the failed request's transaction first: its own UPDATE of
+            # this row may already hold the row lock, and the side session's
+            # write would wait on it for good. `get_db` rolls back regardless;
+            # this only does it before the stamp rather than after. (The id was
+            # read up front: the rollback expires the row.)
+            await db.rollback()
+            await _stamp_last_seen(device_id, *stamp)
+        raise
 
 
 # ─── Devices (admin) ──────────────────────────────────────────────────────────
@@ -545,7 +614,7 @@ async def pair_device(
 @router.post("/heartbeat", response_model=DeviceSessionResponse)
 async def device_heartbeat(
     body: DeviceHeartbeatRequest | None = None,
-    device: Device = Depends(get_current_device),
+    device: Device = Depends(get_heartbeat_device),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -574,8 +643,17 @@ async def device_heartbeat(
             device.sync_reported_at = utcnow()
     device.last_seen_at = utcnow()
     await db.flush()
-    await db.refresh(device)
-    branch = await crud_service.get_or_404(db, Branch, device.branch_id)
+    # Every column the response reads is already what was just written — the
+    # row was loaded by the auth dependency and `updated_at` is stamped in
+    # Python — except a client-sent instant, which Postgres normalises to UTC.
+    # Read that one back so the reply is what a fresh read of the row says.
+    if body is not None and "oldest_pending_at" in body.model_fields_set:
+        await db.refresh(device, ["oldest_pending_sale_at"])
+    # Only the branch's own columns are serialised: skip the four relationships
+    # `Branch` eager-loads by default (four more round trips per heartbeat).
+    branch = await crud_service.get_or_404(
+        db, Branch, device.branch_id, options=[lazyload("*")]
+    )
     return DeviceSessionResponse(
         device=DeviceResponse.model_validate(device),
         branch=BranchResponse.model_validate(branch),

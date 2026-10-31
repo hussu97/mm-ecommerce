@@ -117,9 +117,12 @@ def test_both_apps_answer_a_health_check():
 
 
 def test_a_device_token_is_only_honoured_by_the_register():
-    source = inspect.getsource(devices.get_current_device)
+    source = inspect.getsource(devices._refuse_off_register_host)
     assert 'request.app.state, "is_pos_app"' in source
     assert "only accepted by the register" in source
+    # Both device dependencies go through it — the heartbeat's own included.
+    for dependency in (devices.get_current_device, devices.get_heartbeat_device):
+        assert "_refuse_off_register_host(request)" in inspect.getsource(dependency)
 
 
 def test_the_host_restriction_is_a_deliberate_cutover():
@@ -130,7 +133,7 @@ def test_the_host_restriction_is_a_deliberate_cutover():
     from app.core.config import settings
 
     assert settings.POS_REQUIRE_POS_HOST is False, "must default off"
-    source = inspect.getsource(devices.get_current_device)
+    source = inspect.getsource(devices._refuse_off_register_host)
     assert "settings.POS_REQUIRE_POS_HOST" in source
     assert "logger.warning" in source, "the old path must be visible in the logs"
 
