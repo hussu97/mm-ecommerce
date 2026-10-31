@@ -31,6 +31,7 @@ import logging
 from app.core import advisory_lock, background, heartbeat
 from app.services.couriers import courier_service
 from app.services.delivery import arrival_service, driver_routing, driver_tracking
+from app.services.orders import confirmation_email_backstop
 from app.services.payments import payment_service
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,10 @@ async def sweep_once() -> bool:
 
     The order is the order of their dependencies: an arrival is what books a
     driver for an order, a booking has to exist before anybody drives towards it,
-    and an abandoned basket depends on nothing so it is last.
+    and an abandoned basket depends on nothing so it is last. A fifth rides
+    along because it asks the same question of the same orders: a confirmation
+    email a crash lost between the commit and the send
+    (`confirmation_email_backstop`).
 
     A failure in any one sweep is logged and swallowed rather than allowed out,
     because the work waiting on the next tick is for orders already paid for and
@@ -140,6 +144,19 @@ async def sweep_once() -> bool:
                 )
         except Exception:  # noqa: BLE001
             logger.exception("Checkout sweep failed")
+            await session.rollback()
+        try:
+            # Confirmation emails go out after the confirming transaction
+            # commits, so a process that died in between lost them with the
+            # gateway's dedup row already written. Read here, sent after the
+            # read's transaction ends — Resend is a third party, and the lock's
+            # connection must not idle in a transaction across it.
+            owed = await confirmation_email_backstop.find_unsent(session)
+            await session.commit()
+            if owed:
+                await confirmation_email_backstop.send(owed)
+        except Exception:  # noqa: BLE001
+            logger.exception("Confirmation email backstop failed")
             await session.rollback()
 
         # Routes are recomputed on their own per-item sessions (WP5, F-OPS-5):
