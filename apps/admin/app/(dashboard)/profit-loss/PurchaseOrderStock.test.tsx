@@ -45,18 +45,21 @@ const REPORT = {
   ],
 };
 
-function mount(over: Partial<Parameters<typeof PurchaseOrderStock>[0]> = {}) {
-  return render(
-    <PurchaseOrderStock
-      dateFrom="2026-10-01"
-      dateTo="2026-10-31"
-      branchIds={[]}
-      entityIds={[]}
-      channelFiltered={false}
-      {...over}
-    />,
-  );
+type Props = Parameters<typeof PurchaseOrderStock>[0];
+const PROPS: Props = {
+  dateFrom: '2026-10-01',
+  dateTo: '2026-10-31',
+  branchIds: [],
+  entityIds: [],
+  channelFiltered: false,
+};
+
+function mount(over: Partial<Props> = {}) {
+  return render(<PurchaseOrderStock {...PROPS} {...over} />);
 }
+
+const toggle = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+const expand = () => toggle('Show purchase-order stock');
 
 describe('PurchaseOrderStock', () => {
   beforeEach(() => {
@@ -66,6 +69,7 @@ describe('PurchaseOrderStock', () => {
 
   it('renders the API’s figures, consumed taken off, without deriving any', async () => {
     mount({ branchIds: ['b1'] });
+    expand();
     await screen.findByText('Received (2 purchase orders)');
     expect(apiMocks.purchaseOrders).toHaveBeenCalledWith({
       date_from: '2026-10-01',
@@ -93,8 +97,57 @@ describe('PurchaseOrderStock', () => {
   it('says so when the window closed no purchase order with stock', async () => {
     apiMocks.purchaseOrders.mockResolvedValue({ ...REPORT, purchase_orders: [] });
     mount();
+    expand();
     await waitFor(() =>
       expect(screen.getByText(/No purchase order with stock lines/)).toBeInTheDocument(),
+    );
+  });
+
+  it('does not run the trace until the section is opened', async () => {
+    const { rerender } = mount();
+    expect(screen.getByRole('button', { name: 'Show purchase-order stock' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    // A filter change while collapsed does not fetch either.
+    rerender(<PurchaseOrderStock {...PROPS} dateFrom="2026-09-01" />);
+    expect(apiMocks.purchaseOrders).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Received \(/)).toBeNull();
+
+    expand();
+    await screen.findByText('Received (2 purchase orders)');
+    expect(apiMocks.purchaseOrders).toHaveBeenCalledTimes(1);
+    expect(apiMocks.purchaseOrders).toHaveBeenCalledWith(
+      expect.objectContaining({ date_from: '2026-09-01' }),
+    );
+  });
+
+  it('refetches on a filter change while open, and not on a reopen with the same filters', async () => {
+    const { rerender } = mount();
+    expand();
+    await screen.findByText('Received (2 purchase orders)');
+
+    rerender(<PurchaseOrderStock {...PROPS} branchIds={['b2']} />);
+    await waitFor(() => expect(apiMocks.purchaseOrders).toHaveBeenCalledTimes(2));
+    expect(apiMocks.purchaseOrders).toHaveBeenLastCalledWith(
+      expect.objectContaining({ branch_ids: ['b2'] }),
+    );
+    await waitFor(() => expect(screen.getByText('Received (2 purchase orders)')).toBeInTheDocument());
+
+    toggle('Hide purchase-order stock');
+    expect(screen.queryByText('Received (2 purchase orders)')).toBeNull();
+    expand();
+    expect(screen.getByText('Received (2 purchase orders)')).toBeInTheDocument();
+    expect(apiMocks.purchaseOrders).toHaveBeenCalledTimes(2);
+
+    // Collapsed, the filters move on; reopening fetches for the new ones.
+    toggle('Hide purchase-order stock');
+    rerender(<PurchaseOrderStock {...PROPS} branchIds={['b3']} />);
+    expect(apiMocks.purchaseOrders).toHaveBeenCalledTimes(2);
+    expand();
+    await waitFor(() => expect(apiMocks.purchaseOrders).toHaveBeenCalledTimes(3));
+    expect(apiMocks.purchaseOrders).toHaveBeenLastCalledWith(
+      expect.objectContaining({ branch_ids: ['b3'] }),
     );
   });
 });
