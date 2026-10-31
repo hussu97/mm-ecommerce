@@ -315,9 +315,40 @@ def _cogs_lateral():
     correlated subquery once per *reference*. It is an ungrouped aggregate, so
     it yields exactly one row per order — `lines = 0` when the order drew no
     stock, which is how COGS stays NULL (unknown) rather than zero.
+
+    A sale's movement that was **redone** is left out: reversed, and the same
+    order has another consumption — `source_event_service.reconsume_order`
+    after an item was added or a recipe fixed, or a duplicate posting netted
+    out by hand. The reversal is a `quantity_adjustment` with no `order_id`, so
+    this sum never saw it, and counted both the original and the redo: 21
+    orders in September and October 2026 had COGS of the first posting twice.
+    A reversal with no redo is a different thing and stays counted — a sale
+    whose stock a count had already taken (AGG-20261004-028) was still sold —
+    as do the pre-go-live July backfills, which have no redo and a different
+    question (whether those orders should carry COGS at all).
     """
     line = InventoryLineCost
     txn = InventoryTransaction
+    other = aliased(InventoryTransaction)
+    reversal = aliased(InventoryTransaction)
+    consumption = InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value
+    # Uncorrelated, so Postgres builds the set once rather than per order (the
+    # column has no index; the set is a few hundred ids).
+    reversed_ids = select(reversal.reverses_transaction_id).where(
+        reversal.reverses_transaction_id.is_not(None)
+    )
+    redone = and_(
+        txn.type == consumption,
+        txn.id.in_(reversed_ids),
+        select(other.id)
+        .where(
+            other.order_id == txn.order_id,
+            other.type == consumption,
+            other.status == "closed",
+            other.id != txn.id,
+        )
+        .exists(),
+    )
     signed = case(
         (
             txn.type == InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
@@ -366,6 +397,7 @@ def _cogs_lateral():
                 ]
             ),
             line.superseded.is_(False),
+            ~redone,
         )
         .correlate(Order)
         .lateral("pnl_cogs")

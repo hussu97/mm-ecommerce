@@ -446,6 +446,64 @@ async def test_a_website_order_shows_its_vat_as_lines(engine, world):
     assert p.net_vat == D("3.80")  # 4.50 − 0.70; COGS VAT was reclaimed at purchase
 
 
+async def test_a_redone_sale_counts_once_and_a_bare_reversal_still_counts(
+    engine, world
+):
+    """A's stock movement is reversed. With nothing posted again it stays in
+    COGS — the goods were still sold; a count had already taken the stock
+    (AGG-20261004-028). Then it is redone, as `reconsume_order` does after an
+    item is added: the original no longer counts, so COGS is the redo's 6.71
+    once — not 13.42, which is what 21 orders in Sept/Oct 2026 carried."""
+    from app.models.user import User
+    from app.services.inventory import ledger_service
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    order_id = world["orders"]["A"]
+    async with Session() as db:
+        user = User(email=f"pnl-redo-{world['tag']}@example.com", hashed_password="x")
+        db.add(user)
+        await db.flush()
+        original = (
+            await db.execute(
+                select(InventoryTransaction).where(
+                    InventoryTransaction.order_id == order_id,
+                    InventoryTransaction.type
+                    == InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
+                )
+            )
+        ).scalar_one()
+        await ledger_service.reverse_transaction(
+            db, transaction_id=original.id, user=user, reason="test"
+        )
+        assert (await order_pnl.for_order(db, order_id)).cogs == D("6.71")
+
+        kind = InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS
+        redo = InventoryTransaction(
+            reference=await inventory_service.next_reference(db, kind.value),
+            type=kind.value,
+            status=TransactionStatusEnum.DRAFT.value,
+            branch_id=original.branch_id,
+            warehouse_id=original.warehouse_id,
+            business_date=DAY,
+            order_id=order_id,
+            items=[
+                InventoryTransactionItem(
+                    item_id=item_id,
+                    quantity=D(quantity),
+                    unit="storage",
+                    conversion_factor=D("1"),
+                    unit_cost=D("0"),
+                )
+                for item_id, quantity in ((world["item"], "3"), (world["box"], "1"))
+            ],
+        )
+        db.add(redo)
+        await db.flush()
+        await inventory_service.post_transaction(db, transaction=redo, user=None)
+        assert (await order_pnl.for_order(db, order_id)).cogs == D("6.71")
+        await db.rollback()
+
+
 async def test_a_marketplace_order_with_no_stock_has_blank_cogs(engine, world):
     p = await _pnl(engine, world["orders"]["B"])
     assert p.channel == "talabat"
