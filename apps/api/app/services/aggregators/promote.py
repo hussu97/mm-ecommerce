@@ -53,7 +53,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Integer, and_, cast, delete, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.config import settings
@@ -552,10 +552,14 @@ async def _find_convergence_order(
             )
         )
     return await db.scalar(
-        select(Order).where(
+        select(Order)
+        .where(
             Order.source == OrderSourceEnum.AGGREGATOR.value,
             or_(*conds),
         )
+        # `legal_entity` (`selectin` by default) joined onto the same row
+        # instead of a second round-trip: same loaded state.
+        .options(joinedload(Order.legal_entity))
     )
 
 

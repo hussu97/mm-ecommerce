@@ -10,11 +10,12 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.core.database import AsyncSessionFactory
 from app.core.security import decode_token
 from app.models import User
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,14 @@ async def _get_user_from_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    result = await db.execute(select(User).where(User.id == user_id))
+    # `User.role` is `selectin`, so a plain load is two round-trips on every
+    # authenticated request. Joined, the role arrives on the user's row: the
+    # object is loaded exactly as before, in one query. Deliberately NOT cached
+    # across requests — deactivation, a role edit and a password change must
+    # bite on the very next request, and only a fresh read guarantees that.
+    result = await db.execute(
+        select(User).where(User.id == user_id).options(joinedload(User.role))
+    )
     user = result.scalar_one_or_none()
     if not user and required:
         raise HTTPException(
@@ -286,7 +294,7 @@ async def browsing_branch(
     """
     if branch_id is None:
         return None
-    branch = await db.get(Branch, branch_id)
+    branch = await db.get(Branch, branch_id, options=branch_joined_loads())
     if branch is None or branch.deleted_at is not None or not branch.is_active:
         logger.info("Ignoring browsing branch %s, which cannot take orders", branch_id)
         return None

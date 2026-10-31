@@ -31,7 +31,7 @@ from app.core.exceptions import (
 )
 from app.core.phone import describe_phone
 from app.models.base import utcnow
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.kitchen_flow import KitchenFlow
@@ -688,7 +688,7 @@ async def attach_promoted_aggregator_order(
         return order  # not yet terminal — attach on a later re-promote
     if order.branch_id is None:
         return order
-    branch = await db.get(Branch, order.branch_id)
+    branch = await db.get(Branch, order.branch_id, options=branch_joined_loads())
     if branch is None:
         return order
 
@@ -2176,7 +2176,7 @@ async def split_order(
     if len(moving) == len(order.items):
         raise BadRequestError("Move fewer items — a split cannot empty the check")
 
-    branch = await db.get(Branch, order.branch_id)
+    branch = await db.get(Branch, order.branch_id, options=branch_joined_loads())
     child = await open_order(
         db,
         branch=branch,

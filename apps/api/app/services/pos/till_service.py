@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.money import money
 from app.models.base import utcnow
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.order import Order, OrderItem
 from app.models.payment_method import PaymentMethod
 from app.models.pos_order import OrderPayment, PosOrderStatusEnum
@@ -449,7 +449,7 @@ async def build_report(db: AsyncSession, till: Till) -> dict:
     payments_by_method, sales = await _payment_breakdown(db, till)
     channels = await _channel_breakdown(db, till)
 
-    branch = await db.get(Branch, till.branch_id)
+    branch = await db.get(Branch, till.branch_id, options=branch_joined_loads())
     cash_enabled = bool(branch.cash_enabled) if branch is not None else True
 
     return {

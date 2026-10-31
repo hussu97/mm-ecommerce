@@ -111,7 +111,7 @@ class _Db:
 
         return _Result()
 
-    async def get(self, _model, _pk):
+    async def get(self, _model, _pk, **_kw):
         return self._branch
 
 

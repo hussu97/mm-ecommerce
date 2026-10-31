@@ -60,6 +60,7 @@ def reset_courier_caches():
     for the tests that remember, which is the shape of every convention this
     repo has since turned into a fixture or a guard test.
     """
+    from app.core import reference_cache
     from app.services.couriers import (
         lalamove_service,
         noon_send_service,
@@ -74,6 +75,7 @@ def reset_courier_caches():
         noon_send_service.invalidate_limits,
         delivery_promise.clear_caches,
         counter_bundle_cache.clear,
+        reference_cache.clear,
     ):
         reset()
     yield
@@ -83,6 +85,7 @@ def reset_courier_caches():
         noon_send_service.invalidate_limits,
         delivery_promise.clear_caches,
         counter_bundle_cache.clear,
+        reference_cache.clear,
     ):
         reset()
 

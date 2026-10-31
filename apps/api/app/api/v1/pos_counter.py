@@ -55,7 +55,7 @@ from app.core.exceptions import (
 from app.core.permissions import ensure, require
 from app.core.pos_builds import COUNTER_LOCAL_FIRST_MIN_BUILD, build_at_least
 from app.models.base import utcnow
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.device import Device
 from app.models.order import Order
 from app.models.pos_counter import CounterSaleQuarantine
@@ -195,7 +195,7 @@ async def promote_check(
         # Imperative because it is conditional: only a check carrying a coupon
         # needs the coupon permission, and only the body says so.
         ensure(user, "pos.promotions.apply")
-    branch = await db.get(Branch, data.branch_id)
+    branch = await db.get(Branch, data.branch_id, options=branch_joined_loads())
     if branch is None or branch.deleted_at is not None:
         raise NotFoundError("Branch not found")
     till = None

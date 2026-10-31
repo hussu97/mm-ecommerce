@@ -26,7 +26,7 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import get_db
 from app.core.exceptions import NotFoundError
 from app.core.permissions import require
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.device import Device
 from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
@@ -93,7 +93,7 @@ def _iso(value) -> str | None:
 
 async def _branch_of(db: AsyncSession, device: Device) -> Branch:
     """The shop this terminal stands in. Never another one."""
-    branch = await db.get(Branch, device.branch_id)
+    branch = await db.get(Branch, device.branch_id, options=branch_joined_loads())
     if branch is None:
         raise NotFoundError("This terminal is not assigned to a branch")
     return branch

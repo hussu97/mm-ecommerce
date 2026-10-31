@@ -35,7 +35,7 @@ from app.core.limiter import limiter
 from app.core.money import to_decimal
 from app.core.permissions import require
 from app.models.aggregator import AggregatorOrder, AggregatorOrderStatusEvent
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.marketplace_return import MarketplaceReturn
 from app.models.order import Order, OrderStatusEnum
@@ -1099,7 +1099,11 @@ async def _delivery_payload(
     showing no distance and no history, and nobody would notice because a null
     renders as an em dash.
     """
-    branch = await db.get(Branch, order.branch_id) if order.branch_id else None
+    branch = (
+        await db.get(Branch, order.branch_id, options=branch_joined_loads())
+        if order.branch_id
+        else None
+    )
     drivers = list(
         (
             await db.execute(
@@ -1646,7 +1650,11 @@ async def order_admin_details(
     """
     order = await _load_order(db, order_number)
 
-    branch = await db.get(Branch, order.branch_id) if order.branch_id else None
+    branch = (
+        await db.get(Branch, order.branch_id, options=branch_joined_loads())
+        if order.branch_id
+        else None
+    )
 
     entries: list[OrderTimelineEntry] = [
         OrderTimelineEntry(

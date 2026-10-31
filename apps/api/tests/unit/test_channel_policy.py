@@ -87,7 +87,7 @@ class _Db:
     async def execute(self, stmt):
         return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
 
-    async def get(self, _model, _id):
+    async def get(self, _model, _id, **_kw):
         # A branch whose trading day starts at 04:00.
         return SimpleNamespace(business_day_start="04:00")
 

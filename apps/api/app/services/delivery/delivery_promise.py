@@ -52,7 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
 from app.core.bounded import BoundedLRU
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.courier import Courier, UnbatchedPromiseEnum
 from app.services import branch_holiday_service, branch_hours_service
 from app.services.couriers import courier_service
@@ -242,7 +242,7 @@ async def _serving_branch(
     """
     branch: Branch | None = None
     if branch_id is not None:
-        branch = await db.get(Branch, branch_id)
+        branch = await db.get(Branch, branch_id, options=branch_joined_loads())
     if branch is None:
         branch = (
             await db.execute(

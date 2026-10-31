@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import functools
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -19,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, joinedload, mapped_column, relationship
 from sqlalchemy.sql.elements import ColumnElement
 
 from .base import Base, TimestampMixin, UUIDMixin, business_date_format
@@ -381,6 +382,35 @@ class Branch(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<Branch {self.reference} {self.name}>"
+
+
+@functools.cache
+def branch_joined_loads() -> tuple[Any, ...]:
+    """Loader options that fill `Branch`'s four `selectin` relationships with
+    one LEFT JOIN instead of four follow-up SELECTs.
+
+    Every plain load of a branch costs five round-trips: the row, then
+    `channel_tax_configs`, `aggregator_maps`, `foodics_map` and
+    `grubops_location`, each a separate `selectin` query. Passed to a hot load
+    (`db.get(Branch, id, options=branch_joined_loads())`), the same four
+    relationships arrive on the same row, so the object that comes back is
+    loaded exactly as a default load would leave it — nothing is skipped and
+    nothing is left to lazy-load (which would be a `MissingGreenlet` under the
+    async session). The two collections multiply into at most a handful of
+    rows per branch (≤ 5 channels × 3 configs in prod), which the ORM
+    de-duplicates; `session.get` applies `.unique()` itself, a `select()` that
+    uses these must call `.unique()` on its result.
+
+    Not for `with_for_update()`: Postgres refuses `FOR UPDATE` on the nullable
+    side of an outer join. Cached because the option objects are immutable and
+    building them configures the mappers, which must not happen at import time.
+    """
+    return (
+        joinedload(Branch.channel_tax_configs),
+        joinedload(Branch.aggregator_maps),
+        joinedload(Branch.foodics_map),
+        joinedload(Branch.grubops_location),
+    )
 
 
 class BranchHoliday(Base, UUIDMixin, TimestampMixin):

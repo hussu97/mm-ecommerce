@@ -36,7 +36,7 @@ from app.core.exceptions import (
 )
 from app.core.phone import describe_phone
 from app.core.trading_hours import DELIVERY_TIMEZONE
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.cart import Cart, CartItem
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import (
@@ -593,7 +593,7 @@ async def resolve_branch(
         )
 
     if zone is not None and zone.branch_id is not None:
-        branch = await db.get(Branch, zone.branch_id)
+        branch = await db.get(Branch, zone.branch_id, options=branch_joined_loads())
         if (
             branch is not None
             and branch.deleted_at is None
@@ -689,7 +689,7 @@ async def _load_active_branch(db: AsyncSession, branch_id: uuid.UUID) -> Branch 
     is how an operator pulls a kitchen out of online fulfilment without editing
     the map. Both have to be true, so neither is a way to serve orders by
     accident — the same pairing the website union is taken over."""
-    branch = await db.get(Branch, branch_id)
+    branch = await db.get(Branch, branch_id, options=branch_joined_loads())
     if (
         branch is not None
         and branch.deleted_at is None
@@ -726,7 +726,7 @@ async def select_fulfilment(
     """
     # Pickup: the chosen store wins outright, exactly as `resolve_branch` does.
     if pickup_branch_id is not None:
-        chosen = await db.get(Branch, pickup_branch_id)
+        chosen = await db.get(Branch, pickup_branch_id, options=branch_joined_loads())
         if chosen is not None and chosen.is_busy:
             return NoBranchFulfils(best_branch=None, unavailable=[], busy_branch=chosen)
         branch = await resolve_branch(db, zone, pickup_branch_id=pickup_branch_id)
@@ -950,7 +950,7 @@ async def publish_to_register(
     if branch is None:
         if order.branch_id is None:  # pragma: no cover — column is NOT NULL
             return
-        branch = await db.get(Branch, order.branch_id)
+        branch = await db.get(Branch, order.branch_id, options=branch_joined_loads())
         if branch is None:  # pragma: no cover — FK is RESTRICT
             return
 

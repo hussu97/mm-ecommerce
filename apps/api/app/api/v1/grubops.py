@@ -26,7 +26,7 @@ from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.exceptions import NotFoundError
 from app.core.permissions import require
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.grubops import (
     GrubOpsLocationMap,
 )
@@ -96,7 +96,7 @@ async def update_location(
     if location is None:
         raise NotFoundError("That branch is not mapped to GrubOps")
 
-    branch = await db.get(Branch, location.branch_id)
+    branch = await db.get(Branch, location.branch_id, options=branch_joined_loads())
 
     if data.is_active is not None:
         location.is_active = data.is_active

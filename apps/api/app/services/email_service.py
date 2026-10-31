@@ -53,7 +53,7 @@ from app.core import post_commit
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.core.trading_hours import DELIVERY_TIMEZONE
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.email_log import EmailLog, EmailTemplate
 from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
@@ -1106,7 +1106,9 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
     if context.get("branch") is None and order.branch_id is not None:
         try:
             async with AsyncSessionFactory() as db:
-                context["branch"] = await db.get(Branch, order.branch_id)
+                context["branch"] = await db.get(
+                    Branch, order.branch_id, options=branch_joined_loads()
+                )
         except Exception as exc:
             logger.error(
                 "owner_order_notification branch lookup failed for %s: %s",

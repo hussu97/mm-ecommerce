@@ -25,7 +25,7 @@ from decimal import Decimal
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer, selectinload
+from sqlalchemy.orm import defer, joinedload, selectinload
 
 from app.models.aggregator import (
     CHANNEL_CAREEM,
@@ -283,7 +283,10 @@ async def _find_mm_order(
         select(Order)
         .join(GrubOpsOrderMap, GrubOpsOrderMap.mm_order_id == Order.id)
         .where(*conds)
-        .options(selectinload(Order.items))
+        # `legal_entity` is `selectin` by default — a second round-trip on every
+        # match, and this runs once per aggregator order per reconcile/promote
+        # pass. Joined here, it arrives on the same row: same loaded state.
+        .options(selectinload(Order.items), joinedload(Order.legal_entity))
     )
 
 

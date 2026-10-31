@@ -29,11 +29,11 @@ from decimal import Decimal
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.config import settings
 from app.core.database import SchedulerSessionFactory
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
 from app.services.providers import mapbox_provider
@@ -94,7 +94,14 @@ async def refresh_routes(
                     select(OrderDelivery)
                     .join(Order, Order.id == OrderDelivery.order_id)
                     .options(
-                        selectinload(OrderDelivery.order).selectinload(Order.branch)
+                        # The order, its branch and everything both load by
+                        # default (`Order.legal_entity`, the branch's four
+                        # integration relationships) in ONE follow-up query
+                        # rather than seven: same objects, same loaded state.
+                        selectinload(OrderDelivery.order).options(
+                            joinedload(Order.legal_entity),
+                            joinedload(Order.branch).options(*branch_joined_loads()),
+                        )
                     )
                     .where(
                         OrderDelivery.driver_latitude.is_not(None),
@@ -231,7 +238,7 @@ async def route_now(db: AsyncSession, delivery: OrderDelivery) -> bool:
     if order is None or order.branch_id is None:
         return False
 
-    branch = await db.get(Branch, order.branch_id)
+    branch = await db.get(Branch, order.branch_id, options=branch_joined_loads())
     if branch is None or branch.latitude is None or branch.longitude is None:
         return False
     if delivery.driver_latitude is None or delivery.driver_longitude is None:

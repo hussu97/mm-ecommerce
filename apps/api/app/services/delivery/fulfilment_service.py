@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
 from app.core.trading_hours import DELIVERY_TIMEZONE
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.courier import Courier
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
@@ -264,7 +264,7 @@ async def for_order(
     branch = None
     branch_window = None
     if is_pickup and order.branch_id is not None:
-        branch = await db.get(Branch, order.branch_id)
+        branch = await db.get(Branch, order.branch_id, options=branch_joined_loads())
         branch_window = branch_hours_service.effective_window(
             await branch_hours_service.schedule(db, order.branch_id),
             trading_hours.local(now).date(),

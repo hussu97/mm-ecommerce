@@ -530,10 +530,10 @@ async def _stamp_delivered(db: AsyncSession, order: Order) -> None:
     moment = current_actor().at or utcnow()
     order.delivered_at = moment
     if channels.is_custom(order.source):
-        from app.models.branch import Branch
+        from app.models.branch import Branch, branch_joined_loads
         from app.services.pos import business_day_service
 
-        branch = await db.get(Branch, order.branch_id)
+        branch = await db.get(Branch, order.branch_id, options=branch_joined_loads())
         tz = await business_day_service.resolve_timezone(db)
         order.business_date = business_day_service.business_date_for(branch, moment, tz)
         order.closed_at = moment
@@ -686,10 +686,12 @@ async def _consequences(
         # its own yet; file the cancellation under today's, so whatever it did
         # cost (a courier already booked) reaches the business-date reports.
         if channels.is_custom(order.source) and order.business_date is None:
-            from app.models.branch import Branch
+            from app.models.branch import Branch, branch_joined_loads
             from app.services.pos import business_day_service
 
-            branch = await db.get(Branch, order.branch_id)
+            branch = await db.get(
+                Branch, order.branch_id, options=branch_joined_loads()
+            )
             order.business_date = await business_day_service.current_business_date(
                 db, branch
             )

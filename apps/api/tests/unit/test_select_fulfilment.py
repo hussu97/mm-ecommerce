@@ -57,7 +57,7 @@ def _zone(branches: list[tuple[SimpleNamespace, str]]) -> Zone:
 def _db(branches: list[SimpleNamespace]):
     by_id = {b.id: b for b in branches}
     db = SimpleNamespace()
-    db.get = AsyncMock(side_effect=lambda _model, bid: by_id.get(bid))
+    db.get = AsyncMock(side_effect=lambda _model, bid, **_kw: by_id.get(bid))
     return db
 
 

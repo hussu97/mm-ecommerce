@@ -41,7 +41,7 @@ from app.core.config import settings
 from app.core.money import money
 from app.core.phone import describe_phone
 from app.models.base import utcnow
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.external_item_map import KIND_OPTION, KIND_PRODUCT, ExternalItemMap
 from app.models.grubops import GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
@@ -1097,7 +1097,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     from app.services import push_service
     from app.services.pos import pos_order_service
 
-    branch = await db.get(Branch, branch_id)
+    branch = await db.get(Branch, branch_id, options=branch_joined_loads())
     if branch is not None:
         await pos_order_service.attach_aggregator_order(db, order, branch)
         await db.flush()

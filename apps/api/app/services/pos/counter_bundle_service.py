@@ -49,7 +49,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.pos_builds import COUNTER_LOCAL_FIRST_MIN_BUILD, build_at_least
 from app.models.base import utcnow
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.business_settings import BusinessSettings
 from app.models.device import Device
 from app.models.kitchen_flow import KitchenFlow
@@ -793,7 +793,7 @@ async def serve(
     The body comes from `cached_body`. When `if_none_match` names the current
     ETag the answer is `not_modified` and the envelope is never assembled — the
     fields the ETag covers are all a 304 costs."""
-    branch = await db.get(Branch, device.branch_id)
+    branch = await db.get(Branch, device.branch_id, options=branch_joined_loads())
     if branch is None:  # pragma: no cover — FK
         raise LookupError("device has no branch")
     entry = await cached_body(db, branch)

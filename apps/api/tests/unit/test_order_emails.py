@@ -551,7 +551,7 @@ async def test_the_owner_email_names_the_kitchen_for_a_delivery_order(
         async def __aexit__(self, *_a):
             return False
 
-        async def get(self, _model, _id):
+        async def get(self, _model, _id, **_kw):
             return _FakeBranch()
 
     monkeypatch.setattr(email_service, "AsyncSessionFactory", lambda: _FakeSession())

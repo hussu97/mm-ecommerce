@@ -42,7 +42,7 @@ from app.core.money import money, to_decimal
 from app.core.phone import describe_phone
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.base import utcnow
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.custom_order import (
@@ -141,7 +141,9 @@ async def config(db: AsyncSession) -> ChannelConfig:
         await db.execute(select(BusinessSettings).limit(1))
     ).scalar_one_or_none()
     branch = (
-        await db.get(Branch, settings.custom_orders_branch_id)
+        await db.get(
+            Branch, settings.custom_orders_branch_id, options=branch_joined_loads()
+        )
         if settings and settings.custom_orders_branch_id
         else None
     )

@@ -70,7 +70,7 @@ from app.core.deps import _issued_before_password_change
 from app.core.money import money
 from app.core.security import ALGORITHM
 from app.models.base import utcnow
-from app.models.branch import Branch, BranchBusinessDay
+from app.models.branch import Branch, BranchBusinessDay, branch_joined_loads
 from app.models.device import Device
 from app.models.kitchen_flow import KitchenFlow
 from app.models.marketing import Promotion
@@ -359,7 +359,7 @@ async def _structural_check(
     except ValueError as exc:
         raise Quarantine("business_date_malformed") from exc
 
-    branch = await db.get(Branch, device.branch_id)
+    branch = await db.get(Branch, device.branch_id, options=branch_joined_loads())
     if branch is None:  # pragma: no cover — FK
         raise Quarantine("unknown_branch")
 
@@ -1258,7 +1258,7 @@ async def shadow_compare(db: AsyncSession, *, device: Device, report) -> list[di
     order.pricing_audit = audit
     order.ingest_flags = sorted(set(order.ingest_flags or []) | {FLAG_SHADOW_MISMATCH})
     await db.flush()
-    branch = await db.get(Branch, order.branch_id)
+    branch = await db.get(Branch, order.branch_id, options=branch_joined_loads())
     await email_service.send_counter_pricing_mismatch(
         order_number=order.order_number,
         display_number=order.display_number,

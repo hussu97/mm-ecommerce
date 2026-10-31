@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db
 from app.core.exceptions import NotFoundError
 from app.core.permissions import require
-from app.models.branch import Branch
+from app.models.branch import Branch, branch_joined_loads
 from app.models.device import Device
 from app.models.user import User
 from app.schemas.pos.busy_mode import BusyStatusResponse, SetBusyRequest
@@ -25,7 +25,7 @@ router = APIRouter()
 
 
 async def _branch_of(db: AsyncSession, device: Device) -> Branch:
-    branch = await db.get(Branch, device.branch_id)
+    branch = await db.get(Branch, device.branch_id, options=branch_joined_loads())
     if branch is None:
         raise NotFoundError("This terminal is not assigned to a branch")
     return branch

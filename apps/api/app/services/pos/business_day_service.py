@@ -19,11 +19,10 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock, heartbeat
+from app.core import advisory_lock, heartbeat, reference_cache
 from app.core.exceptions import ConflictError
 from app.models.base import utcnow
 from app.models.branch import Branch, BranchBusinessDay
-from app.models.business_settings import BusinessSettings
 from app.models.till import Till, TillStatusEnum
 from app.models.user import User
 
@@ -54,11 +53,15 @@ __all__ = [
 
 
 async def resolve_timezone(db: AsyncSession) -> ZoneInfo:
-    """The business's local timezone, falling back to Gulf Standard Time."""
-    settings = (
-        await db.execute(select(BusinessSettings).limit(1))
-    ).scalar_one_or_none()
-    name = settings.timezone if settings and settings.timezone else DEFAULT_TIMEZONE
+    """The business's local timezone, falling back to Gulf Standard Time.
+
+    Read through `reference_cache`: one row that changes when an owner edits
+    the console, asked for by nearly every request that touches a business day.
+    """
+    settings = await reference_cache.business_settings_row(db)
+    name = (
+        settings["timezone"] if settings and settings["timezone"] else DEFAULT_TIMEZONE
+    )
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
