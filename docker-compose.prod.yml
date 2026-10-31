@@ -577,7 +577,7 @@ services:
       sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
       --proxy-headers --forwarded-allow-ips='*'
       --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 8"
+      --timeout-graceful-shutdown 8 --timeout-keep-alive 15"
     stop_grace_period: 10s
     environment: *pos-environment
     # Ship stdout/stderr directly to GCP Cloud Logging.
@@ -667,7 +667,7 @@ services:
       sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
       --proxy-headers --forwarded-allow-ips='*'
       --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 8"
+      --timeout-graceful-shutdown 8 --timeout-keep-alive 15"
     stop_grace_period: 10s
     environment: *pos-environment
     logging: *gcplogs

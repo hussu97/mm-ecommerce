@@ -18,7 +18,6 @@ from contextlib import asynccontextmanager, suppress
 import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -555,7 +554,10 @@ def configure(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # No app-level GZip: nginx compresses JSON (`gzip_proxied any`, level 6) for
+    # both hosts. Starlette's GZipMiddleware ran at level 9 on the single worker's
+    # event loop and handed nginx bodies it could not touch — CPU spent on the
+    # one core every other request was waiting for.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
