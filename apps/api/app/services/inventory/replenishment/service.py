@@ -7,8 +7,10 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.inventory import InventoryTransaction
 from app.schemas.replenishment import (
     ForecastBranchLine,
     ForecastItem,
@@ -101,11 +103,13 @@ def respond(snapshot: engine.Snapshot, as_of: datetime) -> ForecastResponse:
 #: intraday position drift).
 CACHE_SECONDS = 600
 
-#: (source branch, engine settings, 10-minute bucket) → the response. In process
+#: (source branch, engine settings, newest posting, 10-minute bucket) → the response. In process
 #: memory: a handful of small responses, one per branch at most, and only the
 #: current bucket is kept. Changing a setting changes the key, so a saved
 #: setting is reflected on the next open.
-_cache: dict[tuple[uuid.UUID | None, engine.Settings, int], ForecastResponse] = {}
+_cache: dict[
+    tuple[uuid.UUID | None, engine.Settings, int | None, int], ForecastResponse
+] = {}
 
 
 def _utcnow() -> datetime:
@@ -139,16 +143,23 @@ async def current_forecast(
 
     now = _utcnow()
     settings_row = await load_settings(db)
+    # The stock side of the answer (`loaders.on_hand_as_of`) moves with every
+    # posted movement, and a form reopened just after a transfer was sent must
+    # not suggest sending it again. The ledger's newest posting sequence is an
+    # index lookup, so any posting retires the entry at once; the bucket is
+    # only the ceiling for what that cannot see (the nightly fact rebuild).
+    posted = await db.scalar(select(func.max(InventoryTransaction.posting_sequence)))
     key = (
         source_branch_id or settings_row.production_branch_id,
         to_engine(settings_row),
+        posted,
         int(now.timestamp()) // CACHE_SECONDS,
     )
     cached = _cache.get(key)
     if cached is not None:
         return cached
     response = await _compute(db, source_branch_id=source_branch_id, as_of=now)
-    for stale in [k for k in _cache if k[2] != key[2]]:
+    for stale in [k for k in _cache if k[2:] != key[2:]]:
         del _cache[stale]
     _cache[key] = response
     return response

@@ -583,6 +583,21 @@ async def test_the_form_forecast_is_reused_per_branch_settings_and_bucket(
             clock[0] += timedelta(minutes=9)
             again = await service.current_forecast(db, source_branch_id=source)
             assert again is first
+            # A stock movement retires it at once, inside the bucket: a form
+            # reopened right after a transfer must see the new on-hand.
+            await _post(
+                db,
+                world["source"].id,
+                world["cookie"].id,
+                InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+                1,
+                clock[0],
+                TODAY,
+            )
+            await db.commit()
+            moved = await service.current_forecast(db, source_branch_id=source)
+            assert moved is not first
+            first = moved
             # Another source branch is its own entry.
             other = await service.current_forecast(db, source_branch_id=dest)
             assert other is not first and other.source_branch_id == dest
@@ -597,7 +612,7 @@ async def test_the_form_forecast_is_reused_per_branch_settings_and_bucket(
             clock[0] += timedelta(minutes=1)
             fresh = await service.current_forecast(db, source_branch_id=source)
             assert fresh is not first and fresh.as_of == clock[0]
-            assert {key[2] for key in service._cache} == {
+            assert {key[3] for key in service._cache} == {
                 int(clock[0].timestamp()) // service.CACHE_SECONDS
             }
             # An explicit as_of (backtest, shadow history) is never cached.
