@@ -31,6 +31,7 @@ type ReconSummary = Schemas['ReconSummaryOut'];
 type PeriodCharges = Schemas['AggregatorPeriodChargesOut'];
 export type OrderPnl = Schemas['OrderPnlResponse'];
 export type PnlReport = Schemas['PnlReportResponse'];
+export type PnlPurchaseOrders = Schemas['PnlPurchaseOrdersResponse'];
 export type ProductCost = Schemas['ProductCostResponse'];
 type SyncRunList = Schemas['AggregatorSyncRunList'];
 type RunTriggerResult = Schemas['AggregatorRunTriggerOut'];
@@ -739,6 +740,17 @@ export const profitLossApi = {
     branch_ids?: string[];
     legal_entity_ids?: string[];
   }) => api.get<PnlReport>(`/profit-loss${buildQs(params)}`),
+  /**
+   * The window's closed POs' stock (misc lines excluded), less what the P&L's
+   * orders have drawn of it to date. No channel filter: stock isn't bought per
+   * channel.
+   */
+  purchaseOrders: (params: {
+    date_from: string;
+    date_to: string;
+    branch_ids?: string[];
+    legal_entity_ids?: string[];
+  }) => api.get<PnlPurchaseOrders>(`/profit-loss/purchase-orders${buildQs(params)}`),
 };
 
 export const dashboardApi = {

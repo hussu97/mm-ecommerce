@@ -1,3 +1,41 @@
+# P&L: purchase-order stock not yet in COGS
+
+Owner ask (2026-10-31): below the P&L, the window's completed purchase orders —
+total value, less what has already been consumed in orders (so nothing is
+counted twice with COGS), and net. Misc lines excluded (already in the P&L).
+
+- [x] Define the math. Received = stock lines of closed POs dated in the window,
+      net of recoverable VAT (like COGS). Consumed = the share of each (PO,
+      item)'s received quantity that orders `in_pnl_clause` counts have drawn,
+      **to date**, followed physically through FIFO: layer draws, batches,
+      transfers, returns, and negative stock a receipt paid back (rule 2,
+      oldest debt first, read off `running_quantity`). Net = Received −
+      Consumed, split into used elsewhere (counts, internal use, adjustments,
+      orders no P&L counts) and in stock.
+- [x] Rejected: following `priced_by_line_id`. A PO prices stock a count
+      found earlier (go-live opening stock); on prod that credited one PO with
+      88 kg sold against 12 kg delivered. Found-stock regression in the test.
+- [x] Reversed issues (voided-order restocks) are skipped: the stock went back
+      on the layer and is counted where it is drawn again.
+- [x] `services/orders/pnl_purchase_orders.py`, `GET /profit-loss/purchase-orders`
+      (`reports.cost`), schemas in `schemas/pnl.py`, openapi + @mm/types.
+- [x] Admin: `PurchaseOrderStock` under the statement, own request; per-PO
+      table on demand.
+- [x] Tests; push to main.
+
+## Review (before push)
+- Integration test worked by hand (batch → transfer → sale, return, cancelled
+  order, write-off, sale before the PO was keyed, found stock priced by a PO,
+  misc line excluded): exact to the fil.
+- Read-only run against prod: Sept 27 POs, received 14,508.54, consumed
+  8,998.73, net 5,509.81 (4,754.62 used elsewhere — almost all count
+  shortfalls — and 755.19 in stock); Oct 68 POs, 57,584.12 / 29,862.18 /
+  27,721.94. Quantity conserved on every (PO, item) — no clamp fired. ~0.9 s.
+- Found, not fixed (changes P&L figures; needs the owner's call): the P&L's
+  COGS lateral counts order consumption that was later reversed by a
+  `correction` (stock audits of pre-go-live backfills). Overstates COGS by
+  ~4,500 in July, 227 in Sept, 55 in Oct.
+
 # Admin: product modifiers up top + editable; PO line cost comparison
 
 Owner ask (2026-10-22): (1) on the admin product page, move the modifiers up

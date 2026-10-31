@@ -8411,6 +8411,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/profit-loss/purchase-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Purchase Order Stock
+         * @description The window's closed POs' stock, less what the P&L's orders have drawn of
+         *     it to date. Its own request, not part of `/profit-loss`: it traces stock
+         *     through every batch and transfer, and the statement should not wait on it.
+         */
+        get: operations["purchase_order_stock_api_v1_profit_loss_purchase_orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/promo-codes": {
         parameters: {
             query?: never;
@@ -19037,6 +19059,61 @@ export interface components {
             last_date: string;
             /** Lines */
             lines: number;
+        };
+        /**
+         * PnlPurchaseOrderRow
+         * @description One closed purchase order's stock lines (misc lines excluded) and where
+         *     that stock has gone to date. AED net of recoverable VAT, like COGS;
+         *     `received − consumed = net` and `net = used_elsewhere + in_stock`.
+         */
+        PnlPurchaseOrderRow: {
+            /** Branch */
+            branch: string;
+            /** Business Date */
+            business_date: string;
+            /** Consumed */
+            consumed: number;
+            /** In Stock */
+            in_stock: number;
+            /** Net */
+            net: number;
+            /**
+             * Purchase Order Id
+             * Format: uuid
+             */
+            purchase_order_id: string;
+            /** Received */
+            received: number;
+            /** Reference */
+            reference: string;
+            /** Supplier */
+            supplier: string;
+            /** Used Elsewhere */
+            used_elsewhere: number;
+        };
+        /**
+         * PnlPurchaseOrdersResponse
+         * @description Stock bought on the window's closed purchase orders that the P&L has not
+         *     expensed yet (`services/orders/pnl_purchase_orders`). Branch and entity
+         *     filters pick the POs; the channel filter does not apply.
+         */
+        PnlPurchaseOrdersResponse: {
+            /** Consumed */
+            consumed: number;
+            /** Date From */
+            date_from: string;
+            /** Date To */
+            date_to: string;
+            /** In Stock */
+            in_stock: number;
+            /** Net */
+            net: number;
+            /** Purchase Orders */
+            purchase_orders: components["schemas"]["PnlPurchaseOrderRow"][];
+            /** Received */
+            received: number;
+            /** Used Elsewhere */
+            used_elsewhere: number;
         };
         /** PnlReportResponse */
         PnlReportResponse: {
@@ -40460,6 +40537,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PnlReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purchase_order_stock_api_v1_profit_loss_purchase_orders_get: {
+        parameters: {
+            query: {
+                /** @description Inclusive shop day */
+                date_from: string;
+                /** @description Inclusive shop day */
+                date_to: string;
+                branch_ids?: string[] | null;
+                legal_entity_ids?: string[] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PnlPurchaseOrdersResponse"];
                 };
             };
             /** @description Validation Error */

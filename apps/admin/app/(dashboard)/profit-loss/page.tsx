@@ -17,6 +17,10 @@
  * filter (`?tab=vat`). Channel and branch do not apply to it — the ledger is
  * kept per legal entity — so those two filters step aside on that tab. It used
  * to be a Counter Reports tab; `/pos-reports/vat` now redirects here.
+ *
+ * Below the statement, `PurchaseOrderStock`: the window's purchase-order stock
+ * the P&L has not expensed yet — received, less what its orders have consumed,
+ * so nothing is counted in both places.
  */
 
 import { useEffect, useState } from 'react';
@@ -28,6 +32,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useUrlFilters, type FilterFieldSpec } from '@/lib/list-filters';
 import { DATE_PRESETS } from '@/lib/order-filters';
 import { cn, formatCurrency } from '@/lib/utils';
+import { PurchaseOrderStock } from './PurchaseOrderStock';
 import { VatReport } from './VatReport';
 
 const FIELDS: FilterFieldSpec[] = [
@@ -580,6 +585,14 @@ export default function ProfitLossPage() {
               </p>
             )}
           </section>
+
+          <PurchaseOrderStock
+            dateFrom={from}
+            dateTo={to}
+            branchIds={filters.branches}
+            entityIds={filters.entities}
+            channelFiltered={filters.channels.length > 0}
+          />
         </div>
       ) : null}
     </div>

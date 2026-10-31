@@ -24,11 +24,13 @@ from app.schemas.pnl import (
     PnlMiscExpenseRow,
     PnlMiscExpenses,
     PnlPeriodChargeRow,
+    PnlPurchaseOrderRow,
+    PnlPurchaseOrdersResponse,
     PnlReportResponse,
     PnlVatSummary,
 )
 from app.services.inventory import po_misc_service
-from app.services.orders import order_pnl, pnl_report
+from app.services.orders import order_pnl, pnl_purchase_orders, pnl_report
 
 router = APIRouter()
 
@@ -104,6 +106,53 @@ async def profit_and_loss(
             unallocated=float(report.misc_unallocated),
             unallocated_included=report.unfiltered,
         ),
+    )
+
+
+@router.get("/purchase-orders", response_model=PnlPurchaseOrdersResponse)
+async def purchase_order_stock(
+    date_from: str = Query(..., pattern=_DATE, description="Inclusive shop day"),
+    date_to: str = Query(..., pattern=_DATE, description="Inclusive shop day"),
+    branch_ids: list[uuid.UUID] | None = Query(None),
+    legal_entity_ids: list[uuid.UUID] | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("reports.cost")),
+) -> PnlPurchaseOrdersResponse:
+    """The window's closed POs' stock, less what the P&L's orders have drawn of
+    it to date. Its own request, not part of `/profit-loss`: it traces stock
+    through every batch and transfer, and the statement should not wait on it."""
+    report = await pnl_purchase_orders.build(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        branch_ids=branch_ids,
+        legal_entity_ids=legal_entity_ids,
+    )
+    return PnlPurchaseOrdersResponse(
+        date_from=date_from,
+        date_to=date_to,
+        received=float(report.received),
+        consumed=float(report.consumed),
+        net=float(report.net),
+        used_elsewhere=float(report.used_elsewhere),
+        in_stock=float(report.in_stock),
+        purchase_orders=[
+            PnlPurchaseOrderRow(
+                purchase_order_id=row.purchase_order_id,
+                reference=row.reference,
+                business_date=row.business_date,
+                supplier=row.supplier,
+                branch=row.branch,
+                received=float(row.received),
+                consumed=float(row.consumed),
+                net=float(row.net),
+                used_elsewhere=float(row.used_elsewhere),
+                in_stock=float(row.in_stock),
+            )
+            for row in sorted(
+                report.rows, key=lambda r: (r.business_date, r.reference), reverse=True
+            )
+        ],
     )
 
 

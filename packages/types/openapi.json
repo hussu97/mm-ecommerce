@@ -26791,6 +26791,118 @@
         "title": "PnlPeriodChargeRow",
         "type": "object"
       },
+      "PnlPurchaseOrderRow": {
+        "description": "One closed purchase order's stock lines (misc lines excluded) and where\nthat stock has gone to date. AED net of recoverable VAT, like COGS;\n`received \u2212 consumed = net` and `net = used_elsewhere + in_stock`.",
+        "properties": {
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "consumed": {
+            "title": "Consumed",
+            "type": "number"
+          },
+          "in_stock": {
+            "title": "In Stock",
+            "type": "number"
+          },
+          "net": {
+            "title": "Net",
+            "type": "number"
+          },
+          "purchase_order_id": {
+            "format": "uuid",
+            "title": "Purchase Order Id",
+            "type": "string"
+          },
+          "received": {
+            "title": "Received",
+            "type": "number"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "supplier": {
+            "title": "Supplier",
+            "type": "string"
+          },
+          "used_elsewhere": {
+            "title": "Used Elsewhere",
+            "type": "number"
+          }
+        },
+        "required": [
+          "purchase_order_id",
+          "reference",
+          "business_date",
+          "supplier",
+          "branch",
+          "received",
+          "consumed",
+          "net",
+          "used_elsewhere",
+          "in_stock"
+        ],
+        "title": "PnlPurchaseOrderRow",
+        "type": "object"
+      },
+      "PnlPurchaseOrdersResponse": {
+        "description": "Stock bought on the window's closed purchase orders that the P&L has not\nexpensed yet (`services/orders/pnl_purchase_orders`). Branch and entity\nfilters pick the POs; the channel filter does not apply.",
+        "properties": {
+          "consumed": {
+            "title": "Consumed",
+            "type": "number"
+          },
+          "date_from": {
+            "title": "Date From",
+            "type": "string"
+          },
+          "date_to": {
+            "title": "Date To",
+            "type": "string"
+          },
+          "in_stock": {
+            "title": "In Stock",
+            "type": "number"
+          },
+          "net": {
+            "title": "Net",
+            "type": "number"
+          },
+          "purchase_orders": {
+            "items": {
+              "$ref": "#/components/schemas/PnlPurchaseOrderRow"
+            },
+            "title": "Purchase Orders",
+            "type": "array"
+          },
+          "received": {
+            "title": "Received",
+            "type": "number"
+          },
+          "used_elsewhere": {
+            "title": "Used Elsewhere",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date_from",
+          "date_to",
+          "received",
+          "consumed",
+          "net",
+          "used_elsewhere",
+          "in_stock",
+          "purchase_orders"
+        ],
+        "title": "PnlPurchaseOrdersResponse",
+        "type": "object"
+      },
       "PnlReportResponse": {
         "properties": {
           "channels": {
@@ -72680,6 +72792,109 @@
           }
         ],
         "summary": "Profit And Loss",
+        "tags": [
+          "Profit & Loss"
+        ]
+      }
+    },
+    "/api/v1/profit-loss/purchase-orders": {
+      "get": {
+        "description": "The window's closed POs' stock, less what the P&L's orders have drawn of\nit to date. Its own request, not part of `/profit-loss`: it traces stock\nthrough every batch and transfer, and the statement should not wait on it.",
+        "operationId": "purchase_order_stock_api_v1_profit_loss_purchase_orders_get",
+        "parameters": [
+          {
+            "description": "Inclusive shop day",
+            "in": "query",
+            "name": "date_from",
+            "required": true,
+            "schema": {
+              "description": "Inclusive shop day",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive shop day",
+            "in": "query",
+            "name": "date_to",
+            "required": true,
+            "schema": {
+              "description": "Inclusive shop day",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Ids"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legal_entity_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Legal Entity Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PnlPurchaseOrdersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Purchase Order Stock",
         "tags": [
           "Profit & Loss"
         ]

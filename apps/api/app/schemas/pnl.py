@@ -280,3 +280,42 @@ class PnlReportResponse(BaseModel):
     period_charges_included: bool
     vat: PnlVatSummary
     misc_expenses: PnlMiscExpenses
+
+
+class PnlPurchaseOrderRow(BaseModel):
+    """One closed purchase order's stock lines (misc lines excluded) and where
+    that stock has gone to date. AED net of recoverable VAT, like COGS;
+    `received − consumed = net` and `net = used_elsewhere + in_stock`."""
+
+    purchase_order_id: UUID
+    reference: str
+    #: The shop day it was received.
+    business_date: str
+    supplier: str
+    branch: str
+    received: float
+    #: Drawn by orders the P&L counts — inside its COGS already.
+    consumed: float
+    #: In no P&L's COGS.
+    net: float
+    #: Part of `net`: gone without passing through a P&L order (count
+    #: shortfalls, internal use, adjustments, orders the P&L does not count).
+    used_elsewhere: float
+    #: Part of `net`: still on the shelf, raw or inside goods not sold yet.
+    in_stock: float
+
+
+class PnlPurchaseOrdersResponse(BaseModel):
+    """Stock bought on the window's closed purchase orders that the P&L has not
+    expensed yet (`services/orders/pnl_purchase_orders`). Branch and entity
+    filters pick the POs; the channel filter does not apply."""
+
+    date_from: str
+    date_to: str
+    received: float
+    consumed: float
+    net: float
+    used_elsewhere: float
+    in_stock: float
+    #: By shop day, newest first.
+    purchase_orders: list[PnlPurchaseOrderRow]
