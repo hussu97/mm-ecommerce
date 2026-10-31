@@ -3,6 +3,7 @@ the response. Read-only."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -15,6 +16,7 @@ from app.schemas.replenishment import (
     ForecastResponse,
 )
 from app.services.inventory.replenishment import engine, loaders
+from app.services.inventory.replenishment.settings import load_settings, to_engine
 
 
 def _r(value: float, digits: int = 2) -> float:
@@ -76,16 +78,10 @@ def to_items(
     return out
 
 
-async def current_forecast(
-    db: AsyncSession,
-    *,
-    source_branch_id: uuid.UUID | None,
-    as_of: datetime | None = None,
-) -> ForecastResponse:
-    as_of = as_of or datetime.now(timezone.utc)
-    snapshot = await loaders.build_snapshot(
-        db, as_of=as_of, source_branch_id=source_branch_id
-    )
+def respond(snapshot: engine.Snapshot, as_of: datetime) -> ForecastResponse:
+    """Run the engine over a snapshot and shape the response. Pure Python, no
+    database and no session — which is what lets `current_forecast` run it off
+    the event loop."""
     results = engine.forecast(snapshot)
     return ForecastResponse(
         business_date=snapshot.business_date,
@@ -97,3 +93,62 @@ async def current_forecast(
         history_days=len({fact.business_date for fact in snapshot.facts}),
         items=to_items(snapshot, results),
     )
+
+
+#: How long one "now" forecast is served for. The form is opened a handful of
+#: times a morning, each open took seconds of single-core CPU, and the answer
+#: barely moves inside ten minutes (the facts are daily; only the stock and the
+#: intraday position drift).
+CACHE_SECONDS = 600
+
+#: (source branch, engine settings, 10-minute bucket) → the response. In process
+#: memory: a handful of small responses, one per branch at most, and only the
+#: current bucket is kept. Changing a setting changes the key, so a saved
+#: setting is reflected on the next open.
+_cache: dict[tuple[uuid.UUID | None, engine.Settings, int], ForecastResponse] = {}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _compute(
+    db: AsyncSession, *, source_branch_id: uuid.UUID | None, as_of: datetime
+) -> ForecastResponse:
+    snapshot = await loaders.build_snapshot(
+        db, as_of=as_of, source_branch_id=source_branch_id
+    )
+    # The engine is seconds of pure-Python arithmetic over ~8k facts. On the
+    # loop it froze every other request on the worker for that long; in a
+    # thread the loop keeps serving (the GIL is handed back every few ms).
+    return await asyncio.to_thread(respond, snapshot, as_of)
+
+
+async def current_forecast(
+    db: AsyncSession,
+    *,
+    source_branch_id: uuid.UUID | None,
+    as_of: datetime | None = None,
+) -> ForecastResponse:
+    """The forecast as of `as_of`, or — for the form, which passes none — as of
+    now, reused for up to `CACHE_SECONDS` per source branch and settings. A
+    cached answer carries the `as_of` it was computed at, so it never claims to
+    be fresher than it is."""
+    if as_of is not None:
+        return await _compute(db, source_branch_id=source_branch_id, as_of=as_of)
+
+    now = _utcnow()
+    settings_row = await load_settings(db)
+    key = (
+        source_branch_id or settings_row.production_branch_id,
+        to_engine(settings_row),
+        int(now.timestamp()) // CACHE_SECONDS,
+    )
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+    response = await _compute(db, source_branch_id=source_branch_id, as_of=now)
+    for stale in [k for k in _cache if k[2] != key[2]]:
+        del _cache[stale]
+    _cache[key] = response
+    return response

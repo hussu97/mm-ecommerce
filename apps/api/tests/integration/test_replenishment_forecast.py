@@ -12,6 +12,7 @@ date, item and branch.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
@@ -41,9 +42,16 @@ from app.models.replenishment import (
     ReplenishmentSettings,
 )
 from app.models.user import User
+from app.schemas.replenishment import ForecastResponse
 from app.services.inventory import inventory_service, recipe_service
 from app.services.inventory.recipe_service import RecipeLineInput
-from app.services.inventory.replenishment import facts, history
+from app.services.inventory.replenishment import (
+    engine,
+    facts,
+    history,
+    loaders,
+    service,
+)
 from app.services.inventory.replenishment.settings import load_settings
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
@@ -484,3 +492,119 @@ async def test_yesterdays_production_rows_do_not_keep_yesterday_pending(maker, w
         assert yesterday not in await history._pending_days(db, yesterday)
         # A day later the same rows are scoreable, and pending again.
         assert yesterday in await history._pending_days(db, TODAY)
+
+
+async def _legacy_load_facts(db, start: date, end: date) -> list[engine.Fact]:
+    """`loaders.load_facts` as it was: whole ORM entities, then converted."""
+    rows = (
+        (
+            await db.execute(
+                select(ReplenishmentDailyFact).where(
+                    ReplenishmentDailyFact.business_date >= start,
+                    ReplenishmentDailyFact.business_date < end,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        engine.Fact(
+            branch_id=row.branch_id,
+            item_id=row.item_id,
+            business_date=row.business_date,
+            sales_units=float(row.sales_units),
+            hourly_units=tuple(float(u) for u in row.hourly_units),
+            hourly_open_minutes=tuple(row.hourly_open_minutes),
+            hourly_in_stock_minutes=(
+                tuple(row.hourly_in_stock_minutes)
+                if row.hourly_in_stock_minutes is not None
+                else None
+            ),
+        )
+        for row in rows
+    ]
+
+
+async def test_column_facts_and_threaded_engine_match_the_orm_path(maker, world):
+    """The endpoint's speed-up (column select, engine in a thread) changes no
+    output: the old path — ORM-entity facts, engine on the loop — over the same
+    seeded world gives the identical response, field for field."""
+    await _build(maker)
+    as_of = datetime.now(timezone.utc)
+    source = world["source"].id
+    async with maker() as db:
+        new = await service.current_forecast(db, source_branch_id=source, as_of=as_of)
+
+        snapshot = await loaders.build_snapshot(
+            db, as_of=as_of, source_branch_id=source
+        )
+        legacy_facts = await _legacy_load_facts(
+            db,
+            snapshot.business_date - timedelta(days=snapshot.settings.window_days),
+            snapshot.business_date,
+        )
+        # The engine sees the very same facts, in the same order.
+        assert snapshot.facts == legacy_facts
+        assert any(f.item_id == world["cookie"].id for f in legacy_facts)
+
+        legacy_snapshot = dataclasses.replace(snapshot, facts=legacy_facts)
+        results = engine.forecast(legacy_snapshot)
+        old = ForecastResponse(
+            business_date=legacy_snapshot.business_date,
+            as_of=as_of,
+            source_branch_id=legacy_snapshot.pool_branch_id,
+            bucket_hours=legacy_snapshot.settings.bucket_hours,
+            service_level=legacy_snapshot.settings.service_level,
+            algo_version=engine.ALGO_VERSION,
+            history_days=len({f.business_date for f in legacy_snapshot.facts}),
+            items=service.to_items(legacy_snapshot, results),
+        )
+    assert new.model_dump() == old.model_dump()
+    cookie = next(i for i in new.items if i.item_id == world["cookie"].id)
+    assert cookie.lines and cookie.production is not None
+
+
+async def test_the_form_forecast_is_reused_per_branch_settings_and_bucket(
+    maker, world, monkeypatch
+):
+    await _build(maker)
+    source, dest = world["source"].id, world["dest"].id
+    # One second into the current 10-minute bucket.
+    bucket_start = int(datetime.now(timezone.utc).timestamp()) // 600 * 600
+    clock = [datetime.fromtimestamp(bucket_start + 1, tz=timezone.utc)]
+    monkeypatch.setattr(service, "_utcnow", lambda: clock[0])
+    service._cache.clear()
+    try:
+        async with maker() as db:
+            first = await service.current_forecast(db, source_branch_id=source)
+            assert first.as_of == clock[0]
+            # Same branch, settings and 10-minute bucket: the same answer.
+            clock[0] += timedelta(minutes=9)
+            again = await service.current_forecast(db, source_branch_id=source)
+            assert again is first
+            # Another source branch is its own entry.
+            other = await service.current_forecast(db, source_branch_id=dest)
+            assert other is not first and other.source_branch_id == dest
+            # A saved setting is a new key — reflected on the next open.
+            row = await load_settings(db)
+            row.half_life_days = row.half_life_days + 1
+            await db.flush()
+            changed = await service.current_forecast(db, source_branch_id=source)
+            assert changed is not first
+            await db.rollback()
+            # The next bucket recomputes, and older buckets are dropped.
+            clock[0] += timedelta(minutes=1)
+            fresh = await service.current_forecast(db, source_branch_id=source)
+            assert fresh is not first and fresh.as_of == clock[0]
+            assert {key[2] for key in service._cache} == {
+                int(clock[0].timestamp()) // service.CACHE_SECONDS
+            }
+            # An explicit as_of (backtest, shadow history) is never cached.
+            explicit = await service.current_forecast(
+                db, source_branch_id=source, as_of=clock[0]
+            )
+            assert explicit is not fresh
+            assert explicit.model_dump() == fresh.model_dump()
+    finally:
+        service._cache.clear()
