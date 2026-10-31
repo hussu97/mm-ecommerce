@@ -1564,4 +1564,53 @@ a long-lived container's json log grows without bound, which one had done to
 27 MB. That file applies to containers created *after* it is written, so a
 container that predates it keeps its uncapped log until recreated.
 
+**Postgres runtime settings**: the planner/observability settings in the
+`postgres` service's `command:` (`random_page_cost`, `effective_cache_size`,
+`jit`, `track_io_timing`, `log_min_duration_statement`,
+`log_parameter_max_length`) only reach a running database when the container is
+recreated, which no deploy does. All six are reloadable — on the VM's Postgres
+16 their `pg_settings.context` is `user` (`random_page_cost`,
+`effective_cache_size`, `jit`) or `superuser` (`track_io_timing`,
+`log_min_duration_statement`, `log_parameter_max_length`), never `postmaster` —
+so apply them live as `mm_user` (a superuser) with no restart:
+
+```bash
+gcloud compute ssh mm-backend --project=melting-moments-cakes --zone=me-central1-a \
+  --command="docker exec -i melting-moments-cakes-postgres-1 psql -U mm_user -d mm_ecommerce -v ON_ERROR_STOP=1" <<'SQL'
+ALTER SYSTEM SET random_page_cost = 1.1;
+ALTER SYSTEM SET jit = off;
+ALTER SYSTEM SET track_io_timing = on;
+ALTER SYSTEM SET log_min_duration_statement = 500;
+ALTER SYSTEM SET log_parameter_max_length = 0;
+ALTER SYSTEM SET effective_cache_size = '512MB';
+-- The running container was started with `-c effective_cache_size=192MB`, and a
+-- command-line value outranks postgresql.auto.conf, so the line above changes
+-- nothing until the next recreate (pg_file_settings even reports it "applied").
+-- A per-database setting outranks the command line; it reaches NEW sessions.
+ALTER DATABASE mm_ecommerce SET effective_cache_size = '512MB';
+SELECT pg_reload_conf();
+SQL
+```
+
+Verify from a fresh session (the other five values reach existing pooled
+connections at their next statement; the per-database `effective_cache_size`
+only reaches connections opened after it, i.e. within `pool_recycle` = 1 h or at
+the next deploy cutover):
+
+```sql
+SELECT name, setting, unit, source, pending_restart FROM pg_settings
+WHERE name IN ('random_page_cost','effective_cache_size','jit','track_io_timing',
+               'log_min_duration_statement','log_parameter_max_length');
+-- expect: 1.1 / 65536 (8kB = 512MB, source "database") / off / on / 500 ms / 0,
+-- pending_restart false on every row.
+```
+
+To undo one: `ALTER SYSTEM RESET <name>; SELECT pg_reload_conf();` (and
+`ALTER DATABASE mm_ecommerce RESET effective_cache_size;`). Once the container
+has been recreated with the committed `command:`, the per-database
+`effective_cache_size` is redundant and can be reset. Statements over 500 ms then
+appear in `docker logs melting-moments-cakes-postgres-1` as `duration: … ms`, SQL
+text only; `pg_stat_activity.application_name` says which process (`mm-api`,
+`mm-scheduler`, `mm-pos-api`) holds each backend.
+
 **Scaling**: Production is already an e2-small (2 GB). If that becomes a bottleneck, upgrade in-place: `gcloud compute instances set-machine-type mm-backend --machine-type=e2-medium --zone=me-central1-a` (requires VM stop/start). Raising Postgres `max_connections` past 30 belongs with that resize, not on the 2 GB box.

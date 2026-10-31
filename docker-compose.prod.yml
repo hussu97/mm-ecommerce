@@ -486,12 +486,34 @@ services:
     # and then `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`. The
     # collector's shared-memory footprint is a few MB (default 5000 tracked
     # statements), which fits under the 320m cap.
+    #
+    # Planner + observability (2026-11), none of which allocates memory:
+    # `random_page_cost=1.1` because the disk is pd-ssd, where a random read
+    # costs about what a sequential one does (4 is the spinning-disk default and
+    # talks the planner out of index scans); `effective_cache_size=512MB` is a
+    # planner estimate of cache available to one query, not an allocation;
+    # `jit=off` because JIT compilation adds tens of ms to any query the planner
+    # costs highly, and only pays off on long analytic scans a 328 MB database
+    # does not have;
+    # `track_io_timing=on` so pg_stat_statements/EXPLAIN separate I/O wait from
+    # CPU; `log_min_duration_statement=500` logs any statement over 500 ms, and
+    # `log_parameter_max_length=0` keeps that line to the SQL text — by default
+    # Postgres appends every bind value (`DETAIL: parameters: $1 = '<email>'`),
+    # which would put customer emails/phones in the container log. All six are
+    # reloadable — they are applied live with ALTER SYSTEM (see PRODUCTION.md
+    # "Postgres runtime settings"), and this block makes them survive the next
+    # recreate.
     command: >
       postgres
       -c shared_buffers=64MB
       -c work_mem=4MB
       -c maintenance_work_mem=32MB
-      -c effective_cache_size=192MB
+      -c effective_cache_size=512MB
+      -c random_page_cost=1.1
+      -c jit=off
+      -c track_io_timing=on
+      -c log_min_duration_statement=500
+      -c log_parameter_max_length=0
       -c max_connections=30
       -c checkpoint_completion_target=0.9
       -c wal_buffers=4MB
