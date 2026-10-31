@@ -65,8 +65,9 @@ import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import case, func, select, tuple_
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -109,6 +110,9 @@ _ORDER_ISSUES = (T.CONSUMPTION_FROM_ORDERS.value, T.WASTE_FROM_ORDERS.value)
 #: instead means a loop that does not shrink, and is logged.
 _NEGLIGIBLE = Decimal("1e-12")
 _MAX_ROUNDS = 256
+#: Ids per `IN (...)` when asking which orders the P&L counts: well inside
+#: asyncpg's 32,767 bind parameters however many orders one round meets.
+_IN_CHUNK = 5000
 
 
 @dataclass
@@ -349,6 +353,8 @@ class _Tracer:
         self.elsewhere: Vector = {}
         #: Orders with a return: the only sales whose content goes anywhere.
         self.returning: set[uuid.UUID] = set()
+        #: Whether the P&L counts each order a draw fed, memoised for the trace.
+        self.in_pnl: dict[uuid.UUID, bool] = {}
 
     async def run(self) -> None:
         self.returning = set(
@@ -529,7 +535,6 @@ class _Tracer:
         layer = InventoryCostLayer
         consumer_line = aliased(InventoryLineCost)
         consumer_txn = aliased(InventoryTransaction)
-        pnl_orders = select(Order.id).where(in_pnl_clause())
         # An issue that was reversed (a voided order's restock) put its stock
         # back on the layers it drew from, where a later draw takes it again:
         # count it once, there.
@@ -554,13 +559,11 @@ class _Tracer:
                     consumer_txn.order_id,
                     consumer_line.item_id,
                     consumer_line.warehouse_id,
-                    case(
-                        (consumer_txn.order_id.in_(pnl_orders), True), else_=False
-                    ).label("in_pnl"),
                 )
                 .where(~undone)
             )
 
+        kept: list[tuple[uuid.UUID, Decimal, Any]] = []
         found = (
             await self.db.execute(
                 consumed(
@@ -570,8 +573,7 @@ class _Tracer:
                 ).where(layer.source_line_id.in_(lines))
             )
         ).all()
-        for row in found:
-            self._keep(row.via, _d(row.quantity), row)
+        kept.extend((row.via, _d(row.quantity), row) for row in found)
 
         paid_back = await self._settled(lines)
         if paid_back:
@@ -582,8 +584,38 @@ class _Tracer:
                     )
                 )
             ).all():
-                for via, qty in paid_back[row.draw_id]:
-                    self._keep(via, qty, row)
+                kept.extend((via, qty, row) for via, qty in paid_back[row.draw_id])
+
+        await self._resolve_in_pnl(
+            {row.order_id for _via, _qty, row in kept if row.order_id is not None}
+        )
+        for via, qty, row in kept:
+            self._keep(via, qty, row)
+
+    async def _resolve_in_pnl(self, order_ids: set[uuid.UUID]) -> None:
+        """Whether the P&L counts each of these orders, asked once per order
+        per trace.
+
+        `in_pnl_clause` carries an EXISTS against `aggregator_order`. Asked
+        inside the draw query, as `order_id IN (every P&L order)`, it scanned
+        the whole orders table on every draw query of every round — more than
+        half of those queries' time in production, and a plan cost (~85k) at
+        the edge of Postgres's JIT threshold. Asked here it reads just the
+        orders the draws named, by primary key, and an order a later round
+        meets again is not asked twice.
+        """
+        new = [order_id for order_id in order_ids if order_id not in self.in_pnl]
+        for start in range(0, len(new), _IN_CHUNK):
+            chunk = new[start : start + _IN_CHUNK]
+            counted = set(
+                (
+                    await self.db.execute(
+                        select(Order.id).where(Order.id.in_(chunk), in_pnl_clause())
+                    )
+                ).scalars()
+            )
+            for order_id in chunk:
+                self.in_pnl[order_id] = order_id in counted
 
     def _keep(self, via: uuid.UUID, qty: Decimal, row) -> None:
         transfer = (
@@ -601,7 +633,7 @@ class _Tracer:
                     order_id=row.order_id,
                     item_id=row.item_id,
                     warehouse_id=row.warehouse_id,
-                    in_pnl=bool(row.in_pnl),
+                    in_pnl=row.order_id is not None and self.in_pnl[row.order_id],
                 ),
             )
         )
