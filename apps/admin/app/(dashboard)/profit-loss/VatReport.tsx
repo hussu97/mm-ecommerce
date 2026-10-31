@@ -102,7 +102,8 @@ export function VatReport({
 /**
  * One entry per category in the order the API sent them. A category the ledger
  * splits by supplier (purchases) arrives as several rows: they are summed into
- * the category line, and listed beneath it, already sorted by name.
+ * the category line, and listed beneath it in the API's order — the biggest
+ * spend first.
  */
 function groupByCategory(rows: VatLedgerRow[]) {
   const groups: { category: string; total: VatLedgerRow; suppliers: VatLedgerRow[] }[] = [];

@@ -370,7 +370,8 @@ async def read_ledger(
 
     Sums the per-day grains into per-(entity, category, direction) totals — the
     console reads a window, not a single day — and purchases per supplier too,
-    named and sorted by name within their category. Pure read; never recomputes.
+    named, the biggest spend (gross) first within their category, then by name.
+    Pure read; never recomputes.
     """
     stmt = (
         select(
@@ -402,7 +403,11 @@ async def read_ledger(
             LegalEntity.legal_name,
             VatLedgerEntry.direction,
             VatLedgerEntry.category,
-            func.lower(Supplier.name).nulls_first(),
+            # A category's supplier-less row (every one but purchases) first, so
+            # the grouping reads as before; then who was paid most.
+            VatLedgerEntry.supplier_id.is_(None).desc(),
+            func.coalesce(func.sum(VatLedgerEntry.gross_value), 0).desc(),
+            func.lower(Supplier.name),
         )
     )
     if date_from:

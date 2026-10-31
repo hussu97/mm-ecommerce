@@ -317,5 +317,6 @@ class PnlPurchaseOrdersResponse(BaseModel):
     net: float
     used_elsewhere: float
     in_stock: float
-    #: By shop day, newest first.
+    #: The supplier received most from first, its POs together and each
+    #: biggest first (newest breaks a tie).
     purchase_orders: list[PnlPurchaseOrderRow]

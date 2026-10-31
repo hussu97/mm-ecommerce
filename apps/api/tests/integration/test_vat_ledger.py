@@ -165,10 +165,11 @@ async def seeded(engine):
         )
 
         # Two suppliers the same day: purchases book one row per supplier.
-        # "b supplier" sorts after "a supplier", and after it is created, so
-        # the read's name order is what is under test, not insertion order.
+        # "b supplier" sorts after "A supplier" by name but spent more, and is
+        # created first — so the read's biggest-spend-first order is what is
+        # under test, not the name or the insertion order.
         for name, net, vat, pos in (
-            ("b supplier", Decimal("60"), Decimal("3"), 1),
+            ("b supplier", Decimal("150"), Decimal("7.5"), 2),
             ("A supplier", Decimal("100"), Decimal("5"), 2),
         ):
             supplier = Supplier(name=f"{MARKER} {name}", is_vat_deductible=True)
@@ -264,7 +265,7 @@ async def test_compute_window_splits_every_category(seeded):
     assert courier["net_value"] == Decimal("5.00")
     assert courier["vat_amount"] == Decimal("0.25")
 
-    # Purchases, one row per supplier, by name.
+    # Purchases, one row per supplier, the biggest spend first.
     raw = [
         r
         for r in rows
@@ -275,8 +276,8 @@ async def test_compute_window_splits_every_category(seeded):
         (r["supplier_name"], r["net_value"], r["vat_amount"], r["source_count"])
         for r in raw
     ] == [
+        (f"{MARKER} b supplier", Decimal("300.00"), Decimal("15.00"), 2),
         (f"{MARKER} A supplier", Decimal("200.00"), Decimal("10.00"), 2),
-        (f"{MARKER} b supplier", Decimal("60.00"), Decimal("3.00"), 1),
     ]
     assert all(r["supplier_id"] is not None for r in raw)
     # Nothing else carries a supplier.

@@ -10,6 +10,7 @@ audience as the cost-analysis reports.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,10 +150,25 @@ async def purchase_order_stock(
                 used_elsewhere=float(row.used_elsewhere),
                 in_stock=float(row.in_stock),
             )
-            for row in sorted(
-                report.rows, key=lambda r: (r.business_date, r.reference), reverse=True
-            )
+            for row in _biggest_supplier_first(report.rows)
         ],
+    )
+
+
+def _biggest_supplier_first(rows: list) -> list:
+    """The supplier paid most in the window first, its POs together under it,
+    each biggest first; the newest breaks a tie."""
+    by_supplier: dict[str, Decimal] = {}
+    for row in rows:
+        by_supplier[row.supplier] = by_supplier.get(row.supplier, Decimal(0)) + (
+            row.received
+        )
+    newest_first = sorted(
+        rows, key=lambda r: (r.business_date, r.reference), reverse=True
+    )
+    return sorted(
+        newest_first,
+        key=lambda r: (-by_supplier[r.supplier], r.supplier.lower(), -r.received),
     )
 
 
