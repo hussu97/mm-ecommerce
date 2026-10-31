@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import post_commit
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.core.money import money, to_decimal
 from app.models.base import utcnow
@@ -263,8 +264,9 @@ async def create_session(
         await order_lifecycle.transition(db, order, OrderStatusEnum.CONFIRMED)
         await db.flush()
         order_response = await order_service.to_response(db, order)
-        await email_service.send_order_confirmation(order_response)
-        await email_service.send_owner_order_notification(order_response)
+        # After the commit: the confirmation above holds the branch's inventory
+        # lock until then (see `_handle_payment_succeeded`).
+        await order_service.send_confirmation_emails_after_commit(db, order_response)
         return {
             "provider": "none",
             "session_id": None,
@@ -306,8 +308,9 @@ async def create_session(
         await db.flush()
         if not already_confirmed:
             order_response = await order_service.to_response(db, order)
-            await email_service.send_order_confirmation(order_response)
-            await email_service.send_owner_order_notification(order_response)
+            await order_service.send_confirmation_emails_after_commit(
+                db, order_response
+            )
         logger.info("Cash-on-delivery order confirmed: order=%s", order_number)
         return {
             "provider": COD,
@@ -1111,15 +1114,14 @@ async def _handle_payment_succeeded(
         payment_id,
     )
 
-    try:
-        await email_service.send_order_confirmation(order_response)
-        await email_service.send_owner_order_notification(order_response)
-    except Exception as exc:
-        logger.error(
-            "Failed to send order confirmation emails for %s: %s",
-            order.order_number,
-            exc,
-        )
+    # Sent once this transaction commits, not awaited inside it. Confirming took
+    # the order row `FOR UPDATE` and the branch's inventory advisory lock
+    # (`source_event_service.accept_order`), and both are held to the commit —
+    # so two Resend round-trips awaited here were a p50 of ~4s that every till
+    # sale at this branch posting stock spent queued behind a mail provider. A
+    # rollback (a 500 the gateway will retry) sends nothing, and the retry sends
+    # them once. The register push rides the same way (`push_service`).
+    await order_service.send_confirmation_emails_after_commit(db, order_response)
 
 
 #: Marks an attempt whose gateway reported a capture short of the order total:
@@ -1466,14 +1468,13 @@ async def _handle_payment_failed(
         event.error_message or event.error_code or "unstated",
     )
 
-    try:
-        await email_service.send_payment_failed(order_response)
-    except Exception as exc:
-        logger.error(
-            "Failed to send payment failed email for %s: %s",
-            order.order_number,
-            exc,
-        )
+    # After the commit, for the reason the confirmation is (see
+    # `_handle_payment_succeeded`): this transaction holds the order row.
+    await post_commit.defer(
+        db,
+        lambda: email_service.send_payment_failed(order_response),
+        name=f"payment-failed-email:{order.order_number}",
+    )
 
 
 async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) -> None:
@@ -1607,14 +1608,13 @@ async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) ->
         event.payment_id,
     )
 
-    try:
-        await email_service.send_refund_notification(order_response)
-    except Exception as exc:
-        logger.error(
-            "Failed to send refund notification for %s: %s",
-            order.order_number,
-            exc,
-        )
+    # After the commit: this handler holds the order row `FOR UPDATE` (see
+    # `_apply_event`), and an admin refund or cancellation queues on it.
+    await post_commit.defer(
+        db,
+        lambda: email_service.send_refund_notification(order_response),
+        name=f"refund-email:{order.order_number}",
+    )
 
 
 def _is_full_refund(order: Order, event: GatewayEvent) -> bool:

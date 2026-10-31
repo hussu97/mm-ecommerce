@@ -25,7 +25,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.core import heartbeat
+from app.core import heartbeat, post_commit
 from app.core.background import spawn_tracked
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory, engine, scheduler_engine
@@ -462,6 +462,9 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
         await stop_storefront_schedulers(background)
+        # Emails and pushes queued behind a commit (`post_commit`) that are still
+        # on the wire. Before the APNs client closes, which the pushes need.
+        await post_commit.drain()
         # Close the reused APNs HTTP/2 client (F-POS-12) so its connection is
         # released cleanly rather than on GC after the loop is gone.
         from app.services.providers import apns_provider

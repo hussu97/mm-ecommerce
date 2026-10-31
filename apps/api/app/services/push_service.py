@@ -28,7 +28,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import post_commit
 from app.core.config import settings
+from app.core.database import AsyncSessionFactory
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.device_push_token import DevicePushToken
 from app.models.order import Order
@@ -167,6 +169,49 @@ async def _send_to_branch(
             )
 
     return delivered
+
+
+async def _send_after_commit(
+    db: AsyncSession,
+    branch_id: uuid.UUID | None,
+    *,
+    payload: dict,
+    collapse_id: str,
+) -> None:
+    """
+    `_send_to_branch`, once *db* has committed — and not at all if it rolls back.
+
+    For the two pushes sent from inside transactions other requests queue on: an
+    order confirmed by a payment webhook (holding the order row and the branch's
+    inventory advisory lock to the commit) and a rider assigned by a courier's
+    webhook (holding the delivery). An APNs round-trip awaited in there is one
+    every till sale at that branch waits behind. It is also the right moment on
+    its own terms: the push wakes a register that immediately reads the order
+    back, and before the commit there was nothing yet for it to read.
+
+    The payload is built by the caller, in the transaction; only the network goes
+    later. The tokens are read, and dead ones retired, on a session of this
+    task's own — the request's belongs to the next request by then — which is
+    why this, unusually, commits: it is the whole of that session's work.
+    """
+    if branch_id is None or not is_enabled():
+        if branch_id is not None:
+            logger.info("APNs is not configured; not notifying branch %s", branch_id)
+        return
+
+    async def _deliver() -> None:
+        async with AsyncSessionFactory() as session:
+            sent = await _send_to_branch(
+                session, branch_id, payload=payload, collapse_id=collapse_id
+            )
+            # This task's own session, not a caller's (CLAUDE.md rule 2): the
+            # dead-token retirements are the whole of its work.
+            await session.commit()
+        logger.info(
+            "Push %s reached %s register(s) at branch %s", collapse_id, sent, branch_id
+        )
+
+    await post_commit.defer(db, _deliver, name=f"push:{collapse_id}")
 
 
 async def notify_transfer_created(
@@ -396,7 +441,7 @@ def _customer_line(order: Order) -> str | None:
     return " · ".join(parts) if parts else None
 
 
-async def notify_order_placed(db: AsyncSession, order: Order) -> int:
+async def notify_order_placed(db: AsyncSession, order: Order) -> None:
     """
     A new order has landed on this branch's register — website or aggregator.
 
@@ -410,9 +455,11 @@ async def notify_order_placed(db: AsyncSession, order: Order) -> int:
     notification sound — so the push carries the *event*, and the app plays and
     repeats the sound itself once it is open. A push alone can only be the
     doorbell, never the alarm.
+
+    Sent after the caller's transaction commits (`_send_after_commit`).
     """
     if not order.branch_id:
-        return 0
+        return
 
     lines = [
         line
@@ -445,20 +492,13 @@ async def notify_order_placed(db: AsyncSession, order: Order) -> int:
         # the app open.
         wake_the_app=True,
     )
-    sent = await _send_to_branch(
+    await _send_after_commit(
         db,
         order.branch_id,
         payload=payload,
         # One order, one notification, however many times we are asked to send.
         collapse_id=f"order-{order.order_number}",
     )
-    logger.info(
-        "Notified %s register(s) at branch %s about %s",
-        sent,
-        order.branch_id,
-        order.order_number,
-    )
-    return sent
 
 
 async def notify_rider_assigned(
@@ -468,7 +508,7 @@ async def notify_rider_assigned(
     rider_name: str | None = None,
     rider_phone: str | None = None,
     assignment: int = 1,
-) -> int:
+) -> None:
     """
     A courier has a name and is on the way to collect — or a different one is.
 
@@ -489,9 +529,12 @@ async def notify_rider_assigned(
     the first driver's alert with the second's — fine on a locked screen and
     wrong in a notification list somebody scrolls back through to work out who
     they spoke to.
+
+    Sent after the courier webhook's transaction commits (`_send_after_commit`),
+    so the slip the register prints off it reads a committed driver.
     """
     if not order.branch_id:
-        return 0
+        return
 
     reassigned = assignment > 1
     who = rider_name or "A rider"
@@ -521,7 +564,7 @@ async def notify_rider_assigned(
             "requires_acknowledgement": False,
         },
     )
-    return await _send_to_branch(
+    await _send_after_commit(
         db,
         order.branch_id,
         payload=payload,
