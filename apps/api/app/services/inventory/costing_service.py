@@ -10,7 +10,10 @@ into ``inventory_cost_layers``, ``inventory_cost_layer_consumptions``,
   every posting. Runs the engine's fast path from the current projection. A
   refusal that only re-costs history (``costing_engine.DEFERRABLE_REASONS``:
   a receipt pricing waiting stock, an inflow onto negative stock, stock of
-  unknown cost, an overage over provisional stock) is **deferred**: the posting
+  unknown cost, an overage over provisional stock) is **deferred** when the
+  postponed replay would re-cost history alone, so no booked figure can differ
+  from an inline replay's (:func:`_why_not_exact` — in practice a batch or a
+  priced delivery landing on stock that was sold ahead of it): the posting
   is booked at what the fast path knows — its own cost exactly as a replay sets
   it, or an estimate flagged provisional — and its warehouse is queued in
   ``inventory_costing_settle``. Any other refusal replays the posting's whole
@@ -1081,6 +1084,79 @@ async def _write_fast(
     await db.flush()
 
 
+#: Ledger lines whose provisional cost lives on in something still current: a
+#: batch input prices the batch (its layers, its level's last cost), a transfer
+#: send prices the receiving branch's layer when it is booked in.
+_FEEDS_FORWARD = (
+    InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value,
+    InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value,
+    InventoryTransactionTypeEnum.TRANSFER_SEND.value,
+)
+
+
+async def _why_not_exact(
+    db: AsyncSession,
+    lines: list[LedgerLine],
+    projection: Projection,
+    seeds: list[SeedState],
+) -> str | None:
+    """Why deferring this posting's replay could change a booked figure, or None.
+
+    Every posting books figures that are frozen with the ledger line
+    (``inventory_transaction_items.total_cost`` / ``balance_after_value`` /
+    ``previous_unit_cost``, ``inventory_transactions.total_cost``) and copies
+    the level's average into the next postings' ``unit_cost`` (a sale, a
+    produce, a count, a transfer send, a report's variance). A deferral is
+    only allowed when the replay it postpones would re-cost **history alone**
+    — nothing a later posting reads before the settle — so every one of those
+    figures is the one the inline replay would have booked:
+
+    * the posting's own costs are firm (no estimate the replay could revise:
+      this excludes stock of unknown cost, an overage over provisional stock
+      and a batch made from provisional inputs);
+    * no provisional layer is still on the shelf for an item this posting adds
+      to (the inline replay would re-price it, and every later draw and the
+      level average with it);
+    * none of the provisional history it prices fed a batch or a transfer send
+      (the batch's layers and the receiving branch read those costs).
+
+    Otherwise the replay runs inline, as before.
+    """
+    in_flight = {line.line_id for line in lines}
+    if any(
+        cost.is_provisional
+        for line_id, cost in projection.line_costs.items()
+        if line_id in in_flight
+    ):
+        return "its own cost is an estimate"
+    inflow = {(line.item_id, line.warehouse_id) for line in lines if line.delta > 0}
+    for seed in seeds:
+        if (seed.item_id, seed.warehouse_id) in inflow and any(
+            layer.provisional and layer.remaining > 0 for layer in seed.layers
+        ):
+            return "provisional stock still on the shelf"
+    t, i, c = (
+        InventoryTransaction,
+        InventoryTransactionItem,
+        InventoryCostLayerConsumption,
+    )
+    feeds_forward = await db.scalar(
+        select(func.count())
+        .select_from(c)
+        .join(i, i.id == c.consuming_line_id)
+        .join(t, t.id == i.transaction_id)
+        .where(
+            c.item_id.in_({item for item, _ in inflow}),
+            c.warehouse_id == lines[0].warehouse_id,
+            c.cost_is_provisional.is_(True),
+            t.type.in_(_FEEDS_FORWARD),
+        )
+    )
+    if feeds_forward:
+        return "it prices a batch input or a transfer send"
+    return None
+
+
 async def cost_posting(
     db: AsyncSession,
     *,
@@ -1091,9 +1167,10 @@ async def cost_posting(
 
     ``levels`` are the level rows the poster already locked and moved, keyed by
     (item, warehouse). The fast path starts from the stored projection. A
-    deferrable refusal is booked at what the fast path knows and the warehouse
-    queued for the settle loop; any other refusal (or any refusal inside
-    :func:`inline_replay`) replays the posting's warehouse from scratch here.
+    deferrable refusal whose deferral is *exact* (:func:`_why_not_exact`) is
+    booked at what the fast path knows and the warehouse queued for the settle
+    loop; any other refusal (or any refusal inside :func:`inline_replay`)
+    replays the posting's warehouse from scratch here.
     """
     if not lines:
         return {}
@@ -1101,11 +1178,12 @@ async def cost_posting(
     started = time.monotonic()
     warehouse_id = lines[0].warehouse_id
     keys = {(line.item_id, line.warehouse_id) for line in lines}
+    seeds = await _seeds(db, keys, lines, levels)
     engine = CostingEngine(
         cutover_sequence=await cutover_sequence(db),
         fast=True,
         tolerant=not _inline_replays.get(),
-        seeds=await _seeds(db, keys, lines, levels),
+        seeds=seeds,
         external_group_inputs=await _group_inputs(db, lines),
         external_sends=await _external_sends(db, lines, {warehouse_id}),
     )
@@ -1113,6 +1191,10 @@ async def cost_posting(
         for line in sorted(lines, key=lambda row: row.sort_key):
             engine.apply(line)
         projection = engine.project()
+        if engine.deferred:
+            why = await _why_not_exact(db, lines, projection, seeds)
+            if why is not None:
+                raise NeedsReplay("; ".join(engine.deferred), detail=why)
     except NeedsReplay as refusal:
         result = await replay(db, warehouse_ids={warehouse_id}, in_flight=lines)
         await _mark_dirty(db, warehouse_id)

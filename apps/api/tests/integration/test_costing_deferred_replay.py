@@ -365,6 +365,16 @@ async def _scenario(Session, b, user, *, settle_midway: bool) -> None:
             db, b, user, T.PURCHASING, "Flour", "300", "0.02", purchase_order_id=b.po
         )
         await db.commit()
+    async with Session() as db:
+        # Butter oversold again, then a delivery prices those sales — the
+        # everyday case — left unsettled at the end of the day's postings.
+        await _post(db, b, user, T.CONSUMPTION_FROM_ORDERS, "Butter", "2000")
+        await db.commit()
+    async with Session() as db:
+        await _post(
+            db, b, user, T.PURCHASING, "Butter", "100", "0.05", purchase_order_id=b.po
+        )
+        await db.commit()
 
 
 def _sorted(rows) -> list:
@@ -489,11 +499,36 @@ async def _snapshot(db, b) -> dict:
         .scalars()
         .all()
     )
+    # The booked figures, frozen with the ledger line when it posts: never
+    # restated by any replay, so they must be what the inline path booked.
+    booked_rows = (
+        await db.execute(
+            select(InventoryTransactionItem, InventoryTransaction.total_cost)
+            .join(
+                InventoryTransaction,
+                InventoryTransaction.id == InventoryTransactionItem.transaction_id,
+            )
+            .where(InventoryTransaction.branch_id == b.branch.id)
+        )
+    ).all()
+    booked = _sorted(
+        (
+            k(line.id),
+            D(str(line.unit_cost or 0)),
+            D(str(line.total_cost or 0)),
+            D(str(line.previous_unit_cost or 0)),
+            D(str(line.balance_after_quantity or 0)),
+            D(str(line.balance_after_value or 0)),
+            D(str(transaction_total or 0)),
+        )
+        for line, transaction_total in booked_rows
+    )
     return {
         "line_costs": line_costs,
         "layers": layers,
         "consumptions": consumptions,
         "levels": levels,
+        "booked": booked,
     }
 
 
@@ -530,8 +565,9 @@ async def test_deferred_postings_settle_to_the_inline_projection(
     replays.clear()
     await _scenario(Session, ids.deferred, ids.user, settle_midway=settle_midway)
     async with Session() as db:
-        # Not one replay ran inside a request (the mid-way settle is the loop's).
-        assert len(replays) == (1 if settle_midway else 0)
+        # Only the refusals whose deferral could change a booked figure still
+        # replayed inside their request (plus the loop's mid-way settle).
+        assert len(replays) < inline_replays
         queued = await _queued(db, ids.deferred.wh)
         assert queued is not None
         assert queued.reason
@@ -551,7 +587,7 @@ async def test_deferred_postings_settle_to_the_inline_projection(
         inline = await _snapshot(db, ids.inline)
         deferred = await _snapshot(db, ids.deferred)
     assert inline["line_costs"], "the scenario posted nothing"
-    for part in ("line_costs", "layers", "consumptions", "levels"):
+    for part in ("line_costs", "layers", "consumptions", "levels", "booked"):
         assert deferred[part] == inline[part], part
 
 

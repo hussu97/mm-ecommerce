@@ -543,11 +543,10 @@ async def post_transaction(
         cost = line_costs[line.id]
         # Booked at posting time and immutable from here; the projection
         # (inventory_line_costs) carries what the line is worth as prices land.
-        # A posting whose replay was deferred books the fast path's figure: the
-        # line's own cost exactly when it is a priced inflow or an issue, an
-        # estimate (flagged provisional) only for stock of unknown cost — and
-        # draws made while an earlier deferral is unsettled book the cost the
-        # shelf had then. The settle replay restates the projection, never this.
+        # A replay is deferred only when it would re-cost history alone
+        # (costing_service._why_not_exact), so what is booked here — and every
+        # level average a later posting copies — is what an inline replay
+        # would have booked; the settle replay restates the projection only.
         line.total_cost = _money(cost.total_cost)
         line.balance_after_quantity = _q(level.quantity)
         line.balance_after_value = _money(cost.running_value)
