@@ -1,24 +1,32 @@
 """Build and read the cached cross-channel customer directory.
 
-The cache is invalidated by database triggers on ``users`` and ``orders``.  A
-customer read takes the single state row under lock and refreshes only when a
-source has changed, keeping customer-list pagination cheap while avoiding a
-second mutable customer source of truth.
+Statement triggers on ``users`` and ``orders`` append to
+``customer_cache_changes``; they never touch a shared row, so writers do not
+wait on one another (migration 317 -- the old dirty-flag ``UPDATE`` serialised
+every order write in the system). The rebuild runs in the scheduler process
+(`run_forever`), never in a request: it folds the queue into
+``customer_cache_state.dirty`` and rebuilds when a reader has asked for a fresh
+directory (`request_rebuild`) or the cache is older than `_MAX_STALENESS`.
+Readers serve the cache as it stands.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import advisory_lock, heartbeat
+from app.core.cache import cache_delete, cache_get, cache_set
 from app.core.phone import describe_phone
 from app.models.customer_cache import (
     CustomerCache,
@@ -29,6 +37,8 @@ from app.models.customer_cache import (
 )
 from app.models.order import Order, OrderStatusEnum
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 _SPACE = re.compile(r"\s+")
 _CUSTOMER_NAMESPACE = uuid.UUID("71af5e62-7fdd-4ff7-923e-e274328a56d7")
@@ -195,8 +205,49 @@ def _latest_value(sources: list[_Source], attribute: str) -> str | None:
     return None
 
 
-async def refresh_if_dirty(db: AsyncSession) -> None:
-    """Rebuild the cache once per source change, atomically within this request."""
+#: Set by a directory read, consumed by the scheduler's next pass. A Redis flag,
+#: not a row: a request must never wait on (or lock against) the rebuild.
+_REBUILD_WANTED_KEY = "customer_cache:rebuild_wanted"
+#: How old a changed-but-unviewed directory may grow before the scheduler
+#: rebuilds it anyway -- so the first read after a quiet spell is not hours
+#: stale, and the change queue never grows without bound.
+_MAX_STALENESS = timedelta(minutes=30)
+_TICK_SECONDS = 15
+#: A wedged rebuild must not pin the scheduler connection.
+_TICK_BUDGET_SECONDS = 300
+_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4816
+
+#: The order columns a rebuild reads. A full `select(Order)` hydrated every
+#: column and fired the model's selectin relationships for ~10k orders.
+_ORDER_COLUMNS = (
+    Order.id,
+    Order.user_id,
+    Order.email,
+    Order.customer_name,
+    Order.customer_phone,
+    Order.customer_phone_country,
+    Order.shipping_address_snapshot,
+    Order.status,
+    Order.total,
+    Order.created_at,
+    Order.source,
+    Order.aggregator_channel,
+)
+
+
+async def request_rebuild() -> None:
+    """Ask the scheduler for a fresh directory. Never blocks, never raises."""
+    await cache_set(_REBUILD_WANTED_KEY, 1, ttl=3600)
+
+
+async def refresh(db: AsyncSession, *, force: bool = False) -> bool:
+    """One scheduler pass: fold queued source changes, and rebuild when wanted.
+
+    Returns whether it rebuilt. Correct under concurrent writers: a change row is
+    deleted here only once its writer has committed, and the rebuild's reads
+    start after that delete, so they see every change it consumed. A writer
+    still in flight keeps its row and dirties the next pass.
+    """
     state = await db.scalar(
         select(CustomerCacheState)
         .where(CustomerCacheState.id.is_(True))
@@ -206,10 +257,61 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
         # The migration seeds this row. Refusing to return a partial directory if
         # an operator has manually damaged it is safer than pretending it is empty.
         raise RuntimeError("customer cache state is missing")
+    folded = await db.scalar(
+        text(
+            "WITH gone AS (DELETE FROM customer_cache_changes RETURNING 1) "
+            "SELECT count(*) FROM gone"
+        )
+    )
+    if folded:
+        state.dirty = True
     if not state.dirty:
-        return
+        return False
 
-    orders = (await db.scalars(select(Order))).all()
+    # Every rebuild re-inserts the whole directory, so its newest row is when
+    # it was last rebuilt (None: never, or nobody to list).
+    rebuilt_at = await db.scalar(select(func.max(CustomerCache.created_at)))
+    wanted = (
+        force
+        or rebuilt_at is None
+        or datetime.now(timezone.utc) - rebuilt_at >= _MAX_STALENESS
+        or await cache_get(_REBUILD_WANTED_KEY) is not None
+    )
+    if not wanted:
+        await db.flush()
+        return False
+    # Cleared before rebuilding: a read that lands mid-rebuild re-arms it.
+    await cache_delete(_REBUILD_WANTED_KEY)
+    await _rebuild(db)
+    state.dirty = False
+    await db.flush()
+    return True
+
+
+async def run_forever() -> None:
+    """The directory rebuild loop (scheduler process only)."""
+    logger.info("Customer directory loop started (every %ss)", _TICK_SECONDS)
+    while True:
+        try:
+            await heartbeat.beat("customer_cache")
+            async with advisory_lock.held_session(
+                _ADVISORY_LOCK_KEY, name="customer directory"
+            ) as db:
+                if db is not None:
+                    async with asyncio.timeout(_TICK_BUDGET_SECONDS):
+                        await refresh(db)
+                        await db.commit()
+        except asyncio.CancelledError:
+            logger.info("Customer directory loop stopping")
+            raise
+        except Exception:  # noqa: BLE001 — a bad pass must not kill the loop
+            logger.exception("Customer directory rebuild failed")
+        await asyncio.sleep(_TICK_SECONDS)
+
+
+async def _rebuild(db: AsyncSession) -> None:
+    """Replace the directory, its order membership and delivery points."""
+    orders = (await db.execute(select(*_ORDER_COLUMNS))).all()
     accounts = (
         await db.scalars(
             select(User).where(
@@ -269,6 +371,9 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
         # separate derived cache and must be remapped, without re-geocoding.
         polygon_state.dirty = True
 
+    customers: list[dict] = []
+    memberships: list[dict] = []
+    points: list[dict] = []
     for component in _components(sources):
         component_key = "|".join(sorted(source.key for source in component))
         customer_id = uuid.uuid5(_CUSTOMER_NAMESPACE, component_key)
@@ -282,23 +387,23 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
         total_revenue = sum((Decimal(order.total) for order in billable), Decimal("0"))
         order_count = len(billable)
         dates = [order.created_at for order in billable]
-        db.add(
-            CustomerCache(
-                id=customer_id,
-                name=_latest_value(component, "name"),
-                email=_latest_value(component, "email"),
-                phone=_latest_value(component, "phone"),
-                phone_country=_latest_value(component, "phone_country"),
-                order_count=order_count,
-                earliest_order_at=min(dates) if dates else None,
-                latest_order_at=max(dates) if dates else None,
-                total_revenue=total_revenue,
-                aov=(total_revenue / order_count) if order_count else Decimal("0"),
-            )
+        customers.append(
+            {
+                "id": customer_id,
+                "name": _latest_value(component, "name"),
+                "email": _latest_value(component, "email"),
+                "phone": _latest_value(component, "phone"),
+                "phone_country": _latest_value(component, "phone_country"),
+                "order_count": order_count,
+                "earliest_order_at": min(dates) if dates else None,
+                "latest_order_at": max(dates) if dates else None,
+                "total_revenue": total_revenue,
+                "aov": (total_revenue / order_count) if order_count else Decimal("0"),
+            }
         )
         for source in order_sources:
-            db.add(
-                CustomerOrderCache(customer_id=customer_id, order_id=source.order.id)
+            memberships.append(
+                {"customer_id": customer_id, "order_id": source.order.id}
             )
             # Counter/pickup orders have no useful drop-off, and a cancelled
             # order neither belongs in customer revenue nor in delivery demand.
@@ -308,21 +413,28 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
             if coordinates is None:
                 continue
             latitude, longitude = coordinates
-            db.add(
-                CustomerDeliveryAreaCache(
-                    customer_id=customer_id,
-                    order_id=source.order.id,
-                    latitude=latitude,
-                    longitude=longitude,
-                    order_created_at=source.order.created_at,
-                    order_value=Decimal(source.order.total),
-                    source_channel=(
+            points.append(
+                {
+                    "customer_id": customer_id,
+                    "order_id": source.order.id,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "order_created_at": source.order.created_at,
+                    "order_value": Decimal(source.order.total),
+                    "source_channel": (
                         source.order.aggregator_channel or "aggregator"
                         if source.order.source == "aggregator"
                         else source.order.source
                     ),
-                )
+                }
             )
 
-    state.dirty = False
-    await db.flush()
+    # Executemany batches rather than ~13k single-row ORM flushes. Parents
+    # first: the membership and point rows reference `customer_cache`.
+    for model, rows in (
+        (CustomerCache, customers),
+        (CustomerOrderCache, memberships),
+        (CustomerDeliveryAreaCache, points),
+    ):
+        if rows:
+            await db.execute(insert(model), rows)

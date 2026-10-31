@@ -33,7 +33,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 
 from app.core.background import report_result
 from app.core.config import settings
@@ -230,25 +230,30 @@ async def sweep_pending_pushouts(db, *, actor: str = "reconcile") -> int:
     # The most recent status event per order — its `at` is "how long has it sat
     # here" and its `source` is "who put it here". Read from the events, the way
     # the GrubOps sweeps do; there is no `*_at` column.
+    #
+    # A LATERAL per candidate order, not a `DISTINCT ON` over the whole events
+    # table: that sorted every event ever written on each GrubOps tick (1.5s, a
+    # work_mem spill, the box's single largest DB CPU cost). The `updated_at`
+    # bound only narrows the candidates — every transition writes the order, so
+    # an order whose latest event is inside the lookback was written inside it
+    # too; the slack covers an event stamped a beat after its order row.
     latest = (
-        select(
-            OrderStatusEvent.order_id.label("order_id"),
-            OrderStatusEvent.source.label("source"),
-            OrderStatusEvent.at.label("at"),
-        )
-        .order_by(OrderStatusEvent.order_id, OrderStatusEvent.at.desc())
-        .distinct(OrderStatusEvent.order_id)
-        .subquery()
+        select(OrderStatusEvent.source.label("source"), OrderStatusEvent.at.label("at"))
+        .where(OrderStatusEvent.order_id == Order.id)
+        .order_by(OrderStatusEvent.at.desc())
+        .limit(1)
+        .lateral()
     )
 
     rows = (
         await db.execute(
             select(Order, GrubOpsOrderMap)
             .join(GrubOpsOrderMap, GrubOpsOrderMap.mm_order_id == Order.id)
-            .join(latest, latest.c.order_id == Order.id)
+            .join(latest, true())
             .where(
                 Order.source == OrderSourceEnum.AGGREGATOR.value,
                 Order.status.in_(list(_MIRRORED)),
+                Order.updated_at >= cutoff - timedelta(minutes=5),
                 GrubOpsOrderMap.foodics_order_id.isnot(None),
                 latest.c.source != StatusSourceEnum.AGGREGATOR.value,
                 latest.c.at >= cutoff,

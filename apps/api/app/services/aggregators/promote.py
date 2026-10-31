@@ -1808,7 +1808,11 @@ async def _record_fulfilment(db: AsyncSession, order: Order) -> None:
 
 
 async def promote_channel(
-    db: AsyncSession, channel: str, *, since: date | None = None
+    db: AsyncSession,
+    channel: str,
+    *,
+    since: date | None = None,
+    commit_each: bool = False,
 ) -> int:
     """Promote the channel's recent new-or-changed orders. Returns MM orders touched.
 
@@ -1831,6 +1835,9 @@ async def promote_channel(
     30-day promote window still promote (F-AGG-8 — 831 Keeta orders sat permanently
     unpromotable because the daily clip never reached them). Stock is still gated to
     the tight sales window regardless, so an old backfill never moves inventory.
+
+    `commit_each` commits after every order, for a caller that owns its session
+    (the scheduler sweep, on `held_session`). See the line that does it.
     """
     today = datetime.now(_TZ).date()
     default_cutoff = (
@@ -1867,6 +1874,16 @@ async def promote_channel(
             async with db.begin_nested():
                 draw_stock = (agg.business_date or "") >= stock_cutoff
                 promoted = await promote_order(db, agg, draw_stock=draw_stock)
+            if commit_each:
+                # A service committing its caller's session, on purpose (convention
+                # 2): promoting an order takes the order-write locks — its `orders`
+                # row, the branch's check-number and inventory advisory locks —
+                # and one transaction per channel held them until the whole pass
+                # ended, minutes on a Keeta push, while counter sales, accepts and
+                # closes queued behind them. Per order, like F-AGG-18. Safe: the
+                # sweep's lock is session-level and survives the commit, and
+                # promotion is idempotent if the pass dies part-way.
+                await db.commit()
             if promoted is not None:
                 count += 1
         except _isolation._SYSTEMIC_DB_ERRORS:

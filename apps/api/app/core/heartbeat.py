@@ -37,6 +37,7 @@ LOOP_NAMES = (
     "settled_order_sweeper",
     "auto_availability",
     "replenishment",
+    "customer_cache",
     "vat_ledger_refresh",
     "branch_hours_sync",
     "busy_sync",

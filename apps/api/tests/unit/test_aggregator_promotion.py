@@ -2333,3 +2333,41 @@ def test_commission_is_left_alone_unless_the_gap_is_settled_rounding():
         )
         is None
     )
+
+
+async def test_the_scheduler_promote_pass_commits_per_order(monkeypatch):
+    """One transaction per channel held every promoted order's write locks until
+    the pass ended — minutes on a Keeta push — so the sweep commits per order.
+    Other callers (a ranged backfill) keep owning their transaction."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.aggregators import promote
+
+    orders = [
+        SimpleNamespace(business_date="2026-10-31", external_order_id=str(i))
+        for i in range(3)
+    ]
+
+    def _db():
+        db = MagicMock()
+        db.scalars = AsyncMock(return_value=SimpleNamespace(all=lambda: orders))
+        db.commit = AsyncMock()
+
+        @asynccontextmanager
+        async def nested():
+            yield
+
+        db.begin_nested = nested
+        return db
+
+    monkeypatch.setattr(promote, "promote_order", AsyncMock(return_value=object()))
+
+    swept = _db()
+    assert await promote.promote_channel(swept, "keeta", commit_each=True) == 3
+    assert swept.commit.await_count == 3
+
+    ranged = _db()
+    assert await promote.promote_channel(ranged, "keeta") == 3
+    ranged.commit.assert_not_awaited()

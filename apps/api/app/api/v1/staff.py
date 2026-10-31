@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -366,12 +367,13 @@ async def _assert_pin_unique(
     if exclude_id is not None:
         stmt = stmt.where(User.id != exclude_id)
     others = list((await db.execute(stmt)).scalars().unique().all())
-    for other in others:
-        if other.pin_hash and verify_password(pin, other.pin_hash):
-            raise ConflictError(
-                "That PIN is already used by another staff member at one of "
-                "these branches. Choose a different PIN."
-            )
+    hashes = [other.pin_hash for other in others if other.pin_hash]
+    # One bcrypt per colleague: off the event loop (see `pin_login`).
+    if await asyncio.to_thread(lambda: any(verify_password(pin, h) for h in hashes)):
+        raise ConflictError(
+            "That PIN is already used by another staff member at one of "
+            "these branches. Choose a different PIN."
+        )
 
 
 async def _sync_branches(
@@ -702,7 +704,10 @@ async def pin_login(
     )
     candidates = list((await db.execute(stmt)).scalars().unique().all())
 
-    matched = _match_pin(candidates, data.pin, data.user_id)
+    # bcrypt (cost 12) is ~0.33s of CPU per hash, and without a `user_id` this
+    # scans every PIN holder at the branch. Off the event loop, or the single
+    # register worker freezes for every till while one person signs in.
+    matched = await asyncio.to_thread(_match_pin, candidates, data.pin, data.user_id)
 
     if matched is None:
         raise UnauthorizedError("Incorrect PIN for this branch")

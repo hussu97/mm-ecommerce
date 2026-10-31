@@ -99,7 +99,7 @@ async def list_customers(
     that order-date window, matching the dashboard and orders list. With no
     range, the precomputed all-time cache is read directly.
     """
-    await customer_service.refresh_if_dirty(db)
+    await customer_service.request_rebuild()
 
     bounds = await business_day_service.range_bounds(db, date_from, date_to)
     if bounds is None:
@@ -224,7 +224,7 @@ async def customer_delivery_areas(
     customer tabs one workspace, while map cells stay aggregate-only and never
     expose individual customer coordinates.
     """
-    await customer_service.refresh_if_dirty(db)
+    await customer_service.request_rebuild()
     bounds = await business_day_service.range_bounds(db, date_from, date_to)
     return CustomerDeliveryAreas.model_validate(
         await customer_delivery_area_service.load(
@@ -245,7 +245,7 @@ async def list_customer_orders(
     _admin: UserModel = Depends(require("customers.read")),
 ) -> PaginatedCustomerOrders:
     """Return the actual orders that established one cached customer identity."""
-    await customer_service.refresh_if_dirty(db)
+    await customer_service.request_rebuild()
     if await db.get(CustomerCache, customer_id) is None:
         raise NotFoundError("Customer not found")
 

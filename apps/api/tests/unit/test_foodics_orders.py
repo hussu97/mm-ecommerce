@@ -306,6 +306,22 @@ async def test_an_order_already_pushed_for_its_state_is_skipped():
 
 
 @pytest.mark.asyncio
+async def test_the_retry_sweep_reads_the_latest_event_per_candidate_not_the_table():
+    """The latest event comes from a LATERAL per narrowed candidate order. A
+    `DISTINCT ON` over every status event sorted the whole table on each GrubOps
+    tick and was the box's largest single DB CPU cost."""
+    from sqlalchemy.dialects import postgresql
+
+    db = _sweep_db([])
+    with patch.object(f, "is_enabled", return_value=True):
+        await f.sweep_pending_pushouts(db)
+    sql = str(db.execute.await_args.args[0].compile(dialect=postgresql.dialect()))
+    assert "JOIN LATERAL" in sql
+    assert "DISTINCT ON" not in sql
+    assert "orders.updated_at >=" in sql
+
+
+@pytest.mark.asyncio
 async def test_the_retry_sweep_is_a_no_op_when_disabled():
     db = _sweep_db([])
     with patch.object(f, "is_enabled", return_value=False):

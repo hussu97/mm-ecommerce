@@ -68,6 +68,7 @@ from .custom_order import (  # noqa: F401
 from .custom_order_enquiry import CustomOrderEnquiry  # noqa: F401
 from .customer_cache import (  # noqa: F401
     CustomerCache,
+    CustomerCacheChange,
     CustomerCacheState,
     CustomerDeliveryAreaCache,
     CustomerDeliveryAreaPolygonCache,
