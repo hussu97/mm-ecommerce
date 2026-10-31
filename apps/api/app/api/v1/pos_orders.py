@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy import exists, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, raiseload, selectinload
 
 from app.core import search as search_text
 from app.core import trading_hours
@@ -73,7 +73,7 @@ from app.services import (
 )
 from app.services.delivery import address_format, driver_proximity
 from app.services.orders import order_lifecycle, order_service
-from app.services.pos import pos_order_service
+from app.services.pos import pos_order_service, pos_orders_etag
 
 logger = logging.getLogger(__name__)
 
@@ -99,15 +99,31 @@ def _list_load_options():
         selectinload(Order.order_charges),
         selectinload(Order.order_discounts),
         selectinload(Order.order_taxes),
+        # The one-row relationships ride the order query as LEFT OUTER JOINs
+        # rather than a round trip each: at most one row per order (unique
+        # `order_id`, or a many-to-one), so the join cannot multiply the rows
+        # the LIMIT counts. This is the register's most-polled query.
+        #
         # `_serialise` reads the courier and zone off this, and a lazy load
         # inside an async request raises MissingGreenlet rather than quietly
         # issuing a second query.
-        selectinload(Order.delivery),
+        joinedload(Order.delivery),
         # The return PIN of a marketplace order coming back (`return_info`).
-        selectinload(Order.marketplace_return),
-        # The branch's trading hours decide whether a terminal may accept an
-        # order by itself.
-        selectinload(Order.branch),
+        joinedload(Order.marketplace_return),
+        # The receipt's trade licence (`legal_entity`) — `selectin` on the
+        # model, which would be one more round trip here.
+        joinedload(Order.legal_entity),
+        # The branch's coordinates, for the driver's distance. Its own
+        # `selectin` maps (aggregators, Foodics, GrubOps, channel tax) are four
+        # more round trips nothing in the response reads — refused loudly
+        # rather than skipped quietly, so a serialiser that starts reading one
+        # fails its test instead of rendering an empty list.
+        joinedload(Order.branch).options(
+            raiseload(Branch.channel_tax_configs),
+            raiseload(Branch.aggregator_maps),
+            raiseload(Branch.foodics_map),
+            raiseload(Branch.grubops_location),
+        ),
     )
 
 
@@ -270,7 +286,26 @@ async def list_orders(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("orders.read")),
+    # Injected by FastAPI; defaulted so a test can call the handler directly.
+    request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
 ):
+    # A register that opted in (`X-POS-ETag: 1`) and still holds the answer is
+    # told so before a single order is loaded — see `pos_orders_etag`. The
+    # generation is read *before* the orders: a write that lands in between
+    # bumps it after this read, so the token handed out below can only ever be
+    # older than the rows it describes, never newer.
+    etag_key = None
+    if request is not None and pos_orders_etag.wants_etag(request.headers):
+        etag_key = await pos_orders_etag.list_key(
+            branch_id, request.query_params.multi_items()
+        )
+        held = etag_key and pos_orders_etag.matching_etag(
+            request.headers.get("If-None-Match"), etag_key
+        )
+        if held:
+            return _not_modified(held)
+
     # An unpaid storefront order is not on this list. See
     # `pos_order_service.paid_for_clause` — the counter is told about a website
     # order when the money lands, not when the checkout page was opened.
@@ -337,7 +372,23 @@ async def list_orders(
         stmt.options(*_list_load_options()), limit=limit, offset=offset
     )
     orders = list((await db.execute(stmt)).scalars().unique().all())
-    return [_serialise(o) for o in orders]
+    payload = [_serialise(o) for o in orders]
+    if etag_key and response is not None:
+        _tag(response, etag_key, pos_orders_etag.valid_until(orders))
+    return payload
+
+
+def _not_modified(etag: str) -> Response:
+    return Response(
+        status_code=status.HTTP_304_NOT_MODIFIED,
+        headers={"ETag": etag, "Cache-Control": "no-cache"},
+    )
+
+
+def _tag(response: Response, key: str, until: int) -> None:
+    response.headers["ETag"] = pos_orders_etag.make_etag(key, until)
+    # Revalidate every time: the register decides when to ask, not a cache.
+    response.headers["Cache-Control"] = "no-cache"
 
 
 @router.post("", response_model=PosOrderResponse, status_code=status.HTTP_201_CREATED)
@@ -372,8 +423,30 @@ async def get_order(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("orders.read")),
+    request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
 ):
-    return _serialise(await _load(db, order_id))
+    # The driver-slip poll's conditional read, as on the list. The order's
+    # branch names the generation; one indexed column read, against the ten
+    # queries a full load costs. An id that matches nothing falls through to
+    # the ordinary 404.
+    etag_key = None
+    if request is not None and pos_orders_etag.wants_etag(request.headers):
+        row = (
+            await db.execute(select(Order.branch_id).where(Order.id == order_id))
+        ).first()
+        if row is not None:
+            etag_key = await pos_orders_etag.detail_key(order_id, row.branch_id)
+            held = etag_key and pos_orders_etag.matching_etag(
+                request.headers.get("If-None-Match"), etag_key
+            )
+            if held:
+                return _not_modified(held)
+    order = await _load(db, order_id)
+    payload = _serialise(order)
+    if etag_key and response is not None:
+        _tag(response, etag_key, pos_orders_etag.valid_until([order]))
+    return payload
 
 
 @router.post("/{order_id}/items", response_model=PosOrderResponse)
