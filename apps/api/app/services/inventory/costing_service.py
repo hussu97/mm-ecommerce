@@ -4,16 +4,31 @@ the projection.
 
 `costing_engine` is pure; this module feeds it and persists what it returns
 into ``inventory_cost_layers``, ``inventory_cost_layer_consumptions``,
-``inventory_line_costs`` and ``inventory_levels``. Three entry points:
+``inventory_line_costs`` and ``inventory_levels``. Four entry points:
 
 * :func:`cost_posting` — called by ``inventory_service.post_transaction`` for
-  every posting. Tries the engine's fast path from the current projection; when
-  that refuses, replays the posting's whole warehouse (under the branch lock the
-  poster already holds) and marks the warehouse for an estate replay, because a
-  price learned here may need to cascade through transfers into other branches.
+  every posting. Runs the engine's fast path from the current projection. A
+  refusal that only re-costs history (``costing_engine.DEFERRABLE_REASONS``:
+  a receipt pricing waiting stock, an inflow onto negative stock, stock of
+  unknown cost, an overage over provisional stock) is **deferred**: the posting
+  is booked at what the fast path knows — its own cost exactly as a replay sets
+  it, or an estimate flagged provisional — and its warehouse is queued in
+  ``inventory_costing_settle``. Any other refusal replays the posting's whole
+  warehouse inline (under the branch lock the poster already holds). Either
+  way the warehouse is also marked for an estate replay, because a price
+  learned here may need to cascade through transfers into other branches.
+* :func:`settle_marked` — the settle loop's tick
+  (``cost_maintenance_service.run_settle_forever``, every ~15 s): replays each
+  queued warehouse under its branch lock, so a deferred posting's history is
+  re-costed seconds later instead of inside a till's request. Replaying a
+  warehouse is a pure function of its ledger, so the settled projection is the
+  one an inline replay would have written.
 * :func:`replay_estate` — every warehouse at once, under every branch lock.
   Run by the scheduler for marked warehouses and nightly, and by the admin
-  projection rebuild.
+  projection rebuild. It clears the settle queue too, so it is the backstop
+  when the settle loop is down: a deferred warehouse is never left provisional
+  past the next estate tick (~1 min) while that sweeper runs, nor past the
+  nightly replay in any case.
 * :func:`replay` — the shared worker: any set of warehouses.
 
 The projection's ids are deterministic (``costing_engine.layer_id``), so a
@@ -23,11 +38,15 @@ whose figures changed are touched.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import bindparam, case, func, literal, select, text
@@ -39,6 +58,7 @@ from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryCostingDirty,
+    InventoryCostingSettle,
     InventoryCostingState,
     InventoryCostLayer,
     InventoryCostLayerConsumption,
@@ -49,6 +69,7 @@ from app.models.inventory import (
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
     TransactionStatusEnum,
+    Warehouse,
 )
 from app.models.inventory_v2 import RecipeOwnerKindEnum
 from app.services.inventory.costing_engine import (
@@ -70,6 +91,8 @@ __all__ = [
     "replay",
     "replay_estate",
     "replay_marked_estate",
+    "settle_marked",
+    "inline_replay",
     "ledger_line_for",
     "cutover_sequence",
 ]
@@ -81,7 +104,14 @@ _BATCH_INPUT_TYPES = (
     InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value,
 )
 
+#: Set by :func:`inline_replay`: every refusal replays inside the posting, as
+#: before deferral existed.
+_inline_replays: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "costing_inline_replays", default=False
+)
+
 _layers = InventoryCostLayer.__table__
+_settle = InventoryCostingSettle.__table__
 _consumptions = InventoryCostLayerConsumption.__table__
 _line_costs = InventoryLineCost.__table__
 
@@ -686,6 +716,8 @@ async def replay_estate(
     result = await replay(db, warehouse_ids=None, write=write)
     if write:
         await db.execute(InventoryCostingDirty.__table__.delete())
+        # Every warehouse was just replayed, deferred ones included.
+        await db.execute(_settle.delete())
         state = await db.get(InventoryCostingState, True)
         if state is None:
             state = InventoryCostingState(id=True)
@@ -712,6 +744,186 @@ async def _mark_dirty(db: AsyncSession, warehouse_id: uuid.UUID) -> None:
         .values(warehouse_id=warehouse_id, dirty_at=utcnow())
         .on_conflict_do_nothing(index_elements=["warehouse_id"])
     )
+
+
+# ─── Deferred replays (the settle queue) ─────────────────────────────────────
+
+
+@contextlib.contextmanager
+def inline_replay() -> Iterator[None]:
+    """Replay inside the posting for every refusal in this block, deferring none.
+
+    For a caller that reads back a cost the deferred replay would re-cost —
+    an operator script, or a test pinning the inline behaviour.
+    """
+    token = _inline_replays.set(True)
+    try:
+        yield
+    finally:
+        _inline_replays.reset(token)
+
+
+async def _mark_settle(db: AsyncSession, warehouse_id: uuid.UUID, reason: str) -> None:
+    """Queue *warehouse_id* for the settle loop, keeping the oldest request time.
+
+    One row per warehouse (like ``inventory_costing_dirty``), so two branches
+    deferring at once never queue on the same row lock; within a branch the
+    poster already holds the branch lock.
+    """
+    now = utcnow()
+    stmt = pg_insert(_settle).values(
+        warehouse_id=warehouse_id,
+        requested_at=now,
+        last_requested_at=now,
+        reason=reason[:80],
+    )
+    await db.execute(
+        stmt.on_conflict_do_update(
+            index_elements=["warehouse_id"],
+            set_={
+                "last_requested_at": stmt.excluded.last_requested_at,
+                "reason": stmt.excluded.reason,
+            },
+        )
+    )
+
+
+async def _clear_settle(
+    db: AsyncSession, warehouse_id: uuid.UUID, *, through: datetime | None = None
+) -> None:
+    """Drop the settle request a replay of *warehouse_id* just covered.
+
+    ``through`` is the ``last_requested_at`` the settler read: a request made
+    after it (impossible under the branch lock, but cheap to respect) survives.
+    """
+    stmt = _settle.delete().where(_settle.c.warehouse_id == warehouse_id)
+    if through is not None:
+        stmt = stmt.where(_settle.c.last_requested_at <= through)
+    await db.execute(stmt)
+
+
+def _log_refusal(
+    *,
+    mode: str,
+    reason: str,
+    lines: list[LedgerLine],
+    elapsed_ms: int,
+    replayed_lines: int | None = None,
+    changes: int | None = None,
+    detail: str | None = None,
+) -> None:
+    """One structured line per fast-path refusal — ``mode=deferred`` (queued for
+    the settle loop) or ``mode=inline`` (replayed inside the posting) — so the
+    logs say which trigger dominates and what each costs the till."""
+    logger.info(
+        "costing.needs_replay mode=%s reason=%r warehouse_id=%s branch_id=%s "
+        "transaction_id=%s posting_lines=%s replayed_lines=%s changes=%s "
+        "elapsed_ms=%s%s",
+        mode,
+        reason,
+        lines[0].warehouse_id,
+        lines[0].branch_id,
+        lines[0].transaction_id,
+        len(lines),
+        replayed_lines if replayed_lines is not None else "-",
+        changes if changes is not None else "-",
+        elapsed_ms,
+        f" detail={detail!r}" if detail else "",
+    )
+
+
+@dataclass(slots=True)
+class SettleResult:
+    warehouse_id: uuid.UUID
+    branch_id: uuid.UUID
+    reason: str
+    #: How long the oldest deferred posting waited, ms — the provisional window.
+    waited_ms: int
+    replay: ReplayResult
+
+
+async def _try_lock_branch(db: AsyncSession, branch_id: uuid.UUID) -> bool:
+    """The posting path's branch lock (``source_event_service.lock_branch_inventory``)
+    taken as a *try*: a busy branch is skipped this tick, never waited on, so the
+    settler cannot queue a till behind it nor deadlock with a poster."""
+    got = await db.scalar(
+        select(
+            func.pg_try_advisory_xact_lock(
+                func.hashtextextended(f"inventory:{branch_id}", 0)
+            )
+        )
+    )
+    return bool(got)
+
+
+async def settle_marked(
+    db: AsyncSession, *, budget_seconds: float, limit: int = 20
+) -> list[SettleResult]:
+    """Replay queued warehouses, oldest request first, until *budget_seconds*.
+
+    One warehouse per transaction: its branch is try-locked, the warehouse
+    replayed exactly as an inline replay would (and marked for the estate
+    cascade, as the inline path marks it), its request cleared, and the
+    transaction committed — which releases the branch lock before the next
+    warehouse, so a till waits on at most one warehouse's replay. A busy branch
+    is skipped and retried next tick. A failure rolls that warehouse back and
+    leaves its request queued for the next tick.
+    """
+    started = time.monotonic()
+    queued = (
+        await db.execute(
+            select(
+                _settle.c.warehouse_id,
+                Warehouse.branch_id,
+                _settle.c.requested_at,
+                _settle.c.last_requested_at,
+                _settle.c.reason,
+            )
+            .join(Warehouse, Warehouse.id == _settle.c.warehouse_id)
+            .order_by(_settle.c.requested_at)
+            .limit(limit)
+        )
+    ).all()
+    # The scheduler's own session (no request will commit it): end the read so
+    # each warehouse below starts its own transaction and its own branch lock.
+    await db.commit()
+    settled: list[SettleResult] = []
+    for warehouse_id, branch_id, requested_at, last_requested_at, reason in queued:
+        if time.monotonic() - started >= budget_seconds:
+            break
+        try:
+            await db.execute(text("SET LOCAL lock_timeout = '5s'"))
+            if not await _try_lock_branch(db, branch_id):
+                await db.rollback()
+                continue
+            result = await replay(db, warehouse_ids={warehouse_id})
+            await _mark_dirty(db, warehouse_id)
+            await _clear_settle(db, warehouse_id, through=last_requested_at)
+            # One commit per warehouse: makes it durable and releases the branch
+            # lock, so a till waits on at most one warehouse's replay.
+            await db.commit()
+        except Exception:  # noqa: BLE001 — one warehouse must not stop the rest
+            await db.rollback()
+            logger.exception(
+                "costing.settle failed warehouse_id=%s branch_id=%s; kept queued",
+                warehouse_id,
+                branch_id,
+            )
+            continue
+        waited_ms = int((utcnow() - requested_at).total_seconds() * 1000)
+        logger.info(
+            "costing.settle warehouse_id=%s branch_id=%s reason=%r waited_ms=%s "
+            "replayed_lines=%s changes=%s elapsed_ms=%s",
+            warehouse_id,
+            branch_id,
+            reason,
+            waited_ms,
+            result.lines,
+            result.changes,
+            result.elapsed_ms,
+        )
+        settled.append(SettleResult(warehouse_id, branch_id, reason, waited_ms, result))
+    return settled
 
 
 # ─── The posting path ────────────────────────────────────────────────────────
@@ -878,40 +1090,57 @@ async def cost_posting(
     """Cost one posting's lines and store the projection. Returns line costs.
 
     ``levels`` are the level rows the poster already locked and moved, keyed by
-    (item, warehouse). The fast path starts from the stored projection; if the
-    engine refuses, the posting's warehouse is replayed from scratch.
+    (item, warehouse). The fast path starts from the stored projection. A
+    deferrable refusal is booked at what the fast path knows and the warehouse
+    queued for the settle loop; any other refusal (or any refusal inside
+    :func:`inline_replay`) replays the posting's warehouse from scratch here.
     """
     if not lines:
         return {}
     await db.flush()
+    started = time.monotonic()
+    warehouse_id = lines[0].warehouse_id
     keys = {(line.item_id, line.warehouse_id) for line in lines}
     engine = CostingEngine(
         cutover_sequence=await cutover_sequence(db),
         fast=True,
+        tolerant=not _inline_replays.get(),
         seeds=await _seeds(db, keys, lines, levels),
         external_group_inputs=await _group_inputs(db, lines),
-        external_sends=await _external_sends(db, lines, {lines[0].warehouse_id}),
+        external_sends=await _external_sends(db, lines, {warehouse_id}),
     )
     try:
         for line in sorted(lines, key=lambda row: row.sort_key):
             engine.apply(line)
         projection = engine.project()
-    except NeedsReplay as reason:
-        warehouse_id = lines[0].warehouse_id
+    except NeedsReplay as refusal:
         result = await replay(db, warehouse_ids={warehouse_id}, in_flight=lines)
         await _mark_dirty(db, warehouse_id)
-        logger.info(
-            "costing: replayed warehouse %s (%s lines, %s changes, %sms): %s",
-            warehouse_id,
-            result.lines,
-            result.changes,
-            result.elapsed_ms,
-            reason,
+        # A warehouse replay settles whatever was deferred there before it.
+        await _clear_settle(db, warehouse_id)
+        _log_refusal(
+            mode="inline",
+            reason=refusal.reason,
+            lines=lines,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            replayed_lines=result.lines,
+            changes=result.changes,
+            detail=refusal.detail,
         )
         return {
             line.line_id: result.projection.line_costs[line.line_id] for line in lines
         }
     await _write_fast(db, projection, levels)
-    if engine.needs_refresh:
-        await _mark_dirty(db, lines[0].warehouse_id)
+    if engine.deferred:
+        reason = "; ".join(engine.deferred)
+        await _mark_settle(db, warehouse_id, reason)
+        await _mark_dirty(db, warehouse_id)
+        _log_refusal(
+            mode="deferred",
+            reason=reason,
+            lines=lines,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+    elif engine.needs_refresh:
+        await _mark_dirty(db, warehouse_id)
     return {line.line_id: projection.line_costs[line.line_id] for line in lines}

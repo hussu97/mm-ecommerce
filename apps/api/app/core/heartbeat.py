@@ -36,6 +36,8 @@ LOOP_NAMES = (
     "business_day_sweeper",
     "settled_order_sweeper",
     "storefront_boundaries",
+    "costing_settle",
+    "costing_estate_sweeper",
     "auto_availability",
     "replenishment",
     "customer_cache",

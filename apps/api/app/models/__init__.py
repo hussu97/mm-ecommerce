@@ -106,6 +106,7 @@ from .inventory import (  # noqa: F401
     CostLayerSourceKindEnum,
     InventoryCategory,
     InventoryCostingDirty,
+    InventoryCostingSettle,
     InventoryCostingState,
     InventoryCostLayer,
     InventoryCostLayerConsumption,

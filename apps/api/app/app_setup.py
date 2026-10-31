@@ -304,6 +304,15 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
             cost_maintenance_service.run_forever(), name="costing_estate_sweeper"
         )
     )
+    # The costing settle loop. A till posting the FIFO fast path can only cost
+    # by re-costing history is booked provisionally and queued; this replays the
+    # queued warehouses every ~15 s, off the request path. The estate sweep
+    # above clears the same queue, so it is the backstop if this loop is down.
+    background.append(
+        spawn_tracked(
+            cost_maintenance_service.run_settle_forever(), name="costing_settle"
+        )
+    )
 
     # Auto off-sale from produced-good stock (experimental; Barsha pilot). Same
     # lifespan reasons as its neighbours — no cron here, an advisory lock so a

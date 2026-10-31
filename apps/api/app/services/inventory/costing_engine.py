@@ -20,6 +20,11 @@ two ways in:
   adjustment). Known costs always match a replay exactly; the one thing the fast
   path may leave stale is an *estimate* (stock still waiting on a price), which
   the next replay of that warehouse — or the nightly one — refreshes.
+  With ``tolerant=True`` the fast path books the four refusals that only
+  re-cost *history* (:data:`DEFERRABLE_REASONS`) instead of raising — the
+  posting's own cost as a replay would set it, or an estimate flagged
+  provisional — and lists them in ``deferred``; the caller owes the warehouse a
+  replay, which the costing settle loop runs moments later.
 
 The rules, per (item, warehouse):
 
@@ -83,6 +88,7 @@ __all__ = [
     "SeedState",
     "CostingEngine",
     "NeedsReplay",
+    "DEFERRABLE_REASONS",
     "Projection",
     "LayerOut",
     "ConsumptionOut",
@@ -157,7 +163,35 @@ def restatements_from(
 
 
 class NeedsReplay(Exception):
-    """The fast path met a case only a replay can cost correctly."""
+    """The fast path met a case only a replay can cost correctly.
+
+    ``str(exc)`` is a short, stable reason code — what the posting logs and what
+    production counts by — with any per-row detail kept apart in ``detail`` so
+    the reasons group.
+    """
+
+    def __init__(self, reason: str, detail: str | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.detail = detail
+
+
+#: The fast path's refusals it can also *defer* (``tolerant=True``). Each is an
+#: inflow whose own cost the fast path knows (or estimates, flagged provisional)
+#: and whose only unknown is how it re-costs history already booked — the
+#: waiting stock it prices, the shortfall it settles. Booking it now and
+#: replaying the warehouse moments later reaches the same projection. The other
+#: refusals (a reversal, a cost adjustment, a restatement, a return, a stored
+#: projection that disagrees with its level) change what the posting itself is
+#: worth, so they always replay inline.
+DEFERRABLE_REASONS = frozenset(
+    {
+        "priced inflow with stock waiting on a price",
+        "stock of unknown cost",
+        "inflow onto negative stock",
+        "overage priced from provisional stock",
+    }
+)
 
 
 # ─── Inputs ──────────────────────────────────────────────────────────────────
@@ -624,6 +658,7 @@ class CostingEngine:
         external_group_inputs: dict[uuid.UUID, list[tuple[Decimal, Decimal, bool]]]
         | None = None,
         fast: bool = False,
+        tolerant: bool = False,
         seeds: list[SeedState] | None = None,
         recipes: dict[uuid.UUID, list[tuple[uuid.UUID, Decimal]]] | None = None,
         restatements: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, uuid.UUID]]
@@ -637,6 +672,13 @@ class CostingEngine:
         self.external_sends = external_sends or {}
         self.external_group_inputs = external_group_inputs or {}
         self.fast = fast
+        #: Fast path only: book a :data:`DEFERRABLE_REASONS` case at what this
+        #: posting knows instead of raising, and list it in ``deferred`` — the
+        #: caller must then have the warehouse replayed (the settle loop). Every
+        #: other refusal still raises.
+        self.tolerant = fast and tolerant
+        #: The deferrable refusals met, in the order met (tolerant fast path).
+        self.deferred: list[str] = []
         #: The fast path booked a cost from an estimate that a replay should
         #: refresh soon, not only at the nightly one (fast path only).
         self.needs_refresh = False
@@ -699,12 +741,19 @@ class CostingEngine:
         state = self.states.get(key)
         if state is None:
             if self.fast:
-                raise NeedsReplay(f"no seeded state for {key}")
+                raise NeedsReplay("no seeded state", detail=str(key))
             state = ItemState(line.item_id, line.warehouse_id, line.branch_id)
             self.states[key] = state
         return state
 
     # ── helpers ──
+
+    def _refuse(self, reason: str) -> None:
+        """A deferrable fast-path refusal: raise, or (tolerant) note it and go on."""
+        if not self.tolerant:
+            raise NeedsReplay(reason)
+        if reason not in self.deferred:
+            self.deferred.append(reason)
 
     def _estimate(self, state: ItemState, line: LedgerLine) -> Pending:
         prices = self.po_prices.get(line.item_id, [])
@@ -712,6 +761,10 @@ class CostingEngine:
         at = bisect.bisect_left(prices, (line.sequence, Decimal("-1")))
         fallback = prices[at - 1][1] if at > 0 else ZERO
         estimate = state.last_priced
+        if estimate is None and self.fast:
+            # The fast path has no history to find the last priced inflow in;
+            # the level's current cost stands in until the replay re-estimates.
+            estimate = state.last_cost
         if estimate is None and line.item_id in self.recipes:
             estimate = RecipeEstimate(
                 [
@@ -776,7 +829,9 @@ class CostingEngine:
     def _price_pending(self, state: ItemState, cost: Cost) -> None:
         """Rule 3: a priced inflow prices everything waiting on this item."""
         if self.fast and (state.seeded_provisional or state.open_pendings):
-            raise NeedsReplay("priced inflow with stock waiting on a price")
+            # Tolerant: what waits in *this* posting is priced below, exactly as
+            # a replay would; what waited before it keeps its estimate until then.
+            self._refuse("priced inflow with stock waiting on a price")
         for pending in state.open_pendings:
             pending.target = cost
         state.open_pendings.clear()
@@ -912,10 +967,12 @@ class CostingEngine:
             # Only a cost nobody has priced yet waits on the next receipt; an
             # overage priced *from* an already-resolved layer keeps that price.
             if self.fast:
-                raise NeedsReplay("stock of unknown cost")
+                self._refuse("stock of unknown cost")
             state.open_pendings.append(cost)
         if self.fast and state.debt > 0:
-            raise NeedsReplay("inflow onto negative stock")
+            # Tolerant: the debt is settled and only the remainder layered, as a
+            # replay does; the shortfalls it settles keep their estimate until then.
+            self._refuse("inflow onto negative stock")
         self._settle_then_layer(state, line, quantity, cost, kind)
         record.unit = cost
         record.value_terms.append((quantity, cost))
@@ -975,7 +1032,8 @@ class CostingEngine:
             if not layer.cost.is_pending and not layer.seeded_provisional:
                 return layer.cost, kind, False
             if self.fast:
-                raise NeedsReplay("overage priced from provisional stock")
+                # Tolerant: skip it, as a replay skips a layer still waiting.
+                self._refuse("overage priced from provisional stock")
         return self._estimate(state, line), kind, False
 
     def _batch(self, line: LedgerLine) -> Cost | None:

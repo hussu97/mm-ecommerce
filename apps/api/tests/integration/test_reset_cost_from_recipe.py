@@ -32,6 +32,7 @@ from app.models.inventory import InventoryTransactionTypeEnum as TxnType
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.user import User
 from app.services.inventory import inventory_service, recipe_service
+from tests.integration._stock import settle
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -215,6 +216,9 @@ async def test_reset_restates_on_hand_to_current_recipe_cost(env):
         # estimated at its current recipe cost here (provisional).
         await _receive(db, ids, ids.made, user, quantity="10", unit_cost="0.00")
         await db.commit()
+        # Stock of unknown cost is booked at the fast path's estimate and its
+        # warehouse queued; the settle replay re-estimates it from the recipe.
+        await settle(db)
 
     async with Session() as db:
         assert await _level_cost(db, ids.made, ids.wh) == Decimal("5.5")

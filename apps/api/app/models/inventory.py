@@ -1534,3 +1534,34 @@ class InventoryCostingDirty(Base):
     dirty_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
+
+
+class InventoryCostingSettle(Base):
+    """
+    A warehouse booked at provisional cost that is owed a warehouse replay.
+
+    A posting the fast path can only cost by re-costing history (a receipt that
+    prices waiting stock, an inflow onto negative stock, …) is booked at what it
+    knows and marks its warehouse here instead of replaying it inside the till's
+    request. The costing settle loop replays each marked warehouse within
+    seconds and deletes the row; the estate sweep, which replays everything,
+    clears it too. ``requested_at`` is the oldest unsettled posting — the
+    provisional window — and ``last_requested_at`` the newest, so a settle only
+    clears what it covered.
+    """
+
+    __tablename__ = "inventory_costing_settle"
+
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    #: The fast-path refusal that deferred it (latest), for the logs and /health.
+    reason: Mapped[str] = mapped_column(String(80), nullable=False)

@@ -75,6 +75,10 @@ _LOOP_BEATS = {
     ),
     "app.services.customer_service": ("run_forever", "customer_cache"),
     "app.services.storefront_cache": ("run_forever", "storefront_boundaries"),
+    "app.services.inventory.cost_maintenance_service": (
+        "run_settle_forever",
+        "costing_settle",
+    ),
     "app.services.payments.payment_reconcile_service": (
         "run_forever",
         "payment_reconcile",
@@ -94,6 +98,34 @@ def test_every_loop_beats_its_registered_heartbeat():
         assert beat_name in heartbeat.LOOP_NAMES, (
             f"{beat_name!r} is not declared in heartbeat.LOOP_NAMES"
         )
+
+
+def test_the_costing_loops_are_leader_elected_and_disciplined():
+    from app.services.inventory import cost_maintenance_service as cms
+    from app.services.inventory import costing_service
+
+    settle = inspect.getsource(cms.run_settle_forever)
+    # One connection for lock and work, a hard per-tick ceiling, sleeps first.
+    assert "advisory_lock.held_session" in settle
+    assert "asyncio.timeout" in settle
+    assert "asyncio.sleep" in settle
+    # Tick ≤ 30 s keeps the provisional window under a minute.
+    assert cms._SETTLE_TICK_SECONDS <= 30
+    assert cms._SETTLE_BUDGET_SECONDS < cms._SETTLE_TIMEOUT_SECONDS
+    # The estate sweep beats too (it is the settle loop's backstop).
+    estate = inspect.getsource(cms.run_forever)
+    assert 'heartbeat.beat("costing_estate_sweeper")' in estate
+    assert "costing_estate_sweeper" in heartbeat.LOOP_NAMES
+
+    # The settler takes the SAME per-branch key the posting path waits on, but
+    # tried — never waited — under a lock_timeout, one warehouse per commit.
+    try_lock = inspect.getsource(costing_service._try_lock_branch)
+    assert "pg_try_advisory_xact_lock" in try_lock
+    assert 'f"inventory:{branch_id}"' in try_lock
+    sweep = inspect.getsource(costing_service.settle_marked)
+    assert "lock_timeout" in sweep
+    assert "budget_seconds" in sweep
+    assert "await db.commit()" in sweep
 
 
 def test_the_aggregator_supervisor_beats_while_leading():

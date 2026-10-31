@@ -54,3 +54,16 @@ async def seed_stock(
     return await inventory_service.post_transaction(
         db, transaction=transaction, user=None
     )
+
+
+async def settle(db) -> list:
+    """Run the costing settle loop's tick on *db*, as the scheduler would.
+
+    A posting the fast path could only cost by re-costing history is booked
+    provisionally and its warehouse queued; this replays the queue — what the
+    shop sees a few seconds after it posts. Commits *db* (one transaction per
+    warehouse, like the loop).
+    """
+    from app.services.inventory import costing_service
+
+    return await costing_service.settle_marked(db, budget_seconds=600, limit=1000)

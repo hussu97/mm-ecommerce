@@ -42,6 +42,7 @@ from app.services.inventory import (
     inventory_service,
     ledger_service,
 )
+from tests.integration._stock import settle
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -563,6 +564,8 @@ async def test_a_voided_po_prices_nothing_and_the_next_po_prices_everything(
             quantity="2000",
             unit_cost="0.058",
         )
+        # The receipt prices waiting stock: deferred to the settle loop.
+        await settle(db)
         level = await _level(db, item_id, warehouse_id)
         assert level.quantity == D("2004.0000")
         assert level.average_cost == D("0.058")
@@ -725,6 +728,8 @@ async def test_first_purchase_prices_tracked_zero_cost_stock(engine, env):
             quantity="50",
             unit_cost="3",
         )
+        # The receipt prices waiting stock: deferred to the settle loop.
+        await settle(db)
         level = await _level(db, item_id, warehouse_id)
         assert level.quantity == D("110.0000")
         assert level.average_cost == D("3.000000")
@@ -885,6 +890,7 @@ async def test_the_cost_popup_names_the_purchase_order_behind_each_cost(engine, 
             unit_cost="0.05",
             purchase_order_id=po.id,
         )
+        await settle(db)
 
         view = await cost_view_service.cost_layers(
             db, item_id=item_id, branch_id=branch_id, user=user
