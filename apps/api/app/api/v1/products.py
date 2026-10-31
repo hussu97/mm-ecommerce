@@ -35,7 +35,7 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
-from app.services import audit_service, indexnow_service
+from app.services import audit_service, indexnow_service, storefront_cache
 from app.services.catalog import (
     availability_service,
     catalogue_cache,
@@ -381,12 +381,21 @@ async def product_costs(
     ]
 
 
+#: Ceiling on a cached product page answer. Never what decides freshness: every
+#: committed catalogue write retires these (`storefront_cache`, plus
+#: `catalogue_cache.retire()`), and the entry is never kept past the next
+#: stockout expiry (`seconds_to_next_catalogue_boundary`), so a cached answer is
+#: always the one the query would give. This only bounds what nothing saw —
+#: raw SQL, a Redis hiccup on the delete.
+_PAGE_TTL = 300
+
+
 @router.get("/{slug}", response_model=ProductResponse)
 async def get_product(
     slug: str,
     branch: uuid.UUID | None = Depends(browsing_branch),
     branch_ids: list[uuid.UUID] | None = Depends(browsing_branch_ids),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_lazy),
     viewer: User | None = Depends(get_optional_user),
 ):
     """
@@ -397,12 +406,25 @@ async def get_product(
     could list a counter item and then 404 trying to open it — and every
     inactive product was unreachable for editing, which is precisely when
     someone needs to reach it.
+
+    The shopper's answer is cached in Redis, keyed like the featured list by
+    who it is for (the branch or the pin's branch set). Nothing in it depends on
+    *which* shopper asked — a signed-in customer and a guest get the same page —
+    and the staff answer, which does differ, is never cached. A 404 is not
+    cached either. Lazy DB, so a hit checks out no connection.
     """
     if viewer is not None and (viewer.is_staff or viewer.is_admin):
         return await product_service.get_by_slug_admin(db, slug)
-    return await product_service.get_by_slug(
+    cache_key = f"products:page:{slug}:{_branch_cache_token(branch, branch_ids)}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+    result = await product_service.get_by_slug(
         db, slug, branch_id=branch, branch_ids=branch_ids
     )
+    ttl = await storefront_cache.seconds_to_next_catalogue_boundary(db, _PAGE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), ttl=ttl)
+    return result
 
 
 def _announce(product: ProductResponse) -> None:

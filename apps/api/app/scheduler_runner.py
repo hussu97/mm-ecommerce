@@ -32,6 +32,7 @@ from app.app_setup import (
 )
 from app.core import post_commit
 from app.core.config import settings
+from app.services import storefront_cache
 
 logger = logging.getLogger("mm.api")
 
@@ -65,6 +66,10 @@ async def _run() -> None:
     # still on the wire — the arrival sweep's register pushes, the backstop's
     # emails. Before the APNs client below is closed.
     await post_commit.drain()
+    # Storefront purges still waiting out their re-delete delay: send them now
+    # rather than leave the storefront on its TTL (bounded; never raises).
+    with suppress(Exception):
+        await asyncio.wait_for(storefront_cache.flush_pending(), timeout=8)
 
     # Release the reused APNs HTTP/2 client cleanly — the loops use it to push to
     # the registers, exactly as the HTTP app does (F-POS-12).

@@ -1024,6 +1024,27 @@ widget could, and the account settings screen has no widget on it.
 If Cloudflare is unreachable the request goes through and the log says so. Their
 outage should not become ours.
 
+#### Storefront on-demand purge (`revalidateTag`)
+
+After a committed write to anything the storefront caches — the catalogue,
+per-branch stock, busy mode, the delivery map, a promo code, CMS, blog,
+translations — the API POSTs the affected cache tags to the storefront's
+`/api/revalidate` route (`app/services/storefront_cache.py`), and a 30-second
+sweep does the same when a timed stockout or a coupon window lapses. With the
+purge in place the storefront holds that content for 10 minutes instead of 1.
+
+| Where | Key | Notes |
+|-------|-----|-------|
+| GitHub secret, `mm-ecommerce` | `STOREFRONT_REVALIDATE_URL` | `https://meltingmomentscakes.com/api/revalidate` |
+| GitHub secret, `mm-ecommerce` | `STOREFRONT_REVALIDATE_SECRET` | `openssl rand -hex 32`. Reaches `api` **and** `pos-api` (the till toggles stock and busy mode) |
+| Vercel, **web** project (Production) | `STOREFRONT_REVALIDATE_SECRET` | The same value. Server-only — never `NEXT_PUBLIC_` |
+
+**Order matters.** The web lengthens its TTL only when it has the secret, and
+nothing purges it until the API does. So: set both GitHub secrets, deploy the
+API (a secret does nothing until the deploy rewrites `.env`), confirm a purge in
+the API log (`storefront purge ok`), and only then add the Vercel variable and
+redeploy the web. Empty on either side is today's 60-second behaviour.
+
 #### Courier — noon Send (Rider-on-Demand)
 
 Optional, and safe to leave unset: a `noon_send` zone with no credentials simply

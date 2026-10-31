@@ -36,12 +36,15 @@ from app.core.database import (
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from app.middleware import RequestEnvelopeMiddleware
-from app.services import firebase_auth_service
 
-# Imported for their session listeners: every process that writes the catalogue
-# (storefront API, register API, scheduler) must retire the cached counter
-# bundle on commit, not only the two that serve it — and every process that
-# writes an order must retire the ETags of that branch's order polls.
+# Imported (also) for their session listeners, which only exist in a process
+# that imports them. Every process that writes the catalogue (storefront API,
+# register API, scheduler) must retire the cached counter bundle on commit, not
+# only the two that serve it; every process that writes an order must retire the
+# ETags of that branch's order polls; and every process must purge the
+# storefront's caches (`storefront_cache`) after any committed write to what
+# they hold.
+from app.services import firebase_auth_service, storefront_cache
 from app.services.pos import (
     counter_bundle_cache,  # noqa: F401
     pos_orders_etag,  # noqa: F401
@@ -282,6 +285,14 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         spawn_tracked(settled_order_service.run_forever(), name="settled_order_sweeper")
     )
 
+    # Time-driven storefront purges: a stockout's expiry or a coupon's window
+    # passing changes what the storefront shows with no write to see. Same
+    # lifespan reasons as its neighbours — an advisory lock so a second copy is
+    # harmless.
+    background.append(
+        spawn_tracked(storefront_cache.run_forever(), name="storefront_boundaries")
+    )
+
     # The estate costing sweep. Same lifespan reasons as its neighbours — no
     # cron here, an advisory lock so a second copy is harmless. Replays the FIFO
     # costing engine estate-wide when a warehouse replay may need to cascade
@@ -450,6 +461,12 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
                     await seed_i18n(session)
             except Exception as exc:  # noqa: BLE001 — a seed must not block boot
                 logger.warning("i18n seed failed (non-fatal): %s", exc)
+            # A deploy may have migrated content (CMS copy, a price, a category
+            # slug) straight into Postgres, which no session event sees. The
+            # deploy flushes Redis; this tells the storefront the same thing,
+            # so its longer TTL is never what a migration waits on. Only the
+            # app that seeds — once per storefront boot, not per register.
+            storefront_cache.purge(storefront_cache.WEB_TAGS)
 
         # Warm the courier-logo cache from the database so every order payload
         # carries the current logo. Best-effort — the module falls back to the
@@ -476,6 +493,10 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
         # Emails and pushes queued behind a commit (`post_commit`) that are still
         # on the wire. Before the APNs client closes, which the pushes need.
         await post_commit.drain()
+        # Storefront purges still waiting out their re-delete delay: send them now
+        # rather than leave the storefront on its TTL (bounded; never raises).
+        with suppress(Exception):
+            await asyncio.wait_for(storefront_cache.flush_pending(), timeout=8)
         # Close the reused APNs HTTP/2 client (F-POS-12) so its connection is
         # released cleanly rather than on GC after the loop is gone.
         from app.services.providers import apns_provider

@@ -1,10 +1,15 @@
 """
 Retiring what the storefront has already been told.
 
-Three answers are cached in Redis for the shopper: the featured rail, the cart's
-add-on tray, and the category list with its counts. All three are derived from
-the catalogue *and* from what each branch has in stock, and all three are now
-keyed by branch — one entry per kitchen plus the estate-wide one.
+Four answers are cached in Redis for the shopper: the featured rail, the cart's
+add-on tray, the category list with its counts, and the product page. All four
+are derived from the catalogue *and* from what each branch has in stock, and
+all four are keyed by branch — one entry per kitchen plus the estate-wide one.
+
+This runs before the caller's commit. `storefront_cache` deletes the same keys
+again after it (and tells the storefront's own cache), which is what closes
+the gap where a read between this delete and the commit writes the old answer
+back.
 
 That second half is why this module exists. Editing a product has always retired
 these; marking one out of stock never did, because the register's availability
@@ -30,6 +35,7 @@ __all__ = ["retire"]
 _PATTERNS = (
     "products:featured:*",
     "products:cart_addons:*",
+    "products:page:*",
     "categories:channel:*",
 )
 

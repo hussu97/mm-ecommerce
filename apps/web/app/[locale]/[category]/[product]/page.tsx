@@ -38,11 +38,15 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscake
  *
  * The literal is not a style choice: Next reads segment config statically, and
  * an imported constant fails the build with "Invalid segment configuration
- * export". Keep it in step with `CONTENT_TTL` in `lib/cache-policy.ts`.
+ * export". It is `CONTENT_TTL`'s ceiling (ten minutes, with the API's on-demand
+ * purge), and it is only a ceiling: a route revalidates on the lowest TTL of
+ * anything it fetched, so without the purge the page's own fetches still bring
+ * it down to `CONTENT_TTL`'s minute. A stockout, a price or a lapsed timed
+ * stockout reaches it through `revalidateTag('catalogue')` in seconds.
  *
  * On its own this does nothing here — see `generateStaticParams` below.
  */
-export const revalidate = 60;
+export const revalidate = 600;
 
 /**
  * Prerender the catalogue.

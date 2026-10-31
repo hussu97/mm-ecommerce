@@ -35,6 +35,7 @@ LOOP_NAMES = (
     "daily_sales_email",
     "business_day_sweeper",
     "settled_order_sweeper",
+    "storefront_boundaries",
     "auto_availability",
     "replenishment",
     "customer_cache",

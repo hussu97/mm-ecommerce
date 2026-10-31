@@ -1,30 +1,56 @@
 /**
+ * Whether the API purges this storefront when what it shows changes.
+ *
+ * The API POSTs the affected tags to `app/api/revalidate/route.ts` after every
+ * committed write to the catalogue, stock, busy mode, the delivery map, a promo
+ * code, CMS, blog or translations, and again when the clock alone changes
+ * something (a timed stockout lapsing, a coupon's window opening or closing) —
+ * see `apps/api/app/services/storefront_cache.py`. Both ends hold the same
+ * `STOREFRONT_REVALIDATE_SECRET`, so its presence here is the switch: without
+ * it nothing can purge this app, and every TTL below stays what it was.
+ *
+ * Server-only (no `NEXT_PUBLIC_`): in a client bundle this reads `undefined`,
+ * which is false, which is harmless — no client fetch uses the data cache.
+ */
+export const ON_DEMAND_PURGE = Boolean(process.env.STOREFRONT_REVALIDATE_SECRET);
+
+/**
  * How long the storefront may serve editable content it has already fetched.
  *
  * One number, in one place, because it is a business decision rather than a
- * technical one: it is the longest an admin edit can take to reach a customer.
- * Every fetch of CMS copy, translations, categories and products reads it, so
- * changing that answer is changing this line.
+ * technical one: it is the longest an admin edit can take to reach a customer
+ * when nothing else tells the storefront about it. Every fetch of CMS copy,
+ * translations, categories, products and the advertised coupon reads it.
  *
- * Sixty seconds is chosen against a specific history. Both of the fetches this
+ * **Ten minutes with the on-demand purge, one without.** With the purge, an
+ * edit, a stockout or a lapsed coupon reaches the page within seconds whatever
+ * this says (`revalidateTag`), and this is only the net under a purge that
+ * never arrived. Without it, this *is* the mechanism, and it keeps the minute
+ * it was chosen at.
+ *
+ * The minute was chosen against a specific history. Both of the fetches this
  * replaced used `cache: 'no-store'`, and both had an incident behind them — a
  * build that snapshotted translations five minutes stale and put a raw
  * `checkout.estimated_delivery` in front of customers, and a data-cache entry
  * that left one locale on the old home page while the other had the new one.
  * `no-store` ruled both out by never caching, and made every route on the site
- * dynamic to do it: nothing reached the CDN, and every visit paid for a render.
+ * dynamic to do it. A bounded, self-healing delay ruled both out without that;
+ * the purge keeps them out under the longer number, because the API purges
+ * every tag when it boots (after the seed, after a deploy's migrations).
  *
- * A minute keeps the worst case of both bounded and self-healing, which neither
- * incident was — the five-minute one only ended when its own TTL did, and the
- * locale one persisted until someone noticed.
- *
- * It is not the end state. Tagging every one of these fetches (`i18n`, `cms`,
- * `catalogue`) means an admin write can call `revalidateTag` and take the delay
- * to zero, leaving this as the safety net rather than the mechanism. That needs
- * a shared secret between the API and this app and is deliberately not done
- * here.
+ * Route-segment `export const revalidate` lines quote 600 as a literal (Next
+ * requires segment config to be statically analyzable). A route revalidates on
+ * the lowest TTL of everything it fetched, so with the purge off these fetches
+ * still pull those routes down to the minute.
  */
-export const CONTENT_TTL = 60;
+export const CONTENT_TTL = ON_DEMAND_PURGE ? 600 : 60;
+
+/**
+ * Content the purge does not reach, held for the old minute either way. The
+ * pickup-point list carries *today's* opening hours, which change at midnight
+ * with no write for the API to see.
+ */
+export const UNPURGED_TTL = 60;
 
 /**
  * How long the machine-read surfaces may serve a stale copy: the llms.txt
@@ -49,15 +75,17 @@ export const FEED_TTL = 3600;
 /**
  * Blog content. Posts are published, not live-edited, so minutes-stale is
  * invisible; five of them keeps the per-request cost negligible while an
- * editorial fix still lands the same coffee break it was made in.
+ * editorial fix still lands the same coffee break it was made in. Tagged
+ * `blog` and purged on write, so with the purge on it is an hour.
  */
-export const BLOG_TTL = 300;
+export const BLOG_TTL = ON_DEMAND_PURGE ? 3600 : 300;
 
 /**
  * The language list. New languages ship with releases, not admin edits — the
- * slowest-moving content the storefront fetches, and the safest to hold.
+ * slowest-moving content the storefront fetches, and the safest to hold. Purged
+ * with `i18n` on write, so with the purge on it is an hour.
  */
-export const LANGUAGES_TTL = 300;
+export const LANGUAGES_TTL = ON_DEMAND_PURGE ? 3600 : 300;
 
 /**
  * Whether this build or runtime has a real API behind it.
@@ -79,7 +107,11 @@ export const LANGUAGES_TTL = 300;
  */
 export const HAS_REMOTE_API = (process.env.NEXT_PUBLIC_API_URL ?? '').startsWith('http');
 
-/** Cache tags, so a later on-demand purge has something to aim at. */
+/**
+ * Cache tags — what the API's on-demand purge aims at. Mirrored by `WEB_TAGS`
+ * in `apps/api/app/services/storefront_cache.py`, and the revalidate route
+ * accepts only these; a tag added here and not there lives on its TTL alone.
+ */
 export const CACHE_TAGS = {
   /** UI strings and the language list. */
   i18n: 'i18n',
@@ -95,4 +127,6 @@ export const CACHE_TAGS = {
    * expired offer left on the homepage is a promise the checkout will refuse.
    */
   promo: 'promo',
+  /** Blog posts and the blog index. */
+  blog: 'blog',
 } as const;

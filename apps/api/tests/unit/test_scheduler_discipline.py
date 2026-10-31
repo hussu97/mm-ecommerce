@@ -74,6 +74,7 @@ _LOOP_BEATS = {
         "replenishment",
     ),
     "app.services.customer_service": ("run_forever", "customer_cache"),
+    "app.services.storefront_cache": ("run_forever", "storefront_boundaries"),
     "app.services.payments.payment_reconcile_service": (
         "run_forever",
         "payment_reconcile",

@@ -58,9 +58,10 @@ const lastKnownGood: Record<string, Record<string, string>> = { ...SEED_TRANSLAT
  *
  * `CONTENT_TTL` is the middle: the same failure is now bounded at a minute
  * rather than five, it expires on its own, and it costs one API call per minute
- * per locale instead of one per render. The `i18n` tag is here so that bound
- * can be taken to zero later without touching this file — a `revalidateTag`
- * from the admin on write is the real fix, and it slots in above this line.
+ * per locale instead of one per render. The `i18n` tag takes that bound to
+ * seconds: the API purges it on every translation write and after the startup
+ * seed (`app/api/revalidate/route.ts`), which is what lets `CONTENT_TTL` be
+ * ten minutes once the purge is configured.
  *
  * `React.cache` on top is a different thing again and does the other half: it
  * collapses the metadata pass, the layout and the page into one call within a

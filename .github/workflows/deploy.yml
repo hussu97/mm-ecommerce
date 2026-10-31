@@ -660,6 +660,8 @@ jobs:
           PHONE_VERIFICATION_TTL_SECONDS=${{ secrets.PHONE_VERIFICATION_TTL_SECONDS }}
           TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
           TURNSTILE_TIMEOUT_SECONDS=${{ secrets.TURNSTILE_TIMEOUT_SECONDS || '5' }}
+          STOREFRONT_REVALIDATE_URL=${{ secrets.STOREFRONT_REVALIDATE_URL }}
+          STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
           WEB_URL=${{ secrets.WEB_URL }}
           ADMIN_URL=${{ secrets.ADMIN_URL }}
           # Not secrets — the register's hostname is public. Kept apart from
@@ -784,7 +786,7 @@ jobs:
           # those mid-deploy is worse than a stale page.
           echo "Invalidating read-through caches..."
           docker compose -f docker-compose.prod.yml exec -T redis \
-            sh -c 'for p in "cms:*" "i18n:*" "categories:*" "products:*" "blog:*" "redirects:*"; do redis-cli --scan --pattern "$p" | xargs -r redis-cli del; done' < /dev/null \
+            sh -c 'for p in "cms:*" "i18n:*" "categories:*" "products:*" "blog:*" "redirects:*" "promo:*"; do redis-cli --scan --pattern "$p" | xargs -r redis-cli del; done' < /dev/null \
             || echo "WARNING: cache flush failed — content may be stale for up to 5 minutes"
 
           # Retire the host-cron aggregator model: scheduling is now in-process in

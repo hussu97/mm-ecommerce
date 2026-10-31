@@ -8332,6 +8332,12 @@ export interface paths {
          *     could list a counter item and then 404 trying to open it — and every
          *     inactive product was unreachable for editing, which is precisely when
          *     someone needs to reach it.
+         *
+         *     The shopper's answer is cached in Redis, keyed like the featured list by
+         *     who it is for (the branch or the pin's branch set). Nothing in it depends on
+         *     *which* shopper asked — a signed-in customer and a guest get the same page —
+         *     and the staff answer, which does differ, is never cached. A 404 is not
+         *     cached either. Lazy DB, so a hit checks out no connection.
          */
         get: operations["get_product_api_v1_products__slug__get"];
         /**
@@ -8506,6 +8512,12 @@ export interface paths {
          *     free, unlimited one.
          *
          *     Declared before `/{code}` so "featured" is not read as a coupon code.
+         *
+         *     Cached in Redis (the "none running" answer too), and only ever as fresh as
+         *     the query: every committed write to `promo_codes` — an edit, and each use
+         *     that moves `current_uses` towards its ceiling — retires it
+         *     (`storefront_cache`), and the entry never outlives the next moment a code
+         *     opens or closes its window. Lazy DB, so a hit checks out no connection.
          */
         get: operations["featured_promo_code_api_v1_promo_codes_featured_get"];
         put?: never;

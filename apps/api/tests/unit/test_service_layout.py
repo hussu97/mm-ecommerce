@@ -79,6 +79,10 @@ CROSS_CUTTING = {
     "push_service",
     "redirect_service",
     "reference_integrity",
+    # Purges the storefront's caches (Redis + the Next data cache) after a write
+    # to the catalogue, promo codes, CMS, blog or translations — every one of
+    # those domains, so none of them owns it.
+    "storefront_cache",
     "turnstile_service",
     # The VAT ledger cache sweep: aggregates output VAT from orders and input VAT
     # from order fees, order deliveries and purchase orders — spans orders,

@@ -19,6 +19,7 @@ __all__ = [
     "create_language",
     "delete_language",
     "get_active_languages",
+    "get_active_languages_cached",
     "get_all_languages",
     "get_translations",
     "invalidate_translations",
@@ -56,6 +57,26 @@ async def get_active_languages(db: AsyncSession) -> list[LanguageResponse]:
         .order_by(Language.display_order)
     )
     return [LanguageResponse.model_validate(lang) for lang in result.scalars().all()]
+
+
+#: The public language list. Retired by every committed write to `languages`
+#: (`storefront_cache`, tag `i18n`), so this only bounds what nothing saw.
+_LANGUAGES_KEY = "i18n:languages:active"
+_LANGUAGES_TTL = 1800
+
+
+async def get_active_languages_cached(db: AsyncSession) -> list[LanguageResponse]:
+    """`get_active_languages` through Redis — the storefront's public list."""
+    cached = await cache_get(_LANGUAGES_KEY)
+    if cached is not None:
+        return [LanguageResponse.model_validate(row) for row in cached]
+    languages = await get_active_languages(db)
+    await cache_set(
+        _LANGUAGES_KEY,
+        [lang.model_dump(mode="json") for lang in languages],
+        ttl=_LANGUAGES_TTL,
+    )
+    return languages
 
 
 async def get_all_languages(db: AsyncSession) -> list[LanguageResponse]:

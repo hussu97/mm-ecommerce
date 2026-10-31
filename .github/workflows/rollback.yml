@@ -210,6 +210,8 @@ jobs:
           PHONE_VERIFICATION_TTL_SECONDS=${{ secrets.PHONE_VERIFICATION_TTL_SECONDS }}
           TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
           TURNSTILE_TIMEOUT_SECONDS=${{ secrets.TURNSTILE_TIMEOUT_SECONDS || '5' }}
+          STOREFRONT_REVALIDATE_URL=${{ secrets.STOREFRONT_REVALIDATE_URL }}
+          STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
           WEB_URL=${{ secrets.WEB_URL }}
           ADMIN_URL=${{ secrets.ADMIN_URL }}
           # Not secrets — the register's hostname is public. Kept apart from

@@ -269,6 +269,15 @@ class Settings(BaseSettings):
     TURNSTILE_SECRET_KEY: str = ""
     TURNSTILE_TIMEOUT_SECONDS: float = 5.0
 
+    #: The storefront's on-demand purge (`storefront_cache`): after a committed
+    #: write to the catalogue, a promo, CMS, blog or translations, the API POSTs
+    #: the affected cache tags here and the web app calls `revalidateTag`. The
+    #: full URL of the route, e.g. `https://meltingmomentscakes.com/api/revalidate`.
+    #: Both halves or neither: empty skips the purge, and the storefront — which
+    #: keys its longer TTL on having the same secret — stays on its one-minute one.
+    STOREFRONT_REVALIDATE_URL: str = ""
+    STOREFRONT_REVALIDATE_SECRET: str = ""
+
     #: The in-process loop that finishes what checkout starts — dispatch and its
     #: retries, arrivals to the register, driver tracking, the daily sales email,
     #: abandoned-checkout expiry. There is no queue in this stack, so this is the

@@ -23,7 +23,7 @@ _PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=600"
 @router.get("/languages", response_model=list[LanguageResponse])
 async def list_languages(response: Response, db: AsyncSession = Depends(get_db_lazy)):
     response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
-    return await i18n_service.get_active_languages(db)
+    return await i18n_service.get_active_languages_cached(db)
 
 
 @router.get("/languages/all", response_model=list[LanguageResponse])

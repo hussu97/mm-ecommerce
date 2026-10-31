@@ -11,7 +11,7 @@
 import 'server-only';
 
 import { API_BASE } from './api-base';
-import { CACHE_TAGS, CONTENT_TTL } from './cache-policy';
+import { CACHE_TAGS, CONTENT_TTL, UNPURGED_TTL } from './cache-policy';
 import type { PickupBranch } from './types';
 
 export { fetchJson, fetchJsonOrNull } from './fetch-json';
@@ -45,9 +45,9 @@ export const cmsApi = {
    *
    * Note what actually made that bad. Not that a cache existed, but that the
    * entry never expired on its own, so it outlived the disagreement that
-   * created it and had to be found by a human. `CONTENT_TTL` is a minute; the
-   * same mistake now corrects itself before anyone can report it, and the
-   * `cms` tag is there for the on-demand purge that would make it instant.
+   * created it and had to be found by a human. Now the same mistake corrects
+   * itself: the API purges the `cms` tag on every CMS write and on every boot
+   * (so after a content migration), and `CONTENT_TTL` bounds the rest.
    *
    * What the old comment got wrong is the cost side: "every page that reads the
    * CMS is already dynamic" was true, and was the problem rather than the
@@ -89,8 +89,10 @@ export const branchesApi = {
    * a broken one, and nothing else on About depends on this.
    */
   pickupPoints: (): Promise<PickupBranch[]> =>
+    // `UNPURGED_TTL`, not `CONTENT_TTL`: the answer carries today's opening
+    // hours, which turn over at midnight with no write to purge on.
     fetch(`${RSC_API_BASE}/branches/pickup-points`, {
-      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.cms] },
+      next: { revalidate: UNPURGED_TTL, tags: [CACHE_TAGS.cms] },
       signal: AbortSignal.timeout(8000),
     })
       .then(res => (res.ok ? res.json() : []))

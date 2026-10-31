@@ -106,13 +106,16 @@ def mock_db():
 
 @pytest.fixture
 async def client(mock_db):
-    from app.core.deps import get_db
+    from app.core.deps import get_db, get_db_lazy
     from app.main import app
 
     async def override_get_db():
         yield mock_db
 
     app.dependency_overrides[get_db] = override_get_db
+    # The cached public routes take the lazy session; in a test it is the same
+    # mock, or a cache miss would reach for a real database.
+    app.dependency_overrides[get_db_lazy] = override_get_db
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, get_optional_user
+from app.core.cache import cache_get, cache_set
+from app.core.deps import get_db, get_db_lazy, get_optional_user
 from app.core.limiter import limiter
 from app.core.permissions import require
 from app.models.user import User
@@ -15,9 +16,14 @@ from app.schemas.promo_code import (
     PromoCodeValidateRequest,
     PromoCodeValidateResponse,
 )
-from app.services import audit_service, promo_code_service
+from app.services import audit_service, promo_code_service, storefront_cache
 
 router = APIRouter()
+
+#: The advertised coupon's Redis entry (`storefront_cache.REDIS_PATTERNS`).
+_FEATURED_KEY = "promo:featured"
+#: Ceiling only — writes and window boundaries retire it sooner (see below).
+_FEATURED_TTL = 300
 
 
 @router.post("/validate", response_model=PromoCodeValidateResponse)
@@ -58,7 +64,7 @@ async def validate_promo_code(
 @limiter.limit("60/minute")
 async def featured_promo_code(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_lazy),
 ):
     """
     The new-customer coupon currently being advertised, or `null` if none is.
@@ -79,8 +85,24 @@ async def featured_promo_code(
     free, unlimited one.
 
     Declared before `/{code}` so "featured" is not read as a coupon code.
+
+    Cached in Redis (the "none running" answer too), and only ever as fresh as
+    the query: every committed write to `promo_codes` — an edit, and each use
+    that moves `current_uses` towards its ceiling — retires it
+    (`storefront_cache`), and the entry never outlives the next moment a code
+    opens or closes its window. Lazy DB, so a hit checks out no connection.
     """
-    return await promo_code_service.advertisable(db)
+    cached = await cache_get(_FEATURED_KEY)
+    if cached is not None:
+        return cached["promo"]
+    promo = await promo_code_service.advertisable(db)
+    ttl = await storefront_cache.seconds_to_next_promo_boundary(db, _FEATURED_TTL)
+    await cache_set(
+        _FEATURED_KEY,
+        {"promo": promo.model_dump(mode="json") if promo else None},
+        ttl=ttl,
+    )
+    return promo
 
 
 @router.get("", response_model=list[PromoCodeResponse])

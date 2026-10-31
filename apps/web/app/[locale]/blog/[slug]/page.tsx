@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { BlogPost } from '@/lib/types';
 import { Breadcrumb } from '@/components/ui';
 import { RSC_API_BASE } from '@/lib/api-server';
-import { BLOG_TTL } from '@/lib/cache-policy';
+import { BLOG_TTL, CACHE_TAGS } from '@/lib/cache-policy';
 
 /**
  * How long a rendered post is held before it is built again. A blog post is the
@@ -12,12 +12,14 @@ import { BLOG_TTL } from '@/lib/cache-policy';
  *
  * The literal is not a style choice: Next reads segment config statically, and
  * an imported constant fails the build with "Invalid segment configuration
- * export". Keep it in step with `CONTENT_TTL` in `lib/cache-policy.ts`, which
- * is what every *fetch* on the site uses and what the reasoning lives next to.
+ * export". It mirrors `CONTENT_TTL`'s ten-minute ceiling in
+ * `lib/cache-policy.ts`, where the reasoning lives; a route revalidates on the
+ * lowest TTL of anything it fetched, so without the on-demand purge the
+ * page's translation and category fetches still bring it down to the minute.
  *
  * On its own this does nothing — see `generateStaticParams` below.
  */
-export const revalidate = 60;
+export const revalidate = 600;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
@@ -57,7 +59,7 @@ export async function generateStaticParams() {
     for (;;) {
       const res = await fetch(
         `${RSC_API_BASE}/blog/public?per_page=${BLOG_PAGE_SIZE}&page=${page}`,
-        { next: { revalidate: BLOG_TTL }, signal: AbortSignal.timeout(15000) },
+        { next: { revalidate: BLOG_TTL, tags: [CACHE_TAGS.blog] }, signal: AbortSignal.timeout(15000) },
       );
       if (!res.ok) break;
 
@@ -81,7 +83,7 @@ async function fetchPost(slug: string, locale: string): Promise<BlogPost | null>
   try {
     const res = await fetch(
       `${RSC_API_BASE}/blog/public/${slug}?locale=${locale}`,
-      { next: { revalidate: BLOG_TTL }, signal: AbortSignal.timeout(8000) },
+      { next: { revalidate: BLOG_TTL, tags: [CACHE_TAGS.blog] }, signal: AbortSignal.timeout(8000) },
     );
     if (!res.ok) return null;
     return res.json();

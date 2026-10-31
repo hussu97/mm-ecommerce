@@ -215,6 +215,11 @@ x-api-environment: &api-environment
   PHONE_VERIFICATION_TTL_SECONDS: ${PHONE_VERIFICATION_TTL_SECONDS:-2592000}
   TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
   TURNSTILE_TIMEOUT_SECONDS: ${TURNSTILE_TIMEOUT_SECONDS:-5}
+  # ── Storefront on-demand purge (storefront_cache) ───────────────────
+  # Empty skips it; both halves or neither. The register writes stock too,
+  # so pos-api carries the same pair.
+  STOREFRONT_REVALIDATE_URL: ${STOREFRONT_REVALIDATE_URL:-}
+  STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
   # The rate card. Tunable without a deploy, which is the whole reason
   # these are settings and not constants.
   NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
@@ -298,6 +303,9 @@ x-pos-environment: &pos-environment
   ALLOWED_HOSTS: ${ALLOWED_HOSTS}
   POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
   POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
+  # Availability and busy-mode toggles at the till purge the storefront too.
+  STOREFRONT_REVALIDATE_URL: ${STOREFRONT_REVALIDATE_URL:-}
+  STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
   POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
   # The register books couriers. `POST /pos/orders/{id}/packed` is the event
   # the whole delivery chain hangs off — it assigns the batch, books the
