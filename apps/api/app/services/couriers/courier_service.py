@@ -913,6 +913,7 @@ async def _estimate_one(
     address: str | None,
     branch_id: uuid.UUID | None,
     zone_name: str | None,
+    pickup: lalamove_service.PickupPoint | None = None,
 ):
     """One comparable candidate's estimate, or `(None, reason)` — never raises.
 
@@ -920,12 +921,15 @@ async def _estimate_one(
     pinned to `bike` — the comparison is bike-against-bike by construction, a
     car is never silently substituted. A courier whose credential is absent is
     simply dropped from the contest, mirroring `estimate_for_point`.
+
+    `pickup` is the branch both couriers collect from, resolved once by the
+    caller; None lets each resolve it for itself, as they always have.
     """
     if candidate == NOON_SEND:
         if not noon_send_service.is_enabled():
             return None, "noon Send is not configured"
         return await noon_send_service.estimate_for_point(
-            db, latitude, longitude, address, branch_id
+            db, latitude, longitude, address, branch_id, pickup=pickup
         )
     if not slider_service.is_enabled():
         return None, "Slider is not configured"
@@ -935,6 +939,7 @@ async def _estimate_one(
         longitude,
         address,
         branch_id,
+        pickup=pickup,
         drop_emirate=zone_name,
         vehicle=slider_service.vehicle_for_provider(SLIDER_BIKE),
     )
@@ -975,14 +980,37 @@ async def resolve_and_estimate(
         chosen, _ = effective_provider(provider, zone_name)
         return estimate, error, chosen
 
-    results = await asyncio.gather(
-        *(
-            _estimate_one(
+    # Both couriers collect from the same branch, so it is resolved once, here.
+    # Each used to resolve it for itself inside the `gather` below — two queries
+    # racing on one `AsyncSession`, which is not safe to share between
+    # concurrent tasks. With the pickup in hand neither touches the session, so
+    # the two quotes (Slider's is a network call) still run side by side.
+    pickup = await lalamove_service.resolve_pickup(db, branch_id)
+    if pickup is None:
+        # Nothing to share: each would resolve the same None for itself, and
+        # one at a time keeps them off the session together. Same answers.
+        results = [
+            await _estimate_one(
                 db, candidate, latitude, longitude, address, branch_id, zone_name
             )
             for candidate in candidates
+        ]
+    else:
+        results = await asyncio.gather(
+            *(
+                _estimate_one(
+                    db,
+                    candidate,
+                    latitude,
+                    longitude,
+                    address,
+                    branch_id,
+                    zone_name,
+                    pickup=pickup,
+                )
+                for candidate in candidates
+            )
         )
-    )
 
     priced = [
         (candidate, estimate, error)

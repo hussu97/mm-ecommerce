@@ -16,8 +16,13 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.couriers import courier_service, noon_send_service, slider_service
-from app.services.couriers.lalamove_service import Estimate
+from app.services.couriers import (
+    courier_service,
+    lalamove_service,
+    noon_send_service,
+    slider_service,
+)
+from app.services.couriers.lalamove_service import Estimate, PickupPoint
 
 NOON = courier_service.NOON_SEND
 BIKE = courier_service.SLIDER_BIKE
@@ -61,6 +66,28 @@ def test_comparison_candidates(provider, alternates, expected):
 # ── resolve_and_estimate: the comparable path ───────────────────────────────
 
 
+_PICKUP = PickupPoint(
+    name="Sharjah",
+    phone="+971500000000",
+    latitude=25.33,
+    longitude=55.39,
+    address="Sharjah kitchen",
+)
+
+
+@pytest.fixture(autouse=True)
+def one_pickup(monkeypatch):
+    """The comparable path resolves the pickup once, before quoting both."""
+    calls: list[object] = []
+
+    async def _resolve_pickup(db, branch_id=None):
+        calls.append(branch_id)
+        return _PICKUP
+
+    monkeypatch.setattr(lalamove_service, "resolve_pickup", _resolve_pickup)
+    return calls
+
+
 @pytest.fixture
 def both_enabled(monkeypatch):
     monkeypatch.setattr(noon_send_service, "is_enabled", lambda: True)
@@ -72,11 +99,11 @@ def _stub_estimators(monkeypatch, *, noon, bike):
     calls: dict[str, dict] = {}
 
     async def _noon(db, lat, lng, address=None, branch_id=None, pickup=None):
-        calls["noon"] = {"lat": lat, "lng": lng}
+        calls["noon"] = {"lat": lat, "lng": lng, "pickup": pickup}
         return noon
 
     async def _bike(db, lat, lng, address=None, branch_id=None, pickup=None, **kw):
-        calls["bike"] = {"lat": lat, "lng": lng, **kw}
+        calls["bike"] = {"lat": lat, "lng": lng, "pickup": pickup, **kw}
         return bike
 
     monkeypatch.setattr(noon_send_service, "estimate_for_point", _noon)
@@ -162,6 +189,39 @@ async def test_slider_priced_as_bike(monkeypatch, both_enabled):
     # The Slider side is always quoted as a bike, never a car.
     assert calls["bike"].get("vehicle") == "bike"
     assert calls["bike"].get("drop_emirate") == "Sharjah · Al Taawun"
+
+
+@pytest.mark.asyncio
+async def test_pickup_is_resolved_once_and_shared(
+    monkeypatch, both_enabled, one_pickup
+):
+    # Both couriers used to resolve it themselves, concurrently, on one session.
+    calls = _stub_estimators(
+        monkeypatch, noon=(_est("13.00"), None), bike=(_est("11.00"), None)
+    )
+    await _resolve()
+    assert one_pickup == [None]
+    assert calls["noon"]["pickup"] is _PICKUP
+    assert calls["bike"]["pickup"] is _PICKUP
+
+
+@pytest.mark.asyncio
+async def test_no_pickup_leaves_each_courier_to_answer_alone(monkeypatch, both_enabled):
+    # Nothing to share: each courier resolves (and refuses) for itself, as before.
+    async def _none(db, branch_id=None):
+        return None
+
+    monkeypatch.setattr(lalamove_service, "resolve_pickup", _none)
+    calls = _stub_estimators(
+        monkeypatch,
+        noon=(None, "No pickup branch is configured"),
+        bike=(None, "No pickup branch is configured"),
+    )
+    estimate, error, _chosen = await _resolve()
+    assert estimate is None
+    assert error == "No pickup branch is configured"
+    assert calls["noon"]["pickup"] is None
+    assert calls["bike"]["pickup"] is None
 
 
 @pytest.mark.asyncio
