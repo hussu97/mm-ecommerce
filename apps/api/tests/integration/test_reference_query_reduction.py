@@ -623,3 +623,147 @@ async def test_the_route_sweep_reads_deliveries_orders_and_branches_in_two_queri
     assert ours, f"delivery {delivery_id} routed from the rider to its branch"
     print(f"\nroute sweep read: {len(reads)} queries")
     assert len(reads) == 2
+
+
+async def test_the_route_sweep_is_not_starved_by_collected_deliveries(
+    engine, monkeypatch
+):
+    """Liveness is filtered before the limit. Delivered rows are never
+    re-routed, so they stay oldest forever; filtered after the limit they
+    filled every batch and a live driver was never re-routed."""
+    from datetime import timedelta
+
+    async with engine.connect() as conn:
+        outer = await conn.begin()
+        factory = async_sessionmaker(
+            bind=conn,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        async with factory() as db:
+            entity = await _fatema(db)
+            await db.execute(update(OrderDelivery).values(driver_latitude=None))
+
+            async def delivery(status, route_at):
+                order, _ = await _grubops_order(db, legal_entity_id=entity.id)
+                branch = await db.get(Branch, order.branch_id)
+                branch.latitude, branch.longitude = Decimal("25.2"), Decimal("55.3")
+                row = OrderDelivery(
+                    order_id=order.id,
+                    provider="slider_bike",
+                    courier_status=status,
+                    driver_name="Rider",
+                    driver_latitude=Decimal("25.1"),
+                    driver_longitude=Decimal("55.1"),
+                    driver_location_at=utcnow(),
+                    driver_route_at=route_at,
+                )
+                db.add(row)
+                await db.flush()
+                return row.id
+
+            for _ in range(5):
+                await delivery("delivered", None)
+            live = await delivery("assigned", utcnow() - timedelta(hours=1))
+            await db.commit()
+
+        routed: list[float] = []
+
+        async def route(**kwargs):
+            routed.append(kwargs)
+            return SimpleNamespace(distance_km=1.0, minutes=3.0)
+
+        monkeypatch.setattr(driver_routing, "SchedulerSessionFactory", factory)
+        monkeypatch.setattr(
+            driver_routing.mapbox_provider, "is_configured", lambda: True
+        )
+        monkeypatch.setattr(driver_routing.mapbox_provider, "route", route)
+
+        moved = await driver_routing.refresh_routes(limit=3)
+        async with factory() as db:
+            row = await db.get(OrderDelivery, live)
+            refreshed = row.driver_route_minutes
+        await outer.rollback()
+
+    assert moved == 1 and len(routed) == 1
+    assert refreshed == Decimal("3.0")
+
+
+async def test_the_liveness_clause_matches_the_property(engine):
+    """`driver_on_the_way_here_clause` answers exactly as
+    `is_driver_on_the_way_here` for every courier vocabulary, NULLs and empty
+    strings included. Every combination goes into a session temp table named
+    `order_deliveries`, which shadows the real one for this transaction only,
+    so the clause is evaluated by Postgres exactly as the sweep compiles it."""
+    from app.models import order_delivery as od
+
+    statuses = {None, "", "made-up"}
+    for terminal, failed in od._STATUS_SETS.values():
+        statuses |= set(terminal) | set(failed)
+    for collected in od._COLLECTED_STATUSES.values():
+        statuses |= set(collected)
+    providers = [None, "", "third_party", "lalamove", "noon_send", "slider"]
+    providers += list(od._FAMILY_ALIASES)
+    drivers = [(None, None), ("", ""), ("d1", None), (None, "Rider")]
+
+    cases = []
+    for provider in providers:
+        for status in sorted(statuses, key=str):
+            for driver_id, driver_name in drivers:
+                row = OrderDelivery(
+                    provider=provider,
+                    courier_status=status,
+                    driver_id=driver_id,
+                    driver_name=driver_name,
+                )
+                cases.append(
+                    {
+                        "k": len(cases),
+                        "provider": provider,
+                        "courier_status": status,
+                        "driver_id": driver_id,
+                        "driver_name": driver_name,
+                        "want": row.is_driver_on_the_way_here,
+                    }
+                )
+
+    async with engine.connect() as conn:
+        outer = await conn.begin()
+        await conn.execute(
+            text(
+                "CREATE TEMP TABLE order_deliveries (k int, provider varchar, "
+                "courier_status varchar, driver_id varchar, driver_name varchar) "
+                "ON COMMIT DROP"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO order_deliveries VALUES "
+                "(:k, :provider, :courier_status, :driver_id, :driver_name)"
+            ),
+            [{k: v for k, v in c.items() if k != "want"} for c in cases],
+        )
+        live = set(
+            (
+                await conn.execute(
+                    select(text("k"))
+                    .select_from(OrderDelivery.__table__)
+                    .where(OrderDelivery.driver_on_the_way_here_clause())
+                )
+            ).scalars()
+        )
+        await outer.rollback()
+
+    mismatches = [
+        (
+            c["provider"],
+            c["courier_status"],
+            c["driver_id"],
+            c["driver_name"],
+            c["want"],
+        )
+        for c in cases
+        if (c["k"] in live) != c["want"]
+    ]
+    assert len(cases) > 300
+    assert not mismatches, mismatches[:10]

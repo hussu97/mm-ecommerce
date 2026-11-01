@@ -14,8 +14,11 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
     case,
     func,
+    not_,
+    or_,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -205,6 +208,10 @@ _STATUS_SETS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 }
 
 
+#: Providers that speak another provider's status vocabulary.
+_FAMILY_ALIASES = ("slider_bike", "slider_car")
+
+
 def _status_family(provider: str | None) -> str:
     """The courier whose status vocabulary a provider speaks.
 
@@ -212,7 +219,7 @@ def _status_family(provider: str | None) -> str:
     courier with one set of statuses, so both resolve to `slider` for a status
     lookup. Everything else is itself.
     """
-    if provider in ("slider_bike", "slider_car"):
+    if provider in _FAMILY_ALIASES:
         return "slider"
     return provider or ""
 
@@ -612,6 +619,36 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
             return False
         return not is_collected(self.provider, self.courier_status) and not is_terminal(
             self.provider, self.courier_status
+        )
+
+    @classmethod
+    def driver_on_the_way_here_clause(cls) -> Any:
+        """`is_driver_on_the_way_here` as SQL, built from the same status sets.
+
+        For a query that must pick only live rows *before* it limits them. The
+        route sweep filtered liveness in Python after a `LIMIT` ordered by
+        oldest route: a delivered row is never re-routed, so it stays oldest
+        forever, and enough of them filled every batch — a live driver was
+        routed once on assignment and never again.
+
+        NULL-safe where the property is falsy-safe: an empty string counts as
+        absent for the driver and for the status, exactly as in Python.
+        """
+        status = func.coalesce(cls.courier_status, "")
+        provider = func.coalesce(cls.provider, "")
+        done = []
+        for family, (terminal, _failed) in _STATUS_SETS.items():
+            over = sorted(terminal | _COLLECTED_STATUSES.get(family, frozenset()))
+            providers = [family] + [
+                p for p in _FAMILY_ALIASES if _status_family(p) == family
+            ]
+            done.append(and_(provider.in_(providers), status.in_(over)))
+        return and_(
+            or_(
+                func.coalesce(cls.driver_id, "") != "",
+                func.coalesce(cls.driver_name, "") != "",
+            ),
+            not_(or_(*done)),
         )
 
     @property

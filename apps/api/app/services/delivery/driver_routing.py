@@ -104,6 +104,11 @@ async def refresh_routes(
                         )
                     )
                     .where(
+                        # Live rows only, in SQL, BEFORE the limit. Filtering
+                        # liveness after it let delivered rows (never re-routed,
+                        # so always oldest) fill every batch and starve the
+                        # drivers still coming.
+                        OrderDelivery.driver_on_the_way_here_clause(),
                         OrderDelivery.driver_latitude.is_not(None),
                         OrderDelivery.driver_longitude.is_not(None),
                         OrderDelivery.driver_location_at.is_not(None),
@@ -122,9 +127,7 @@ async def refresh_routes(
         )
         jobs: list[_RouteJob] = []
         for delivery in rows:
-            # The cheap test last, because it reads a relationship: most rows the
-            # query returns are live, and the ones that are not are excluded here
-            # rather than in SQL where the vocabulary is per-courier.
+            # Already filtered in SQL; kept as the definition the clause mirrors.
             if not delivery.is_driver_on_the_way_here:
                 continue
             branch = delivery.order.branch if delivery.order else None
