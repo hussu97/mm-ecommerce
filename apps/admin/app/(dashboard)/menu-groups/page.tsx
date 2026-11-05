@@ -32,6 +32,8 @@ const BLANK = {
   image_url: '' as string,
   parent_id: null as string | null,
   is_active: true,
+  /** Integrator categories only: null = sold at every branch. */
+  marketplace_branch_ids: null as string[] | null,
 };
 
 /** The API caps `per_page` at 2000, so one request covers today's catalogue. */
@@ -42,6 +44,14 @@ const INTEGRATOR_REFERENCE = 'integrator-root';
 /** Flattened, depth-annotated, for the parent picker. */
 function flatten(nodes: MenuGroupNode[], depth = 0): { node: MenuGroupNode; depth: number }[] {
   return nodes.flatMap(node => [{ node, depth }, ...flatten(node.children, depth + 1)]);
+}
+
+/**
+ * A category of the integrator menu — a direct child of its root. Only these
+ * can be limited to some branches' marketplace listings.
+ */
+function isIntegratorCategory(node: Pick<MenuGroupNode, 'root_kind' | 'parent_id'>): boolean {
+  return node.root_kind === 'integrator' && !!node.parent_id;
 }
 
 /** Ids of a group and everything under it — never valid as its own parent. */
@@ -183,6 +193,7 @@ export default function MenuGroupsPage() {
       image_url: node.image_url ?? '',
       parent_id: node.parent_id ?? null,
       is_active: node.is_active,
+      marketplace_branch_ids: node.marketplace_branch_ids?.length ? [...node.marketplace_branch_ids] : null,
     });
     setPicked(new Set(node.product_ids));
     setPdfExcluded(new Set(node.pdf_excluded_product_ids ?? []));
@@ -205,7 +216,14 @@ export default function MenuGroupsPage() {
     }
   }
 
+  // Every category being edited or added here sits directly under the root.
+  const formIsIntegratorCategory = isIntegrator && !!form.parent_id;
+
   async function save() {
+    if (formIsIntegratorCategory && form.marketplace_branch_ids?.length === 0) {
+      setApiError('Pick at least one branch, or choose All branches.');
+      return;
+    }
     setSaving(true);
     setApiError('');
     try {
@@ -218,6 +236,9 @@ export default function MenuGroupsPage() {
         is_active: form.is_active,
         product_ids: [...picked],
         pdf_excluded_product_ids: [...pdfExcluded].filter(id => picked.has(id)),
+        // Branch-tree groups never carry it (the API rejects it there). On an
+        // integrator category null is "every branch" and clears a limit.
+        ...(formIsIntegratorCategory ? { marketplace_branch_ids: form.marketplace_branch_ids } : {}),
       };
       if (editing) await menuGroupsApi.update(editing.id, payload);
       else await menuGroupsApi.create(payload);
@@ -317,12 +338,20 @@ export default function MenuGroupsPage() {
     return node.product_count + node.children.reduce((n, c) => n + reach(c), 0);
   }
 
+  /** "Barsha Heights only" / "2 branches" for a limited integrator category. */
+  function soldAtLabel(node: MenuGroupNode): string | null {
+    const ids = node.marketplace_branch_ids;
+    if (!isIntegratorCategory(node) || !ids?.length) return null;
+    return ids.length === 1 ? `${branchName(ids[0])} only` : `${ids.length} branches`;
+  }
+
   function Row({ node, depth }: { node: MenuGroupNode; depth: number }) {
     const isOpen = expanded.has(node.id);
     const hasChildren = node.children.length > 0;
     // The integrator menu is two levels — a category, then its items — so a
     // category never takes a nested group. Branch trees nest freely.
     const canAddInside = !isIntegrator;
+    const soldAt = soldAtLabel(node);
     return (
       <>
         <tr className={`${interactiveRowClass} ${node.is_active ? '' : 'opacity-50'}`}>
@@ -349,6 +378,14 @@ export default function MenuGroupsPage() {
               <span className="font-body">{node.name}</span>
               {node.name_localized && (
                 <span className="text-xs text-gray-400" dir="rtl">{node.name_localized}</span>
+              )}
+              {soldAt && (
+                <span
+                  className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 whitespace-nowrap"
+                  title={`On the marketplaces only at: ${(node.marketplace_branch_ids ?? []).map(id => branchName(id)).join(', ')}`}
+                >
+                  {soldAt}
+                </span>
               )}
             </div>
           </td>
@@ -614,6 +651,66 @@ export default function MenuGroupsPage() {
                       ))}
                 </select>
               </label>
+
+              {formIsIntegratorCategory && (
+                <fieldset>
+                  <legend className="text-xs uppercase tracking-wider text-gray-600 font-body mb-1">
+                    Sold at
+                  </legend>
+                  <div className="flex flex-wrap items-center gap-4 font-body text-sm">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="sold-at"
+                        checked={form.marketplace_branch_ids === null}
+                        onChange={() => setForm(f => ({ ...f, marketplace_branch_ids: null }))}
+                        className="accent-primary"
+                      />
+                      All branches
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="sold-at"
+                        checked={form.marketplace_branch_ids !== null}
+                        onChange={() => setForm(f => ({ ...f, marketplace_branch_ids: f.marketplace_branch_ids ?? [] }))}
+                        className="accent-primary"
+                      />
+                      Only these branches
+                    </label>
+                  </div>
+                  {form.marketplace_branch_ids !== null && (
+                    <div className="mt-2 border rounded divide-y divide-gray-100">
+                      {branches
+                        .filter(b => b.is_active || form.marketplace_branch_ids?.includes(b.id))
+                        .map(b => (
+                          <label key={b.id} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-gray-50">
+                            <input
+                              type="checkbox"
+                              checked={form.marketplace_branch_ids?.includes(b.id) ?? false}
+                              onChange={e => setForm(f => {
+                                const current = f.marketplace_branch_ids ?? [];
+                                return {
+                                  ...f,
+                                  marketplace_branch_ids: e.target.checked
+                                    ? [...current, b.id]
+                                    : current.filter(id => id !== b.id),
+                                };
+                              })}
+                              className="accent-primary"
+                            />
+                            <span className="font-body text-sm">{b.name}</span>
+                          </label>
+                        ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1 font-body">
+                    {form.marketplace_branch_ids === null
+                      ? 'This category’s items are on the marketplaces at every branch.'
+                      : 'This category’s items are on the marketplaces only at the ticked branches.'}
+                  </p>
+                </fieldset>
+              )}
 
               <label className="flex items-center gap-2 cursor-pointer text-xs uppercase tracking-wider text-gray-600 font-body">
                 <input

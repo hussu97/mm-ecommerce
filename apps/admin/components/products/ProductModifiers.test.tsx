@@ -93,6 +93,25 @@ describe('ProductModifiers', () => {
     expect(screen.getByLabelText('Price of Fudge')).toHaveValue(6.5);
   });
 
+  it('sets a marketplace price, and clearing it sends null', async () => {
+    const withAgg = modifier();
+    withAgg.options[1] = { ...withAgg.options[1], aggregator_price: 3 };
+    const p = product({ modifier: withAgg });
+    apiMocks.updateOption.mockResolvedValue(withAgg);
+    render(<ProductModifiers product={p} />);
+
+    expect(screen.getByLabelText('Marketplace price of Fudge')).toHaveValue(null);
+    expect(screen.getByLabelText('Marketplace price of Lotus')).toHaveValue(3);
+
+    fireEvent.change(screen.getByLabelText('Marketplace price of Fudge'), { target: { value: '7.5' } });
+    fireEvent.change(screen.getByLabelText('Marketplace price of Lotus'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(apiMocks.updateOption).toHaveBeenCalledTimes(2));
+    expect(apiMocks.updateOption).toHaveBeenCalledWith('mod-1', 'opt-1', { aggregator_price: 7.5 });
+    expect(apiMocks.updateOption).toHaveBeenCalledWith('mod-1', 'opt-2', { aggregator_price: null });
+  });
+
   it('refuses a malformed price without calling the API', async () => {
     render(<ProductModifiers product={product()} />);
     fireEvent.change(screen.getByLabelText('Price of Fudge'), { target: { value: '1.234' } });

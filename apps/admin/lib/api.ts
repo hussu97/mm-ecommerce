@@ -334,6 +334,11 @@ export interface MenuGroupNode {
   product_ids: string[];
   /** Members kept on the register but left off the printable menu PDF. */
   pdf_excluded_product_ids?: string[];
+  /**
+   * Integrator categories only: the branches whose marketplace listings carry
+   * this category. Null = every branch.
+   */
+  marketplace_branch_ids?: string[] | null;
   product_count: number;
   children: MenuGroupNode[];
 }
@@ -352,6 +357,11 @@ export interface MenuGroupInput {
   product_ids?: string[];
   /** Subset of product_ids to keep off the printable menu PDF. */
   pdf_excluded_product_ids?: string[];
+  /**
+   * Integrator categories only. Null = sold at every branch (on PATCH, null
+   * clears it); a non-empty list limits the category to those branches.
+   */
+  marketplace_branch_ids?: string[] | null;
 }
 
 export const menuGroupsApi = {

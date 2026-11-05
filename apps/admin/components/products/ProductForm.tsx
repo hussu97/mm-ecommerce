@@ -33,6 +33,8 @@ export function ProductForm({ product }: Props) {
     category_id: product?.category_id ?? '',
     description: product?.description ?? '',
     base_price: String(product?.base_price ?? '0'),
+    // '' is "same as the base price" — what most products are.
+    aggregator_price: product?.aggregator_price == null ? '' : String(product.aggregator_price),
     calories: String(product?.calories ?? ''),
     preparation_time: String(product?.preparation_time ?? ''),
     is_active: product?.is_active ?? true,
@@ -86,6 +88,9 @@ export function ProductForm({ product }: Props) {
     if (!form.name.trim()) e.name = 'Required';
     if (!form.slug.trim()) e.slug = 'Required';
     if (form.base_price === '' || isNaN(Number(form.base_price))) e.base_price = 'Valid price required (0 or more)';
+    if (form.aggregator_price.trim() && (isNaN(Number(form.aggregator_price)) || Number(form.aggregator_price) < 0)) {
+      e.aggregator_price = 'Valid price required (0 or more), or leave blank';
+    }
     if (form.is_stock_product && (form.stock_quantity === '' || isNaN(Number(form.stock_quantity)) || Number(form.stock_quantity) < 0)) {
       e.stock_quantity = 'Valid stock quantity required (0 or more)';
     }
@@ -157,6 +162,8 @@ export function ProductForm({ product }: Props) {
         return Object.keys(t).length > 0 ? t : null;
       })(),
       base_price: Number(form.base_price),
+      // Always sent: blank → null, which on update clears an earlier markup.
+      aggregator_price: form.aggregator_price.trim() ? Number(form.aggregator_price) : null,
       calories: form.calories.trim() ? Number(form.calories) : null,
       preparation_time: form.preparation_time.trim() ? Number(form.preparation_time) : null,
       image_urls: imageUrls,
@@ -238,6 +245,20 @@ export function ProductForm({ product }: Props) {
             onChange={e => setForm(f => ({ ...f, base_price: e.target.value }))}
             error={errors.base_price}
             helper="Set to 0 if price comes from modifier options"
+          />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <div className="hidden sm:block" />
+          <Input
+            label="Aggregator Price (AED)"
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.aggregator_price}
+            onChange={e => setForm(f => ({ ...f, aggregator_price: e.target.value }))}
+            error={errors.aggregator_price}
+            placeholder="Same as base price"
+            helper="What Talabat, Deliveroo, noon, Careem and Keeta charge. Leave blank to use the base price. For an item priced by its sizes, set it on each option instead."
           />
         </div>
         <div className="grid sm:grid-cols-2 gap-4 mt-4">

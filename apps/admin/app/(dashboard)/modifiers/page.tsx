@@ -10,7 +10,18 @@ import { TranslationFields } from '@/components/TranslationFields';
 import { useLanguages } from '@/hooks/useLanguages';
 
 const BLANK_MODIFIER = { reference: '', name: '' };
-const BLANK_OPTION = { name: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
+// aggregator_price '' = the marketplaces charge the same as `price` (sent as null).
+const BLANK_OPTION = { name: '', sku: '', price: '0', aggregator_price: '', calories: '', is_active: true, display_order: '0' };
+
+/** Blank → null ("same as the price"); otherwise the number, or NaN if it isn't one. */
+function aggregatorPriceValue(text: string): number | null {
+  return text.trim() === '' ? null : Number(text);
+}
+
+function aggregatorPriceInvalid(text: string): boolean {
+  const v = aggregatorPriceValue(text);
+  return v !== null && (isNaN(v) || v < 0);
+}
 
 export default function ModifiersPage() {
   const { languages } = useLanguages();
@@ -214,6 +225,7 @@ export default function ModifiersPage() {
 
   async function handleAddOption(modifierId: string) {
     if (!optionForm.name.trim() || !optionForm.sku.trim()) { setOptionError('Name and SKU are required.'); return; }
+    if (aggregatorPriceInvalid(optionForm.aggregator_price)) { setOptionError('Apps price must be 0 or more, or blank.'); return; }
     setSavingOption(true); setOptionError('');
     try {
       const data = {
@@ -221,6 +233,7 @@ export default function ModifiersPage() {
         translations: cleanTranslations(optionTranslations),
         sku: optionForm.sku.trim(),
         price: Number(optionForm.price) || 0,
+        aggregator_price: aggregatorPriceValue(optionForm.aggregator_price),
         calories: optionForm.calories ? Number(optionForm.calories) : null,
         is_active: optionForm.is_active,
         display_order: Number(optionForm.display_order) || 0,
@@ -241,6 +254,7 @@ export default function ModifiersPage() {
       name: opt.name,
       sku: opt.sku,
       price: String(opt.price),
+      aggregator_price: opt.aggregator_price != null ? String(opt.aggregator_price) : '',
       calories: opt.calories != null ? String(opt.calories) : '',
       is_active: opt.is_active,
       display_order: String(opt.display_order),
@@ -249,6 +263,7 @@ export default function ModifiersPage() {
   }
 
   async function handleSaveOption(modifierId: string, optionId: string) {
+    if (aggregatorPriceInvalid(editOptionForm.aggregator_price)) { toast.error('Apps price must be 0 or more, or blank.'); return; }
     setSavingEditOption(true);
     try {
       const data = {
@@ -256,6 +271,8 @@ export default function ModifiersPage() {
         translations: cleanTranslations(editOptionTranslations),
         sku: editOptionForm.sku.trim() || undefined,
         price: editOptionForm.price !== '' ? Number(editOptionForm.price) : undefined,
+        // Always sent: blank → null, which clears an earlier marketplace price.
+        aggregator_price: aggregatorPriceValue(editOptionForm.aggregator_price),
         calories: editOptionForm.calories ? Number(editOptionForm.calories) : null,
         is_active: editOptionForm.is_active,
         display_order: Number(editOptionForm.display_order) || 0,
@@ -498,8 +515,16 @@ export default function ModifiersPage() {
                                           className="w-full border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
                                       </td>
                                       <td className="py-2 pr-2">
-                                        <input type="number" min="0" step="0.01" value={editOptionForm.price} onChange={e => setEditOptionForm(f => ({ ...f, price: e.target.value }))}
-                                          className="w-20 border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
+                                        <div className="flex flex-col items-end gap-1">
+                                          <input type="number" min="0" step="0.01" value={editOptionForm.price} onChange={e => setEditOptionForm(f => ({ ...f, price: e.target.value }))}
+                                            aria-label="Price"
+                                            className="w-20 border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
+                                          <input type="number" min="0" step="0.01" value={editOptionForm.aggregator_price} onChange={e => setEditOptionForm(f => ({ ...f, aggregator_price: e.target.value }))}
+                                            aria-label="Price on the apps"
+                                            title="What Talabat, Deliveroo, noon, Careem and Keeta charge. Blank = same as the price."
+                                            placeholder="Apps: same"
+                                            className="w-20 border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
+                                        </div>
                                       </td>
                                       <td className="py-2 pr-2 hidden md:table-cell">
                                         <input type="number" min="0" value={editOptionForm.calories} onChange={e => setEditOptionForm(f => ({ ...f, calories: e.target.value }))}
@@ -528,6 +553,11 @@ export default function ModifiersPage() {
                                       <td className="py-2 pr-2 font-body text-gray-400 hidden sm:table-cell">{opt.sku}</td>
                                       <td className="py-2 pr-2 text-right font-body text-gray-700">
                                         {opt.price > 0 ? `AED ${Number(opt.price).toFixed(2)}` : '—'}
+                                        {opt.aggregator_price != null && (
+                                          <div className="text-[10px] text-gray-400" title="What the marketplaces charge for this option">
+                                            {Number(opt.aggregator_price).toFixed(2)} on apps
+                                          </div>
+                                        )}
                                       </td>
                                       <td className="py-2 text-center font-body text-gray-400 hidden md:table-cell">{opt.calories ?? '—'}</td>
                                       <td className="py-2 text-center">
@@ -581,6 +611,16 @@ export default function ModifiersPage() {
                                   step="0.01"
                                   value={optionForm.price}
                                   onChange={e => setOptionForm(f => ({ ...f, price: e.target.value }))}
+                                />
+                                <Input
+                                  label="Apps Price (AED)"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={optionForm.aggregator_price}
+                                  onChange={e => setOptionForm(f => ({ ...f, aggregator_price: e.target.value }))}
+                                  placeholder="Same as price"
+                                  helper="Talabat, Deliveroo, noon, Careem, Keeta"
                                 />
                                 <Input
                                   label="Calories"

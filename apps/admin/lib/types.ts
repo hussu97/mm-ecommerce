@@ -104,6 +104,8 @@ export interface ModifierOption {
   translations: Record<string, Record<string, string>>;
   sku: string;
   price: number;
+  /** What the marketplaces charge for this option instead of `price`; null = same. */
+  aggregator_price?: number | null;
   calories: number | null;
   is_active: boolean;
   display_order: number;
@@ -151,6 +153,11 @@ export interface Product {
   description: string | null;
   translations: Record<string, Record<string, string>>;
   base_price: number;
+  /**
+   * What the marketplaces (Talabat, Deliveroo, noon, Careem, Keeta) charge
+   * instead of `base_price`; null = same as the counter price.
+   */
+  aggregator_price?: number | null;
   calories: number | null;
   preparation_time: number | null;
   is_sold_by_weight: boolean;

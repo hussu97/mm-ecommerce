@@ -27,6 +27,8 @@ interface RulesDraft {
 
 interface OptionDraft {
   price?: string;
+  /** '' = same as `price` on the marketplaces (sent as null). */
+  aggregator_price?: string;
   is_active?: boolean;
 }
 
@@ -51,6 +53,22 @@ function rulesOf(pm: ProductModifier): RulesDraft {
 
 function priceText(price: number | string): string {
   return Number(price).toFixed(2);
+}
+
+/** The saved marketplace price as the input shows it: blank when it has none. */
+function aggregatorText(price: number | null | undefined): string {
+  return price == null ? '' : priceText(price);
+}
+
+/** Blank or a price; blank means "same as the price". */
+function aggregatorValid(text: string): boolean {
+  const t = text.trim();
+  return t === '' || PRICE_PATTERN.test(t);
+}
+
+function aggregatorChanged(text: string, saved: number | null | undefined): boolean {
+  const t = text.trim();
+  return (t === '' ? null : Number(t)) !== (saved ?? null);
 }
 
 function withModifier(product: Product, modifier: Modifier): Product {
@@ -238,18 +256,30 @@ function ModifierGroupCard({
   function priceFor(opt: ModifierOption): string {
     return drafts[opt.id]?.price ?? priceText(opt.price);
   }
+  function aggregatorFor(opt: ModifierOption): string {
+    return drafts[opt.id]?.aggregator_price ?? aggregatorText(opt.aggregator_price);
+  }
   function activeFor(opt: ModifierOption): boolean {
     return drafts[opt.id]?.is_active ?? opt.is_active;
   }
-  function optionChange(opt: ModifierOption): { price?: number; is_active?: boolean } | null {
-    const change: { price?: number; is_active?: boolean } = {};
+  function optionChange(
+    opt: ModifierOption,
+  ): { price?: number; aggregator_price?: number | null; is_active?: boolean } | null {
+    const change: { price?: number; aggregator_price?: number | null; is_active?: boolean } = {};
     const price = priceFor(opt).trim();
     if (PRICE_PATTERN.test(price) && Number(price) !== Number(opt.price)) change.price = Number(price);
+    const agg = aggregatorFor(opt).trim();
+    // Blank sends null, which clears an earlier marketplace price.
+    if (aggregatorValid(agg) && aggregatorChanged(agg, opt.aggregator_price)) {
+      change.aggregator_price = agg === '' ? null : Number(agg);
+    }
     if (activeFor(opt) !== opt.is_active) change.is_active = activeFor(opt);
     return Object.keys(change).length > 0 ? change : null;
   }
 
-  const invalidPrices = options.filter(o => !PRICE_PATTERN.test(priceFor(o).trim()));
+  const invalidPrices = options.filter(
+    o => !PRICE_PATTERN.test(priceFor(o).trim()) || !aggregatorValid(aggregatorFor(o)),
+  );
   const changedOptions = options.filter(o => optionChange(o) !== null);
   const ruleProblem = (() => {
     const values = RULE_FIELDS.map(({ key }) => rules[key].trim());
@@ -267,7 +297,7 @@ function ModifierGroupCard({
   }
 
   async function save() {
-    if (invalidPrices.length > 0) { setError('Prices must be 0 or more, with at most two decimals.'); return; }
+    if (invalidPrices.length > 0) { setError('Prices must be 0 or more, with at most two decimals (a blank apps price means the same).'); return; }
     if (rulesDirty && ruleProblem) { setError(ruleProblem); return; }
     setSaving(true);
     setError('');
@@ -376,6 +406,12 @@ function ModifierGroupCard({
               <th className="px-4 py-2 text-left hidden sm:table-cell">SKU</th>
               <th className="px-4 py-2 text-right w-40">Price (+AED)</th>
               <th
+                className="px-4 py-2 text-right w-40"
+                title="What Talabat, Deliveroo, noon, Careem and Keeta charge for this option. Blank = same as the price."
+              >
+                On apps (+AED)
+              </th>
+              <th
                 className="px-4 py-2 text-center w-24"
                 title="Off takes the option off the menu everywhere. For one kitchen running out, use Option stock by branch."
               >
@@ -388,11 +424,14 @@ function ModifierGroupCard({
               const price = priceFor(opt);
               const priceInvalid = !PRICE_PATTERN.test(price.trim());
               const priceChanged = !priceInvalid && Number(price) !== Number(opt.price);
+              const agg = aggregatorFor(opt);
+              const aggInvalid = !aggregatorValid(agg);
+              const aggChanged = !aggInvalid && aggregatorChanged(agg, opt.aggregator_price);
               const active = activeFor(opt);
               return (
                 <tr
                   key={opt.id}
-                  className={`border-b border-gray-50 last:border-b-0 ${priceChanged || priceInvalid || active !== opt.is_active ? 'bg-amber-50/60' : ''}`}
+                  className={`border-b border-gray-50 last:border-b-0 ${priceChanged || priceInvalid || aggChanged || aggInvalid || active !== opt.is_active ? 'bg-amber-50/60' : ''}`}
                 >
                   <td className={`px-4 py-2 ${active ? 'text-gray-800' : 'text-gray-400 line-through'}`}>{opt.name}</td>
                   <td className="px-4 py-2 text-xs text-gray-400 hidden sm:table-cell">{opt.sku}</td>
@@ -419,6 +458,31 @@ function ModifierGroupCard({
                       )}
                     </div>
                   </td>
+                  <td className="px-4 py-2">
+                    <div className="flex flex-col items-end">
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        aria-label={`Marketplace price of ${opt.name}`}
+                        placeholder="Same"
+                        value={agg}
+                        onChange={e => setDrafts(d => ({ ...d, [opt.id]: { ...d[opt.id], aggregator_price: e.target.value } }))}
+                        onBlur={() => {
+                          if (PRICE_PATTERN.test(agg.trim())) {
+                            setDrafts(d => ({ ...d, [opt.id]: { ...d[opt.id], aggregator_price: priceText(agg) } }));
+                          }
+                        }}
+                        className={`w-28 border px-2 py-1.5 text-right text-sm tabular-nums focus:outline-none focus:border-primary ${aggInvalid ? 'border-red-400 bg-red-50' : aggChanged ? 'border-amber-400 bg-white' : 'border-gray-300 bg-white'}`}
+                      />
+                      {aggChanged && (
+                        <span className="mt-0.5 text-[10px] text-gray-400">
+                          was {opt.aggregator_price == null ? 'same' : priceText(opt.aggregator_price)}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-2 text-center">
                     <button
                       type="button"
@@ -436,7 +500,7 @@ function ModifierGroupCard({
             })}
             {options.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-3 text-xs text-gray-400">This modifier has no options yet.</td>
+                <td colSpan={5} className="px-4 py-3 text-xs text-gray-400">This modifier has no options yet.</td>
               </tr>
             )}
           </tbody>
