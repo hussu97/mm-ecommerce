@@ -52,6 +52,12 @@ async def _run() -> None:
 
     tasks = await start_storefront_schedulers()
     logger.info("scheduler process up with %d loop(s)", len(tasks))
+    from app.core import memory_telemetry
+    from app.core.background import spawn_tracked
+
+    telemetry = spawn_tracked(
+        memory_telemetry.run_forever("mm-scheduler"), name="memory_telemetry"
+    )
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -61,6 +67,7 @@ async def _run() -> None:
 
     await stop.wait()
     logger.info("scheduler process shutting down")
+    telemetry.cancel()
     await stop_storefront_schedulers(tasks)
     # Pushes and emails a sweep queued behind its commit (`post_commit`) that are
     # still on the wire — the arrival sweep's register pushes, the backstop's

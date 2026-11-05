@@ -496,8 +496,18 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
             # so a sweep can never share this event loop or DB pool.
             background = await start_storefront_schedulers()
 
+        # Per-process memory census + glibc trim (`core.memory_telemetry`): both
+        # API containers ran at their cgroup limits for days and nothing could
+        # say whether that was a leak or allocator waste.
+        from app.core import memory_telemetry
+
+        telemetry = spawn_tracked(
+            memory_telemetry.run_forever(service), name="memory_telemetry"
+        )
+
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
+        telemetry.cancel()
         await stop_storefront_schedulers(background)
         # Emails and pushes queued behind a commit (`post_commit`) that are still
         # on the wire. Before the APNs client closes, which the pushes need.
