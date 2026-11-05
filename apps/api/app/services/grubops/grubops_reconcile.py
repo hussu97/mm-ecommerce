@@ -154,16 +154,32 @@ async def desired_state(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]
         .all()
     )
 
-    # Items whose integrator category is limited to other branches are not on
-    # this location's menu: neither "out" nor "in" means anything there.
+    # Items whose integrator category is limited to other branches are not sold
+    # at this location, so they are held OUT here, permanently. Foodics' own
+    # "inactive at this branch" does reach GrubOps, but only as an out-of-stock
+    # that lapses at 06:00 the next day (source `foodics-pos`, verified live
+    # 2026-11-05) — on its own it would put a Barsha-only coffee on Sharjah's
+    # marketplaces every morning. The recipe being out is enough to make the
+    # item unorderable, so its options are left alone.
     away_products, away_options = await grubops_service.scoped_away(db, branch_id)
 
     desired: list[Desired] = []
     for mapping in mappings:
-        if (
-            mapping.product_id in away_products
-            or mapping.modifier_option_id in away_options
-        ):
+        if mapping.modifier_option_id in away_options:
+            continue
+        if mapping.product_id in away_products:
+            desired.append(
+                Desired(
+                    item_map_id=mapping.id,
+                    brand_id=mapping.scope,
+                    recipe_id=mapping.external_ref,
+                    modifier_id=mapping.external_sub_ref,
+                    child_modifier_id=mapping.external_child_ref,
+                    grubops_type=mapping.external_type,
+                    available=False,
+                    until=None,
+                )
+            )
             continue
         if mapping.product_id is not None:
             available = mapping.product_id not in out_products

@@ -469,8 +469,10 @@ async def scoped_away(
 
     GrubOps mappings are brand-wide, not per location, so without this every
     approved mapping is pushed to every location — and a Barsha-only coffee
-    would be "sold out"/"back in stock" at Sharjah, where it is not on the menu
-    at all. An option is scoped away only when every product carrying it is.
+    would be "sold out"/"back in stock" at Sharjah, where it is not sold at
+    all. The immediate push skips these; the reconcile holds the products out
+    there for good (`grubops_reconcile.desired_state`). An option is scoped away
+    only when every product carrying it is.
     """
     from app.models.modifier import ModifierOption, ProductModifier
     from app.services.catalog import menu_group_service

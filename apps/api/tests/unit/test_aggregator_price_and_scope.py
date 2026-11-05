@@ -557,3 +557,64 @@ async def test_copying_reuses_an_option_foodics_has_under_another_sku(monkeypatc
     assert report == {}  # nothing created
     writes = [url for method, url in calls if method == "POST"]
     assert writes == ["/products/p1/modifiers/mod-1"]  # only the attach
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_away_product_is_held_out_at_that_location(monkeypatch):
+    """Foodics' "inactive at Sharjah" reaches GrubOps only as an out-of-stock
+    that lapses next morning, so the reconcile itself holds a Barsha-only
+    coffee out at Sharjah — the recipe out, its options left alone — while an
+    ordinary item keeps its real availability."""
+    from app.services.grubops import grubops_reconcile
+
+    coffee, cake = uuid4(), uuid4()
+    coffee_size = uuid4()
+
+    def mapping(**kw):
+        base = dict(
+            id=uuid4(),
+            scope="brand",
+            external_ref="r",
+            external_sub_ref=None,
+            external_child_ref=None,
+            external_type="RECIPE",
+            product_id=None,
+            modifier_option_id=None,
+        )
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    maps = [
+        mapping(product_id=coffee, external_ref="r-coffee"),
+        mapping(
+            modifier_option_id=coffee_size,
+            external_ref="r-coffee",
+            external_sub_ref="m-size",
+            external_type="MODIFIER",
+        ),
+        mapping(product_id=cake, external_ref="r-cake"),
+    ]
+    answers = [[], [], maps]  # out products, out options, approved mappings
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=lambda _s: SimpleNamespace(
+                scalars=lambda v=answers.pop(0): SimpleNamespace(all=lambda: v)
+            )
+        )
+    )
+    monkeypatch.setattr(
+        grubops_reconcile, "_return_times", AsyncMock(return_value=({}, {}))
+    )
+    monkeypatch.setattr(
+        grubops_service,
+        "scoped_away",
+        AsyncMock(return_value=({coffee}, {coffee_size})),
+    )
+
+    desired = await grubops_reconcile.desired_state(db, SHARJAH)
+
+    by_recipe = {(d.recipe_id, d.modifier_id): d for d in desired}
+    assert by_recipe[("r-coffee", None)].available is False
+    assert by_recipe[("r-coffee", None)].until is None  # until further notice
+    assert ("r-coffee", "m-size") not in by_recipe
+    assert by_recipe[("r-cake", None)].available is True
