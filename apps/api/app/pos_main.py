@@ -11,7 +11,8 @@ table. Two reasons it is worth the extra process:
   * Tills keep trading while the website is being deployed, restarted or
     hammered by a campaign, because they are no longer the same process.
 
-    uvicorn app.pos_main:app
+    python -m app.pos_serve     (production: supervised, see that module)
+    uvicorn app.pos_main:app    (local)
 """
 
 from __future__ import annotations
@@ -37,6 +38,12 @@ logger = logging.getLogger("mm.pos")
 
 _docs_url = None if settings.is_production else "/docs"
 
+#: RSS after `malloc_trim` above which the worker asks `app.pos_serve` for a
+#: replacement. It boots at ~175-200 MB and each in-process FIFO replay ratchets
+#: it up (`app.core.memory_telemetry`). The handover briefly runs old and new
+#: side by side, so this sits well under the container's 384 MiB.
+RECYCLE_ABOVE_MB = 280
+
 app = FastAPI(
     title="Melting Moments POS API",
     description="Register API for the Melting Moments point of sale",
@@ -46,7 +53,9 @@ app = FastAPI(
     openapi_url=None if settings.is_production else "/openapi.json",
     # The storefront app owns the i18n seed; two processes racing the same
     # upsert on boot buys nothing and can deadlock.
-    lifespan=make_lifespan("Melting Moments POS API", seed=False),
+    lifespan=make_lifespan(
+        "Melting Moments POS API", seed=False, recycle_above_mb=RECYCLE_ABOVE_MB
+    ),
 )
 
 # Read by the device-token dependency: a paired terminal authenticates here

@@ -440,7 +440,13 @@ async def stop_storefront_schedulers(tasks: list[asyncio.Task]) -> None:
             await asyncio.wait_for(task, timeout=8)
 
 
-def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
+def make_lifespan(
+    service: str,
+    *,
+    seed: bool,
+    run_scheduler: bool = False,
+    recycle_above_mb: int | None = None,
+):
     """
     Startup checks, the i18n seed, and the storefront scheduler — each owned by
     whichever app is responsible for it.
@@ -501,8 +507,15 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
         # say whether that was a leak or allocator waste.
         from app.core import memory_telemetry
 
+        # With a ceiling, the worker asks its supervisor (`app.pos_serve`) for a
+        # replacement once it stays above it.
         telemetry = spawn_tracked(
-            memory_telemetry.run_forever(service), name="memory_telemetry"
+            memory_telemetry.run_forever(
+                service,
+                recycle_above_mb=recycle_above_mb,
+                on_recycle=memory_telemetry.ask_supervisor_to_replace,
+            ),
+            name="memory_telemetry",
         )
 
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)

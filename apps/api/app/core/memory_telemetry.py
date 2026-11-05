@@ -33,7 +33,9 @@ and swapped. So a process may pass `recycle_above_mb`: once its RSS *after the
 trim* is above that for `_RECYCLE_AFTER` samples in a row (which rules out
 catching a replay mid-flight), `on_recycle` is called. The scheduler uses it to
 exit cleanly and have its start script relaunch only the scheduler. Its loops
-are restart-safe by design: every deploy restarts them.
+are restart-safe by design: every deploy restarts them. The register API's
+worker uses `ask_supervisor_to_replace`: `app.pos_serve` brings a fresh worker
+up before it drains this one, so a till never sees the port go away.
 """
 
 from __future__ import annotations
@@ -43,6 +45,8 @@ import ctypes
 import gc
 import json
 import logging
+import os
+import signal
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -50,7 +54,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["INTERVAL_S", "run_forever", "snapshot"]
+__all__ = ["INTERVAL_S", "ask_supervisor_to_replace", "run_forever", "snapshot"]
 
 #: Between lines. The first comes `FIRST_AFTER_S` after boot, as the baseline.
 INTERVAL_S = 900
@@ -123,6 +127,20 @@ def snapshot(previous: Counter | None = None) -> tuple[dict[str, Any], Counter]:
     return data, counts
 
 
+def ask_supervisor_to_replace() -> None:
+    """Ask `app.pos_serve`'s supervisor to replace this worker, new before old.
+
+    A no-op (logged) when this process has no such supervisor: under plain
+    `uvicorn`, in tests, locally. SIGHUP to an arbitrary parent could kill it.
+    """
+    from app.pos_serve import SUPERVISED_ENV
+
+    if not os.environ.get(SUPERVISED_ENV):
+        logger.warning("memory.recycle skipped: no supervisor to replace this worker")
+        return
+    os.kill(os.getppid(), signal.SIGHUP)
+
+
 async def run_forever(
     role: str,
     *,
@@ -131,7 +149,7 @@ async def run_forever(
 ) -> None:
     """The per-process loop. Cancelled on shutdown; never dies on an error.
 
-    With `recycle_above_mb` and `on_recycle`, calls `on_recycle` once when RSS
+    With `recycle_above_mb` and `on_recycle`, calls `on_recycle` each time RSS
     after the trim has stayed above the ceiling for `_RECYCLE_AFTER` samples.
     """
     started = time.monotonic()
@@ -158,7 +176,9 @@ async def run_forever(
                         data["uptime_s"],
                     )
                     on_recycle()
-                    return
+                    # Keep sampling: if the replacement doesn't come (the
+                    # supervisor gave up), ask again after another streak.
+                    over = 0
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — telemetry must never take a process down

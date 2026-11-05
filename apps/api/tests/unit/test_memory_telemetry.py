@@ -111,3 +111,27 @@ def test_no_ceiling_means_no_recycle(monkeypatch):
 
     asyncio.run(run())
     assert fired == []
+
+
+def test_a_supervised_worker_asks_its_parent_for_a_replacement(monkeypatch):
+    import os
+    import signal
+
+    from app.pos_serve import SUPERVISED_ENV
+
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
+
+    monkeypatch.delenv(SUPERVISED_ENV, raising=False)
+    memory_telemetry.ask_supervisor_to_replace()
+    assert sent == []  # plain uvicorn / tests: never signal an arbitrary parent
+
+    monkeypatch.setenv(SUPERVISED_ENV, "1")
+    memory_telemetry.ask_supervisor_to_replace()
+    assert sent == [(os.getppid(), signal.SIGHUP)]
+
+
+def test_keeps_asking_if_the_replacement_never_comes(monkeypatch):
+    # Two streaks of two over-ceiling samples: asked twice, not once and silent.
+    # (a trailing sample lets the fourth one be acted on before the helper stops)
+    assert _run_loop(monkeypatch, [310, 320, 330, 340, 100], 300) == [2, 4]

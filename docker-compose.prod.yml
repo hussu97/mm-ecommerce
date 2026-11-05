@@ -603,11 +603,11 @@ services:
     pull_policy: missing
     restart: always
     # The same image as the storefront API — one build, two applications.
+    # Uvicorn's supervisor over the worker(s), so a worker whose memory has
+    # ratcheted up is replaced new-before-old with no gap at the till
+    # (app/pos_serve.py). Same flags as the plain `uvicorn` this replaced.
     command: >
-      sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
-      --proxy-headers --forwarded-allow-ips='*'
-      --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 8 --timeout-keep-alive 15"
+      sh -c "exec python -m app.pos_serve --workers ${POS_UVICORN_WORKERS:-1}"
     stop_grace_period: 10s
     environment: *pos-environment
     # Ship stdout/stderr directly to GCP Cloud Logging.
@@ -693,11 +693,11 @@ services:
     # pulls on the e2-small after the image was already local.
     pull_policy: missing
     restart: always
+    # Uvicorn's supervisor over the worker(s), so a worker whose memory has
+    # ratcheted up is replaced new-before-old with no gap at the till
+    # (app/pos_serve.py). Same flags as the plain `uvicorn` this replaced.
     command: >
-      sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
-      --proxy-headers --forwarded-allow-ips='*'
-      --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 8 --timeout-keep-alive 15"
+      sh -c "exec python -m app.pos_serve --workers ${POS_UVICORN_WORKERS:-1}"
     stop_grace_period: 10s
     environment: *pos-environment
     logging: *gcplogs

@@ -23,7 +23,7 @@ COMPOSE = pathlib.Path(__file__).parents[3].parent / "docker-compose.prod.yml"
 
 # The storefront slots run a start script that launches uvicorn (plus the
 # scheduler sibling), so their uvicorn flags live in the script rather than the
-# compose `command`. The register keeps a plain uvicorn command.
+# compose `command`. The register's live in `app.pos_serve.config`.
 START_SCRIPT = (
     pathlib.Path(__file__).parents[2] / "scripts" / "start-web-and-scheduler.sh"
 )
@@ -99,11 +99,19 @@ def test_every_slot_gets_allowed_hosts_so_settings_can_boot():
 
 
 def test_the_register_runs_the_register_app():
+    """The register runs under `app.pos_serve` (uvicorn's supervisor, so a
+    worker whose memory has ratcheted is replaced new-before-old). Its uvicorn
+    settings live in that module's `config`, so check them there."""
+    from app import pos_serve
+
     compose = yaml.safe_load(COMPOSE.read_text())
     for svc in ("pos-api", "pos-api-green"):
         command = str(compose["services"][svc].get("command", ""))
-        assert "app.pos_main:app" in command, f"{svc} is a second storefront API"
-        assert "--timeout-graceful-shutdown 8" in command
+        assert "exec python -m app.pos_serve" in command, svc
+    cfg = pos_serve.config(1)
+    assert cfg.app == "app.pos_main:app", "the register is a second storefront API"
+    assert cfg.timeout_graceful_shutdown == 8
+    assert cfg.timeout_keep_alive == 15
 
 
 def test_every_api_slot_trusts_the_proxy_headers():
@@ -115,12 +123,17 @@ def test_every_api_slot_trusts_the_proxy_headers():
     storefront and both register — need it, and `--forwarded-allow-ips` so the
     single hop from nginx is trusted.
     """
-    for svc in ("api", "api-green", "pos-api", "pos-api-green"):
+    from app import pos_serve
+
+    for svc in ("api", "api-green"):
         command = _uvicorn_invocation(svc)
         assert "--proxy-headers" in command, f"{svc} does not trust proxy headers"
         assert "--forwarded-allow-ips" in command, (
             f"{svc} does not name the trusted proxy hop"
         )
+    cfg = pos_serve.config(1)  # pos-api and pos-api-green
+    assert cfg.proxy_headers, "the register does not trust proxy headers"
+    assert cfg.forwarded_allow_ips == "*", "the register does not trust the hop"
 
 
 def test_storefront_slots_finish_in_flight_requests():
