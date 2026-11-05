@@ -1088,36 +1088,60 @@ class FoodicsClient:
         )
         return True
 
-    async def ensure_grubtech_subgroup(self, group_id: str) -> bool:
-        """Make a group one of the Grubtech group's subgroups, keeping all the
-        others. The group PUT's `subgroups` REPLACES the list (verified with a
-        throwaway group: omitting one detaches it), so this reads the current
-        list and sends it whole with the new one added. Returns True when added."""
+    async def _grubtech_subgroup_ids(self) -> list[str]:
         payload = await self._call(
             "GET",
             _GETTING,
             params={"url": "/groups", "id": FOODICS_GRUBTECH_GROUP_ID},
         )
         group = _order_of(payload) or {}
-        current = [s["id"] for s in group.get("subgroups") or [] if s.get("id")]
-        if not current:
-            # An empty read is a failed read, not an empty menu — writing it back
-            # would detach every category from every marketplace.
-            raise FoodicsError("Grubtech group read returned no subgroups")
-        if group_id in current:
-            return False
+        return [s["id"] for s in group.get("subgroups") or [] if s.get("id")]
+
+    async def _put_grubtech_subgroups(self, ids: list[str]) -> None:
         await self._call(
             "PUT",
             _UPDATING,
             json_body={
                 "url": f"/groups/{FOODICS_GRUBTECH_GROUP_ID}",
-                "payload": {
-                    "subgroups": [
-                        {"id": g, "is_active": True} for g in current + [group_id]
-                    ]
-                },
+                "payload": {"subgroups": [{"id": g, "is_active": True} for g in ids]},
             },
         )
+
+    async def ensure_grubtech_subgroup(self, group_id: str) -> bool:
+        """Make a group one of the Grubtech group's subgroups, keeping all the
+        others. The group PUT's `subgroups` REPLACES the list (verified with a
+        throwaway group: omitting one detaches it), so this reads the current
+        list and sends it whole with the new one added. Returns True when added.
+
+        **Never shrinks the list.** The first coffee rollout (2026-11-05) lost
+        "New In" from the Grubtech group — detaching its product from every
+        marketplace — through this read-modify-write. So the write is checked:
+        after it, every subgroup that was there before must still be there, and
+        a loss is put back at once (the union of before and after); if it still
+        does not hold, this raises rather than carry on with a smaller menu.
+        """
+        before = await self._grubtech_subgroup_ids()
+        if not before:
+            # An empty read is a failed read, not an empty menu — writing it back
+            # would detach every category from every marketplace.
+            raise FoodicsError("Grubtech group read returned no subgroups")
+        if group_id in before:
+            return False
+        wanted = before + [group_id]
+        await self._put_grubtech_subgroups(wanted)
+        after = await self._grubtech_subgroup_ids()
+        if set(wanted) - set(after):
+            logger.error(
+                "foodics: Grubtech subgroups lost on write (%s); restoring",
+                sorted(set(wanted) - set(after)),
+            )
+            await self._put_grubtech_subgroups(list(dict.fromkeys(wanted + after)))
+            after = await self._grubtech_subgroup_ids()
+            if set(wanted) - set(after):
+                raise FoodicsError(
+                    "Grubtech subgroups could not be restored: "
+                    f"{sorted(set(wanted) - set(after))}"
+                )
         return True
 
     async def find_product_by_sku(self, sku: str) -> dict | None:

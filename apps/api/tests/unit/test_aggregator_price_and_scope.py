@@ -260,15 +260,18 @@ async def test_attaching_a_subgroup_sends_every_existing_one(monkeypatch):
     client = foodics_provider.FoodicsClient()
     calls: list = []
 
+    stored = ["cakes", "cookies"]
+
     async def fake_call(method, path, *, params=None, json_body=None, attempts=2):
         calls.append((method, json_body))
         if method == "GET":
-            return {"data": {"subgroups": [{"id": "cakes"}, {"id": "cookies"}]}}
+            return {"data": {"subgroups": [{"id": i} for i in stored]}}
+        stored[:] = [s["id"] for s in json_body["payload"]["subgroups"]]
         return {}
 
     monkeypatch.setattr(client, "_call", fake_call)
     assert await client.ensure_grubtech_subgroup("hot-coffee") is True
-    _, body = calls[-1]
+    _, body = [c for c in calls if c[0] == "PUT"][-1]
     assert [s["id"] for s in body["payload"]["subgroups"]] == [
         "cakes",
         "cookies",
@@ -618,3 +621,43 @@ async def test_a_scoped_away_product_is_held_out_at_that_location(monkeypatch):
     assert by_recipe[("r-coffee", None)].until is None  # until further notice
     assert ("r-coffee", "m-size") not in by_recipe
     assert by_recipe[("r-cake", None)].available is True
+
+
+@pytest.mark.asyncio
+async def test_a_subgroup_write_that_loses_one_is_restored(monkeypatch):
+    """Regression (2026-11-05): "New In" fell out of the Grubtech group during
+    the coffee rollout. A write that comes back missing any subgroup that was
+    there before is immediately rewritten with the union."""
+    client = foodics_provider.FoodicsClient()
+    reads = [
+        ["cakes", "new-in"],  # before
+        ["cakes", "hot-coffee"],  # after the write: new-in lost
+        ["cakes", "new-in", "hot-coffee"],  # after the restore
+    ]
+    writes: list = []
+
+    async def fake_call(method, path, *, params=None, json_body=None, attempts=2):
+        if method == "GET":
+            return {"data": {"subgroups": [{"id": i} for i in reads.pop(0)]}}
+        writes.append([s["id"] for s in json_body["payload"]["subgroups"]])
+        return {}
+
+    monkeypatch.setattr(client, "_call", fake_call)
+    assert await client.ensure_grubtech_subgroup("hot-coffee") is True
+    assert writes[0] == ["cakes", "new-in", "hot-coffee"]
+    assert set(writes[1]) == {"cakes", "new-in", "hot-coffee"}
+
+
+@pytest.mark.asyncio
+async def test_a_subgroup_loss_that_cannot_be_restored_raises(monkeypatch):
+    client = foodics_provider.FoodicsClient()
+    reads = [["cakes", "new-in"], ["cakes", "hot-coffee"], ["cakes", "hot-coffee"]]
+
+    async def fake_call(method, path, *, params=None, json_body=None, attempts=2):
+        if method == "GET":
+            return {"data": {"subgroups": [{"id": i} for i in reads.pop(0)]}}
+        return {}
+
+    monkeypatch.setattr(client, "_call", fake_call)
+    with pytest.raises(foodics_provider.FoodicsError, match="new-in"):
+        await client.ensure_grubtech_subgroup("hot-coffee")
