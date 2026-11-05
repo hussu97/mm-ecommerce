@@ -136,6 +136,9 @@ async def run_forever() -> None:
                         result.changes,
                         result.elapsed_ms,
                     )
+                # The projection is the whole estate's FIFO state (~140 MB at
+                # 43k lines); don't hold it through the minute's sleep.
+                result = None
         except asyncio.CancelledError:
             logger.info("Estate costing sweeper stopping")
             raise

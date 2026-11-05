@@ -46,3 +46,51 @@ def test_scheduler_runner_refuses_to_run_with_the_flag_off():
     src = inspect.getsource(scheduler_runner._run)
     assert "STOREFRONT_SCHEDULER_ENABLED" in src
     assert "raise SystemExit(1)" in src
+
+
+def test_a_recycling_scheduler_is_relaunched_alone():
+    # Status 75 from the scheduler is a planned memory recycle: only it is
+    # relaunched and the web worker keeps serving. Any other exit, or any exit
+    # while the container is stopping, still takes the container down.
+    from app import scheduler_runner
+
+    assert scheduler_runner.RECYCLE_EXIT_CODE == 75
+    assert "RECYCLE_EXIT_CODE=75" in SCRIPT
+    assert "wait -n -p exited" in SCRIPT
+    assert '"${exited}" == "${sched_pid}"' in SCRIPT
+    assert '-z "${stopping}"' in SCRIPT
+    src = inspect.getsource(scheduler_runner._run)
+    assert "raise SystemExit(RECYCLE_EXIT_CODE)" in src
+    assert "recycle_above_mb=RECYCLE_ABOVE_MB" in src
+
+
+def test_the_runner_drains_and_exits_75_when_telemetry_asks_to_recycle(monkeypatch):
+    import asyncio
+
+    import pytest
+
+    from app import scheduler_runner
+    from app.core import memory_telemetry
+
+    stopped: list[str] = []
+
+    async def start():
+        return []
+
+    async def stop(tasks):
+        stopped.append("loops")
+
+    async def recycle_now(role, *, recycle_above_mb=None, on_recycle=None):
+        assert recycle_above_mb == scheduler_runner.RECYCLE_ABOVE_MB
+        on_recycle()
+
+    monkeypatch.setattr(scheduler_runner.settings, "STOREFRONT_SCHEDULER_ENABLED", True)
+    monkeypatch.setattr(scheduler_runner, "configure_observability", lambda **_: None)
+    monkeypatch.setattr(scheduler_runner, "start_storefront_schedulers", start)
+    monkeypatch.setattr(scheduler_runner, "stop_storefront_schedulers", stop)
+    monkeypatch.setattr(memory_telemetry, "run_forever", recycle_now)
+
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(scheduler_runner._run())
+    assert exc.value.code == scheduler_runner.RECYCLE_EXIT_CODE
+    assert stopped == ["loops"]  # the same graceful drain a deploy does

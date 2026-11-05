@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import Counter
 
 from app.core import memory_telemetry
@@ -41,3 +42,72 @@ def test_the_loop_survives_a_failing_census(monkeypatch, caplog):
 
     asyncio.run(run())
     assert len(calls) >= 2
+
+
+def _run_loop(monkeypatch, settled_mb: list[int], ceiling_mb: int) -> list[int]:
+    """Drive run_forever over a scripted sequence of post-trim RSS samples and
+    return the sample index (1-based) at which on_recycle fired, if any."""
+    samples = iter(settled_mb)
+    seen: list[int] = []
+    fired: list[int] = []
+
+    def fake(previous: Counter | None = None):
+        mb = next(samples)
+        seen.append(mb)
+        return {"rss_kb": mb * 1024, "rss_kb_after_trim": mb * 1024}, Counter()
+
+    monkeypatch.setattr(memory_telemetry, "snapshot", fake)
+    monkeypatch.setattr(memory_telemetry, "FIRST_AFTER_S", 0)
+    monkeypatch.setattr(memory_telemetry, "INTERVAL_S", 0)
+
+    async def run():
+        task = asyncio.create_task(
+            memory_telemetry.run_forever(
+                "test",
+                recycle_above_mb=ceiling_mb,
+                on_recycle=lambda: fired.append(len(seen)),
+            )
+        )
+        for _ in range(200):
+            if task.done() or len(seen) >= len(settled_mb):
+                break
+            await asyncio.sleep(0)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, StopIteration):
+            await task
+
+    asyncio.run(run())
+    return fired
+
+
+def test_recycles_after_two_consecutive_samples_over_the_ceiling(monkeypatch):
+    # One sample over (a replay caught mid-flight) is not enough; two in a row is.
+    assert _run_loop(monkeypatch, [200, 320, 250, 310, 330, 340], 300) == [5]
+
+
+def test_never_recycles_under_the_ceiling(monkeypatch):
+    assert _run_loop(monkeypatch, [200, 290, 299, 300, 250], 300) == []
+
+
+def test_no_ceiling_means_no_recycle(monkeypatch):
+    fired: list[int] = []
+    monkeypatch.setattr(
+        memory_telemetry,
+        "snapshot",
+        lambda previous=None: (
+            {"rss_kb": 10**7, "rss_kb_after_trim": 10**7},
+            Counter(),
+        ),
+    )
+    monkeypatch.setattr(memory_telemetry, "FIRST_AFTER_S", 0)
+    monkeypatch.setattr(memory_telemetry, "INTERVAL_S", 0)
+
+    async def run():
+        task = asyncio.create_task(memory_telemetry.run_forever("test"))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not task.done()
+        task.cancel()
+
+    asyncio.run(run())
+    assert fired == []

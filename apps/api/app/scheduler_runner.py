@@ -36,6 +36,15 @@ from app.services import storefront_cache
 
 logger = logging.getLogger("mm.api")
 
+#: Exit status asking the start script to relaunch only this process (EX_TEMPFAIL).
+#: Any other exit still takes the whole container down.
+RECYCLE_EXIT_CODE = 75
+#: RSS after `malloc_trim` above which the scheduler recycles itself. It boots
+#: at ~170-200 MB, and each estate costing replay ratchets it up ~75 MB that
+#: never comes back (see `app.core.memory_telemetry`). The web worker shares the
+#: container's 704 MiB, so this keeps the pair clear of the limit.
+RECYCLE_ABOVE_MB = 300
+
 
 async def _run() -> None:
     configure_observability(service="mm-scheduler")
@@ -55,18 +64,28 @@ async def _run() -> None:
     from app.core import memory_telemetry
     from app.core.background import spawn_tracked
 
+    stop = asyncio.Event()
+    recycle = False
+
+    def _recycle() -> None:
+        nonlocal recycle
+        recycle = True
+        stop.set()
+
     telemetry = spawn_tracked(
-        memory_telemetry.run_forever("mm-scheduler"), name="memory_telemetry"
+        memory_telemetry.run_forever(
+            "mm-scheduler", recycle_above_mb=RECYCLE_ABOVE_MB, on_recycle=_recycle
+        ),
+        name="memory_telemetry",
     )
 
-    stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         with suppress(NotImplementedError):  # e.g. non-main thread on some OSes
             loop.add_signal_handler(sig, stop.set)
 
     await stop.wait()
-    logger.info("scheduler process shutting down")
+    logger.info("scheduler process shutting down%s", " to recycle" if recycle else "")
     telemetry.cancel()
     await stop_storefront_schedulers(tasks)
     # Pushes and emails a sweep queued behind its commit (`post_commit`) that are
@@ -84,6 +103,11 @@ async def _run() -> None:
 
     with suppress(Exception):
         await apns_provider.provider.aclose()
+
+    if recycle:
+        # The shutdown above is the same graceful drain a deploy does; the
+        # start script sees this status and relaunches only the scheduler.
+        raise SystemExit(RECYCLE_EXIT_CODE)
 
 
 def main() -> None:

@@ -22,6 +22,18 @@ freed memory it never hands back. Those need opposite fixes, so each process
 The census walks every gc-tracked object (~0.5 s of CPU on this box) in a
 worker thread every quarter hour: cheap next to what it answers, and the loop
 keeps serving meanwhile. It never raises.
+
+**What it found, and the recycle.** Not a leak: after an estate costing replay
+(43k ledger lines, ~140 MB of live objects at its peak) the scheduler's object
+count fell straight back, but its RSS stayed ~75 MB higher and `malloc_trim`
+won't return it. The peak's pages stay pinned in CPython's arenas by the few
+long-lived objects allocated beside it. The next bigger replay ratchets RSS up
+again, and the ledger only grows, so over days the container reached its limit
+and swapped. So a process may pass `recycle_above_mb`: once its RSS *after the
+trim* is above that for `_RECYCLE_AFTER` samples in a row (which rules out
+catching a replay mid-flight), `on_recycle` is called. The scheduler uses it to
+exit cleanly and have its start script relaunch only the scheduler. Its loops
+are restart-safe by design: every deploy restarts them.
 """
 
 from __future__ import annotations
@@ -33,6 +45,7 @@ import json
 import logging
 import time
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -43,6 +56,8 @@ __all__ = ["INTERVAL_S", "run_forever", "snapshot"]
 INTERVAL_S = 900
 FIRST_AFTER_S = 120
 _TOP = 15
+#: Consecutive over-ceiling samples (each `INTERVAL_S` apart) before recycling.
+_RECYCLE_AFTER = 2
 
 _libc: Any = None
 try:  # glibc only (the API image); macOS and musl simply skip the trim.
@@ -108,10 +123,20 @@ def snapshot(previous: Counter | None = None) -> tuple[dict[str, Any], Counter]:
     return data, counts
 
 
-async def run_forever(role: str) -> None:
-    """The per-process loop. Cancelled on shutdown; never dies on an error."""
+async def run_forever(
+    role: str,
+    *,
+    recycle_above_mb: int | None = None,
+    on_recycle: Callable[[], None] | None = None,
+) -> None:
+    """The per-process loop. Cancelled on shutdown; never dies on an error.
+
+    With `recycle_above_mb` and `on_recycle`, calls `on_recycle` once when RSS
+    after the trim has stayed above the ceiling for `_RECYCLE_AFTER` samples.
+    """
     started = time.monotonic()
     previous: Counter | None = None
+    over = 0
     await asyncio.sleep(FIRST_AFTER_S)
     while True:
         try:
@@ -119,6 +144,21 @@ async def run_forever(role: str) -> None:
             data["role"] = role
             data["uptime_s"] = int(time.monotonic() - started)
             logger.info("memory.telemetry %s", json.dumps(data, default=str))
+            settled_kb = data["rss_kb_after_trim"] or data["rss_kb"]
+            if recycle_above_mb and on_recycle and settled_kb:
+                over = over + 1 if settled_kb > recycle_above_mb * 1024 else 0
+                if over >= _RECYCLE_AFTER:
+                    logger.warning(
+                        "memory.recycle role=%s rss_after_trim_mb=%d ceiling_mb=%d "
+                        "samples_over=%d uptime_s=%d",
+                        role,
+                        settled_kb // 1024,
+                        recycle_above_mb,
+                        over,
+                        data["uptime_s"],
+                    )
+                    on_recycle()
+                    return
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — telemetry must never take a process down
