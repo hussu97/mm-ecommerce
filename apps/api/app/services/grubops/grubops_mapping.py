@@ -326,11 +326,16 @@ async def _our_menu(
         .all()
     )
 
+    # Active options only. A retired option is sold nowhere, and keeping it in
+    # would pair it with the live option's GrubOps twin by name — Iced Matcha
+    # Latte carries an inactive "Medium"/"Large" beside its live ones, and two
+    # rows claiming one GrubOps modifier break the item map's unique identity.
     rows = (
         await db.execute(
             select(ProductModifier.product_id, ModifierOption, Modifier.name)
             .join(Modifier, Modifier.id == ProductModifier.modifier_id)
             .join(ModifierOption, ModifierOption.modifier_id == Modifier.id)
+            .where(ModifierOption.is_active.is_(True))
         )
     ).all()
 
@@ -512,7 +517,9 @@ async def sync_mappings(db: AsyncSession) -> SyncSummary:
                 for m in modifiers
                 if m.parent_recipe_id == recipe.item_id and m.parent_group == group
             ]
-            modifier, opt_score, opt_method = best_match(option.name, scoped)
+            modifier, opt_score, opt_method = best_match(
+                option.name, [m for m in scoped if m.item_id not in claimed]
+            )
             if modifier is None:
                 summary.unmatched_ours.append(
                     f"{product.name} → {group_name}: {option.name}"
