@@ -1158,6 +1158,26 @@ class FoodicsClient:
         }
         for spec in modifiers:
             mod = existing_mods.get(spec["reference"])
+            # Option names already on this modifier: an option MM knows under a
+            # different SKU (the two catalogues drifted on a few) is the same
+            # option, not a second one to create.
+            names_on_mod: set[str] = set()
+            if mod is not None:
+                full = (
+                    _order_of(
+                        await self._call(
+                            "GET",
+                            _GETTING,
+                            params={"url": "/modifiers", "id": mod["id"]},
+                        )
+                    )
+                    or {}
+                )
+                names_on_mod = {
+                    str(o.get("name") or "").strip().casefold()
+                    for o in full.get("options") or []
+                    if not o.get("deleted_at")
+                }
             if mod is None:
                 created = await self._create(
                     "/modifiers",
@@ -1170,7 +1190,10 @@ class FoodicsClient:
                 mod = _order_of(created) or {}
                 report[spec["reference"]] = "created"
             for opt in spec["options"]:
-                if opt["sku"] in existing_opts:
+                if (
+                    opt["sku"] in existing_opts
+                    or opt["name"].strip().casefold() in names_on_mod
+                ):
                     continue
                 # Options are created under their modifier (`/modifier_options`
                 # itself is GET-only — 405 on POST).

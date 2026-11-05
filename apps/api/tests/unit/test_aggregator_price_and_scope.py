@@ -493,3 +493,67 @@ async def test_grubops_mapping_reads_every_location_not_just_the_first(monkeypat
     summary = await gm.sync_mappings(db)
     assert summary.unmatched_theirs == ["Cappuccino"]
     assert any("loc-shj" in e for e in summary.errors)
+
+
+@pytest.mark.asyncio
+async def test_copying_reuses_an_option_foodics_has_under_another_sku(monkeypatch):
+    """Iced Spanish Latte's Large is FM0225 in MM and FM0220 in Foodics. The copy
+    must attach the modifier and create nothing — not a second "Large"."""
+    client = foodics_provider.FoodicsClient()
+
+    async def list_all(resource, *, cap_pages=20):
+        if resource == "/modifiers":
+            return [{"id": "mod-1", "reference": "mod_ispn_lte_cf"}]
+        return [{"sku": "FM0219"}, {"sku": "FM0220"}]
+
+    calls: list = []
+
+    async def fake_call(method, path, *, params=None, json_body=None, attempts=2):
+        calls.append((method, (json_body or {}).get("url") or params.get("url")))
+        if method == "GET":
+            return {
+                "data": {
+                    "options": [
+                        {"sku": "FM0219", "name": "Medium"},
+                        {"sku": "FM0220", "name": "Large"},
+                    ]
+                }
+            }
+        return {"data": {}}
+
+    monkeypatch.setattr(client, "_list_all", list_all)
+    monkeypatch.setattr(client, "_call", fake_call)
+    report = await client.copy_modifiers_to_product(
+        "p1",
+        [
+            {
+                "reference": "mod_ispn_lte_cf",
+                "name": "Size",
+                "name_localized": "مقاس",
+                "minimum_options": 1,
+                "maximum_options": 1,
+                "free_options": 0,
+                "unique_options": False,
+                "index": 0,
+                "options": [
+                    {
+                        "sku": "FM0219",
+                        "name": "Medium",
+                        "name_localized": "واسطة",
+                        "price": 16,
+                        "index": 0,
+                    },
+                    {
+                        "sku": "FM0225",
+                        "name": "Large",
+                        "name_localized": "كبير",
+                        "price": 18,
+                        "index": 1,
+                    },
+                ],
+            }
+        ],
+    )
+    assert report == {}  # nothing created
+    writes = [url for method, url in calls if method == "POST"]
+    assert writes == ["/products/p1/modifiers/mod-1"]  # only the attach

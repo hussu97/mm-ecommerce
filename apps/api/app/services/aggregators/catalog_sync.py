@@ -1151,35 +1151,46 @@ async def _foodics_marketplace_parity(
         )
         return str(agg)
 
-    async def _live_options() -> dict[str, Any]:
+    async def _live_options() -> dict[Any, Any]:
+        """The Foodics product's options, keyed both by SKU and by (modifier
+        reference, option name). The two catalogues share SKUs almost
+        everywhere, but not quite: Iced Spanish Latte's Large is FM0225 in MM
+        and FM0220 in Foodics. Falling back to the modifier + name finds the
+        same option instead of creating a second "Large"."""
         live = await fp.provider.get_product(foodics_id) or {}
-        return {
-            str(o.get("sku")): o
-            for m in live.get("modifiers") or []
-            for o in m.get("options") or []
-            if o.get("sku")
-        }
+        index: dict[Any, Any] = {}
+        for m in live.get("modifiers") or []:
+            for o in m.get("options") or []:
+                if o.get("sku"):
+                    index[str(o["sku"])] = o
+                index[(m.get("reference"), _norm(o.get("name")))] = o
+        return index
+
+    def _match(index: dict[Any, Any], pm: Any, option: Any) -> Any:
+        return index.get(option.sku) or index.get(
+            (pm.modifier.reference, _norm(option.name))
+        )
 
     async def _option_tags() -> dict[str, Any]:
-        by_sku = await _live_options()
-        wanted = {
-            o.sku
+        index = await _live_options()
+        done: dict[str, Any] = {}
+        missing = [
+            o
             for pm in product.product_modifiers
             for o in pm.modifier.options
-            if o.is_active
-        }
-        done: dict[str, Any] = {}
-        if wanted - by_sku.keys():
+            if o.is_active and _match(index, pm, o) is None
+        ]
+        if missing:
             # The Foodics product is missing options MM sells it with (created
             # before modifiers were copied, or edited by hand) — give it them, so
             # the price below has something to land on.
             done["copied"] = await _foodics_copy_modifiers(db, product, foodics_id)
-            by_sku = await _live_options()
+            index = await _live_options()
         for pm in product.product_modifiers:
             for option in pm.modifier.options:
                 if not option.is_active:
                     continue
-                remote = by_sku.get(option.sku)
+                remote = _match(index, pm, option)
                 if remote is None:
                     done[option.sku] = "not on the Foodics product"
                     continue
