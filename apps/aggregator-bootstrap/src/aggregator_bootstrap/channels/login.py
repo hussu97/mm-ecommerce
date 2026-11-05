@@ -123,6 +123,83 @@ TALABAT_OTP_SENDER = "no-reply@partner-app.talabat.com"
 TALABAT_OTP_SUBJECT = "Partner Portal"
 
 
+#: The portal's trusted-device marker: a ~100-year JWT issued after a successful
+#: 2FA. A browser that sends it signs in with email + password alone. That is why
+#: a person's laptop never sees a code while a profile without it is asked every
+#: time. On 2026-11-05 the worker wiped its own copy with the rest of the
+#: portal's cookies (the unrefreshable-token path below). Talabat then treated it
+#: as a new device and asked for a code, which by then went to the owner's phone
+#: by SMS. Every hourly retry texted them. So the wipe keeps this cookie, and a
+#: profile that has lost it gets back the one in the last saved session.
+TALABAT_DEVICE_COOKIE = "deviceToken"
+_TALABAT_ORIGIN = "https://partner-app.talabat.com"
+_COOKIE_FIELDS = (
+    "name",
+    "value",
+    "domain",
+    "path",
+    "expires",
+    "httpOnly",
+    "secure",
+    "sameSite",
+)
+
+
+def _cookie_for_add(cookie: dict) -> dict:
+    return {k: cookie[k] for k in _COOKIE_FIELDS if k in cookie}
+
+
+async def _talabat_device_cookies(context) -> list[dict]:
+    """The trusted-device cookie(s) currently in the profile (empty on error)."""
+    try:
+        cookies = await context.cookies(_TALABAT_ORIGIN)
+    except Exception:  # noqa: BLE001 — best-effort; the login still runs
+        return []
+    return [
+        c for c in cookies if c.get("name") == TALABAT_DEVICE_COOKIE and c.get("value")
+    ]
+
+
+def _stored_talabat_device_cookies() -> list[dict]:
+    """The trusted-device cookie from the last successfully captured session."""
+    path = Path(settings.STORAGE_STATE_DIR) / "talabat.session.json"
+    try:
+        cookies = json.loads(path.read_text(encoding="utf-8")).get("cookies") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [
+        c
+        for c in cookies
+        if c.get("name") == TALABAT_DEVICE_COOKIE
+        and c.get("value")
+        and "talabat" in str(c.get("domain", ""))
+    ]
+
+
+async def _ensure_talabat_trusted_device(
+    context, keep: list[dict] | None = None
+) -> None:
+    """Put the trusted-device cookie back if the profile lacks it.
+
+    `keep` is what the caller saved before wiping the portal's cookies; failing
+    that, the copy in the last saved session. Never raises.
+    """
+    if await _talabat_device_cookies(context):
+        return
+    source = "profile" if keep else "saved session"
+    cookies = keep or _stored_talabat_device_cookies()
+    if not cookies:
+        logger.info("talabat: no trusted-device cookie to restore; 2FA will be asked")
+        return
+    try:
+        await context.add_cookies([_cookie_for_add(c) for c in cookies])
+        logger.info("talabat: restored the trusted-device cookie from the %s", source)
+    except Exception:  # noqa: BLE001 — best-effort; the login still runs
+        logger.warning(
+            "talabat: could not restore the trusted-device cookie", exc_info=True
+        )
+
+
 async def _talabat_human_verification_present(page) -> bool:
     try:
         body = await page.locator("body").inner_text(timeout=5_000)
@@ -272,8 +349,12 @@ async def login_talabat(
             await page.evaluate("localStorage.clear(); sessionStorage.clear()")
         except Exception:  # noqa: BLE001 — best-effort; the cookies are the session
             pass
+        # Drop the dead session but NOT the trusted-device marker: without it
+        # the fresh login below is a "new device" and Talabat asks for a code.
+        trusted = await _talabat_device_cookies(context)
         await context.clear_cookies(domain="partner-app.talabat.com")
         await context.clear_cookies(domain=".talabat.com")
+        await _ensure_talabat_trusted_device(context, trusted)
         await page.goto(
             TALABAT_LOGIN_URL, wait_until="domcontentloaded", timeout=60_000
         )
@@ -299,6 +380,9 @@ async def login_talabat(
             f"Talabat login page did not expose credential inputs at {page.url}"
         ) from exc
 
+    # A profile that lost the marker some other way (wiped before this fix,
+    # a fresh volume) gets the last saved one back before credentials go in.
+    await _ensure_talabat_trusted_device(context)
     await email_input.fill(address)
     await password_input.fill(pwd)
     otp_since = datetime.now(UTC)
