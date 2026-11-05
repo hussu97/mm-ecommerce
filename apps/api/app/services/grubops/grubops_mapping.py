@@ -415,17 +415,44 @@ async def sync_mappings(db: AsyncSession) -> SyncSummary:
     except GrubOpsError as exc:
         summary.errors.append(f"Could not read GrubOps locations: {exc}")
 
-    # Any mapped location will do, active or not: the catalogue is the same for
-    # every location on the account, and the item map has to be reviewable
-    # before any branch is switched on.
-    location = (
-        await db.execute(select(GrubOpsLocationMap).limit(1))
-    ).scalar_one_or_none()
-    if location is None:
+    # Every mapped location, active or not (the item map has to be reviewable
+    # before a branch is switched on), merged by item id. The catalogue used to
+    # be read from the first location alone on the grounds that it is the same
+    # everywhere — and it is, until a category is sold at one branch only: a
+    # Barsha-only coffee is inactive at Sharjah in Foodics, so Sharjah's GrubOps
+    # menu never carries it and a Sharjah-first read would never map it.
+    locations = (await db.execute(select(GrubOpsLocationMap))).scalars().all()
+    if not locations:
         summary.errors.append("No GrubOps location could be matched to a branch")
         return summary
 
-    recipes, modifiers = await _fetch_catalogue(location)
+    recipes: list[Candidate] = []
+    modifiers: list[Candidate] = []
+    seen_items: set[tuple[str, str, str, str | None]] = set()
+    read_any = False
+    for location in locations:
+        try:
+            loc_recipes, loc_modifiers = await _fetch_catalogue(location)
+        except GrubOpsError as exc:
+            summary.errors.append(
+                f"Could not read the GrubOps menu at {location.grubops_location_id}: "
+                f"{exc}"
+            )
+            continue
+        read_any = True
+        for bucket, found in ((recipes, loc_recipes), (modifiers, loc_modifiers)):
+            for candidate in found:
+                key = (
+                    candidate.grubops_type,
+                    candidate.brand_id,
+                    candidate.item_id,
+                    candidate.parent_recipe_id,
+                )
+                if key not in seen_items:
+                    seen_items.add(key)
+                    bucket.append(candidate)
+    if not read_any:
+        return summary
     products, options_by_product = await _our_menu(db)
 
     existing = {

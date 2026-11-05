@@ -444,3 +444,52 @@ async def test_copying_modifiers_reloads_through_the_async_session(monkeypatch):
     [spec] = copy.await_args.args[1]
     assert spec["reference"] == "mod_mat_lte_cf"
     assert spec["options"][0]["sku"] == "FM0222"
+
+
+@pytest.mark.asyncio
+async def test_grubops_mapping_reads_every_location_not_just_the_first(monkeypatch):
+    """A Barsha-only item is on Barsha's GrubOps menu and not on Sharjah's, so a
+    Sharjah-first catalogue read would never map it. One location failing to
+    read must not stop the others."""
+    from app.services.grubops import grubops_mapping as gm
+    from app.services.providers.grubops_provider import GrubOpsError
+
+    sharjah = SimpleNamespace(grubops_location_id="loc-shj", grubops_partner_id="p")
+    barsha = SimpleNamespace(grubops_location_id="loc-bar", grubops_partner_id="p")
+    cappuccino = gm.Candidate(
+        item_id="r-capp", name="Cappuccino", brand_id="b", grubops_type="RECIPE"
+    )
+    cake = gm.Candidate(
+        item_id="r-cake", name="Tiramisu", brand_id="b", grubops_type="RECIPE"
+    )
+
+    async def fetch(location):
+        if location is sharjah:
+            return [cake], []
+        return [cake, cappuccino], []  # the shared recipe must not double up
+
+    monkeypatch.setattr(gm, "sync_locations", AsyncMock(return_value=(0, [])))
+    monkeypatch.setattr(gm, "_fetch_catalogue", fetch)
+    monkeypatch.setattr(gm, "_our_menu", AsyncMock(return_value=([], {})))
+    answers = [[sharjah, barsha], []]
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=lambda _s: SimpleNamespace(
+                scalars=lambda v=answers.pop(0): SimpleNamespace(all=lambda: v)
+            )
+        ),
+        flush=AsyncMock(),
+    )
+    summary = await gm.sync_mappings(db)
+    assert sorted(summary.unmatched_theirs) == ["Cappuccino", "Tiramisu"]
+
+    async def failing(location):
+        if location is sharjah:
+            raise GrubOpsError("down")
+        return [cappuccino], []
+
+    monkeypatch.setattr(gm, "_fetch_catalogue", failing)
+    answers[:] = [[sharjah, barsha], []]
+    summary = await gm.sync_mappings(db)
+    assert summary.unmatched_theirs == ["Cappuccino"]
+    assert any("loc-shj" in e for e in summary.errors)
