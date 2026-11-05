@@ -410,6 +410,7 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
         group.parent_id = new_parent_id
 
     was_active = group.is_active
+    was_named = (group.name, group.name_localized)
     # root_kind / branch_id / root_id are fixed when a root is created; they are
     # not editable here — a menu does not change which shop it belongs to.
     for field in (
@@ -456,7 +457,10 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
     # rewritten; a product that just left is reported by the drift sweep.
     if group.root_kind == ROOT_KIND_INTEGRATOR and group.parent_id is not None:
         after = await _member_ids(db, group.id)
-        reach_changed = scope_changed or group.is_active != was_active
+        # A rename is a marketplace change too: the category name is what every
+        # marketplace shows, carried by the Foodics subgroup name.
+        renamed = (group.name, group.name_localized) != was_named
+        reach_changed = scope_changed or renamed or group.is_active != was_active
         touched = (after - before) | (after if reach_changed else set())
         await _enqueue_marketplace_sync(db, touched, reason="integrator menu")
     return await get(db, group_id)

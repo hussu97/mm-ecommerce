@@ -352,7 +352,7 @@ the modifier), and an integrator category's membership / scope / on-off change
 all write the catalog-sync outbox. Operator path:
 `python -m scripts.sync_product_to_integrators --sku … --sync [--apply]`.
 
-**Live use.** Hot Coffee + Cold Coffee (22 drinks) are integrator categories
+**Live use.** Hot Coffee + Iced Coffee (22 drinks; Iced Coffee was "Cold Coffee" until migration 321) are integrator categories
 limited to Barsha Heights, every size at counter + AED 8 (migration 320).
 
 ---

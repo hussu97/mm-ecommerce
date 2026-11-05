@@ -1144,6 +1144,34 @@ class FoodicsClient:
                 )
         return True
 
+    async def ensure_group_name(
+        self, group_id: str, name: str, name_localized: str | None
+    ) -> bool:
+        """Name a group as MM names its integrator category — the marketplace
+        category name GrubTech publishes. A name-only group PUT keeps its
+        products and subgroups (verified live 2026-11-05 renaming Cold Coffee to
+        Iced Coffee). Returns True when it had to rename."""
+        group = (
+            _order_of(
+                await self._call(
+                    "GET", _GETTING, params={"url": "/groups", "id": group_id}
+                )
+            )
+            or {}
+        )
+        wanted_ar = name_localized or name
+        if group.get("name") == name and group.get("name_localized") == wanted_ar:
+            return False
+        await self._call(
+            "PUT",
+            _UPDATING,
+            json_body={
+                "url": f"/groups/{group_id}",
+                "payload": {"name": name, "name_localized": wanted_ar},
+            },
+        )
+        return True
+
     async def find_product_by_sku(self, sku: str) -> dict | None:
         """The live (undeleted) product with this SKU, or None. A full listing —
         the account has ~150 products — read only when a product reaches the

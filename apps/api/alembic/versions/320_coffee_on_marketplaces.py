@@ -1,14 +1,14 @@
 """Hot and cold coffee on the marketplaces — Barsha Heights only, at counter + 8.
 
-The commercial decision this carries: every drink in the Hot Coffee and Cold
-Coffee categories is sold on the aggregators, at **Barsha Heights only** (the
+The commercial decision this carries: every drink in the Hot Coffee and Iced
+Coffee (formerly Cold Coffee) categories is sold on the aggregators, at **Barsha Heights only** (the
 coffee counter; no other branch has coffee live), priced at the counter price
 **plus a flat AED 8**.
 
 * **Price.** A coffee is priced entirely by its Size options (the product is 0),
   so the +8 is each option's `aggregator_price` = its counter price + 8: a
   Cappuccino is 22/24/26 on the marketplaces against 14/16/18 at the counter.
-* **Where.** Two integrator-menu categories, Hot Coffee and Cold Coffee, each
+* **Where.** Two integrator-menu categories, Hot Coffee and Iced Coffee, each
   limited to Barsha (`marketplace_branch_ids`). Their `reference` is the
   Grubtech subgroup created for them in Foodics on 2026-11-05 — account-level
   ids, like the ones `foodics_provider.FOODICS_GRUBTECH_SUBGROUPS` holds. The
@@ -82,7 +82,9 @@ COLD = [
 CATEGORIES = [
     # (name, Arabic, Foodics Grubtech subgroup id, display order, SKUs)
     ("Hot Coffee", "قهوة ساخنة", "a3267d98-c310-468d-9bcb-867d09ae59d1", 19, HOT),
-    ("Cold Coffee", "قهوة باردة", "a3267d99-5fec-4f0e-bc60-d76c87dcad9b", 20, COLD),
+    # Created as "Cold Coffee" on prod; renamed "Iced Coffee" by migration 321,
+    # so a fresh database gets the current name directly.
+    ("Iced Coffee", "قهوة مثلجة", "a3267d99-5fec-4f0e-bc60-d76c87dcad9b", 20, COLD),
 ]
 
 _IMG = "https://storage.googleapis.com/mm-product-images/menu/"

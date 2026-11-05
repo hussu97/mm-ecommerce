@@ -661,3 +661,22 @@ async def test_a_subgroup_loss_that_cannot_be_restored_raises(monkeypatch):
     monkeypatch.setattr(client, "_call", fake_call)
     with pytest.raises(foodics_provider.FoodicsError, match="new-in"):
         await client.ensure_grubtech_subgroup("hot-coffee")
+
+
+@pytest.mark.asyncio
+async def test_a_renamed_category_renames_its_foodics_subgroup_once(monkeypatch):
+    client = foodics_provider.FoodicsClient()
+    stored = {"name": "Cold Coffee", "name_localized": "قهوة باردة"}
+    puts: list = []
+
+    async def fake_call(method, path, *, params=None, json_body=None, attempts=2):
+        if method == "GET":
+            return {"data": dict(stored)}
+        puts.append(json_body["payload"])
+        stored.update(json_body["payload"])
+        return {}
+
+    monkeypatch.setattr(client, "_call", fake_call)
+    assert await client.ensure_group_name("g", "Iced Coffee", "قهوة مثلجة") is True
+    assert await client.ensure_group_name("g", "Iced Coffee", "قهوة مثلجة") is False
+    assert puts == [{"name": "Iced Coffee", "name_localized": "قهوة مثلجة"}]

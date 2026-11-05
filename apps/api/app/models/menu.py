@@ -65,7 +65,7 @@ class MenuGroup(Base, UUIDMixin, TimestampMixin):
     A node in a menu tree.
 
     Categories are taxonomy ("Cakes"); groups are how a menu is laid out, and
-    they nest — "Drinks" holds "Hot Coffee" and "Cold Coffee", each holding
+    they nest — "Drinks" holds "Hot Coffee" and "Iced Coffee", each holding
     products. Deactivating a group hides everything beneath it in one move,
     which is the point of the tree.
 

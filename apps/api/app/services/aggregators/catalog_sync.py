@@ -1084,7 +1084,7 @@ async def create_menu_item(
         # at the others. Both are the same parity step the update path runs.
         plan["modifiers"] = await _foodics_copy_modifiers(db, product, str(foodics_id))
         plan["parity"] = await _foodics_marketplace_parity(
-            db, product, str(foodics_id), subgroup_id=subgroup_id
+            db, product, str(foodics_id), subgroup_id=subgroup_id, category=l1
         )
     plan["note"] = (
         "Created in Foodics and mapped. The marketplaces sync from Foodics; their "
@@ -1109,7 +1109,12 @@ async def _product_with_options(db: AsyncSession, product_id: Any) -> Product:
 
 
 async def _foodics_marketplace_parity(
-    db: AsyncSession, product: Product, foodics_id: str, *, subgroup_id: str | None
+    db: AsyncSession,
+    product: Product,
+    foodics_id: str,
+    *,
+    subgroup_id: str | None,
+    category: MenuGroup | None = None,
 ) -> dict[str, Any]:
     """Bring one Foodics product to what MM's integrator menu says about it.
 
@@ -1204,6 +1209,14 @@ async def _foodics_marketplace_parity(
     async def _subgroup() -> str:
         if not subgroup_id:
             return "no integrator subgroup"
+        if category is not None:
+            # The subgroup's name is the marketplace category name; an MM rename
+            # of the integrator category (Cold Coffee → Iced Coffee) lands here.
+            await fp.provider.ensure_group_name(
+                subgroup_id,
+                category.name,
+                category.name_localized or _ar(category, "name"),
+            )
         await fp.provider.ensure_grubtech_subgroup(subgroup_id)
         await fp.provider.ensure_product_in_group(foodics_id, subgroup_id)
         return subgroup_id
@@ -1435,7 +1448,11 @@ async def enrich_existing_item(
         # shared with the create path.
         l1 = await menu_group_service.integrator_l1_group_for_product(db, product.id)
         out["parity"] = await _foodics_marketplace_parity(
-            db, product, str(ref), subgroup_id=l1.reference if l1 else None
+            db,
+            product,
+            str(ref),
+            subgroup_id=l1.reference if l1 else None,
+            category=l1,
         )
         out["fields"] = {
             "name_ar": "ok",
