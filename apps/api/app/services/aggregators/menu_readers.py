@@ -876,14 +876,22 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
 
 
 async def _read_noon_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
+    from app.models.branch import Branch
     from app.services.providers import noon_provider as np
 
     session = await _session_for(db, "noon", np.provider)
     menus = await np.provider.list_menus(session)
     rows = (menus.get("data") if isinstance(menus, dict) else menus) or []
-    # The MM-managed menu is the one that is NOT the Foodics-fed "Ext. grubtech".
+    # noon has two menus on the one partner restaurant: the MM-managed one serves
+    # the non-Foodics outlets (Karama, DSO); the Foodics-fed "Ext. grubtech" one,
+    # published by GrubTech, serves the two Foodics outlets (Barsha, Sharjah).
+    # Reading the MM menu for a Foodics outlet made it look as if a GrubTech
+    # publish never landed (coffee, 2026-11-05), so pick by the outlet.
+    branch = await db.get(Branch, branch_id) if branch_id is not None else None
+    wants_grubtech = bool(branch is not None and branch.has_foodics)
+    grubtech = [m for m in rows if str(m.get("menuName", "")).startswith("Ext.")]
     mm_menus = [m for m in rows if not str(m.get("menuName", "")).startswith("Ext.")]
-    chosen = mm_menus or rows
+    chosen = (grubtech if wants_grubtech else mm_menus) or rows
     if not chosen:
         raise AggregatorUnavailableError("noon returned no menu")
     details = await np.provider.get_menu_details(session, chosen[0]["menuCode"])

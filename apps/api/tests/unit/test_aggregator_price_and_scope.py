@@ -680,3 +680,38 @@ async def test_a_renamed_category_renames_its_foodics_subgroup_once(monkeypatch)
     assert await client.ensure_group_name("g", "Iced Coffee", "قهوة مثلجة") is True
     assert await client.ensure_group_name("g", "Iced Coffee", "قهوة مثلجة") is False
     assert puts == [{"name": "Iced Coffee", "name_localized": "قهوة مثلجة"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foodics,expected", [(True, "M-ext"), (False, "M-mm")])
+async def test_noon_reads_the_menu_that_serves_the_outlet(
+    monkeypatch, foodics, expected
+):
+    """Barsha/Sharjah (Foodics outlets) are served by the GrubTech-fed
+    "Ext. grubtech" menu; Karama/DSO by the MM-managed one. Reading the MM menu
+    for Barsha hid the whole coffee publish (2026-11-05)."""
+    from app.services.aggregators import menu_readers as mr
+    from app.services.providers import noon_provider as np
+
+    monkeypatch.setattr(mr, "_session_for", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        np.provider,
+        "list_menus",
+        AsyncMock(
+            return_value={
+                "data": [
+                    {"menuName": "Melting Moments", "menuCode": "M-mm"},
+                    {"menuName": "Ext. grubtech - 69232", "menuCode": "M-ext"},
+                ]
+            }
+        ),
+    )
+    details = AsyncMock(return_value={"data": {}})
+    monkeypatch.setattr(np.provider, "get_menu_details", details)
+    monkeypatch.setattr(mr, "parse_noon_menu", lambda d: "parsed")
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(has_foodics=foodics))
+    )
+
+    assert await mr._read_noon_menu(db, uuid4()) == "parsed"
+    assert details.await_args.args[1] == expected
