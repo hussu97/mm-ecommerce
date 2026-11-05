@@ -193,7 +193,7 @@ async def world(maker):
             for branch, count in ((source, 3), (dest, 2)):
                 for n in range(count):
                     order = Order(
-                        order_number=f"RP-{tag}-{offset}-{n}-{str(branch.id)[:2]}",
+                        order_number=f"RP-{tag}-{offset}-{n}-{'s' if branch is source else 'd'}",
                         email=f"{MARKER}@example.com",
                         source="cashier",
                         pos_status="closed",
