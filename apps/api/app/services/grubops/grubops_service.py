@@ -460,6 +460,39 @@ async def record_failure(
 # ── the immediate path ────────────────────────────────────────────────────────
 
 
+async def scoped_away(
+    db: AsyncSession, branch_id: uuid.UUID
+) -> tuple[set[uuid.UUID], set[uuid.UUID]]:
+    """
+    The products, and their options, that are not on this branch's marketplace
+    menu because their integrator category is limited to other branches.
+
+    GrubOps mappings are brand-wide, not per location, so without this every
+    approved mapping is pushed to every location — and a Barsha-only coffee
+    would be "sold out"/"back in stock" at Sharjah, where it is not on the menu
+    at all. An option is scoped away only when every product carrying it is.
+    """
+    from app.models.modifier import ModifierOption, ProductModifier
+    from app.services.catalog import menu_group_service
+
+    products = await menu_group_service.marketplace_excluded_product_ids(db, branch_id)
+    if not products:
+        return set(), set()
+    rows = (
+        await db.execute(
+            select(ProductModifier.product_id, ModifierOption.id).join(
+                ModifierOption,
+                ModifierOption.modifier_id == ProductModifier.modifier_id,
+            )
+        )
+    ).all()
+    carriers: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for product_id, option_id in rows:
+        carriers.setdefault(option_id, set()).add(product_id)
+    options = {o for o, ps in carriers.items() if ps and ps <= products}
+    return products, options
+
+
 async def _push_many(
     *,
     branch_id: uuid.UUID,
@@ -504,9 +537,17 @@ async def _push_many(
             .scalars()
             .all()
         )
+        away_products, away_options = await scoped_away(db, branch_id)
+        mappings = [
+            m
+            for m in mappings
+            if m.product_id not in away_products
+            and m.modifier_option_id not in away_options
+        ]
         if not mappings:
-            # Unmapped, or mapped but not yet approved. The reconcile loop
-            # counts these; one unmapped item is not worth interrupting anybody.
+            # Unmapped, not yet approved, or not on this branch's marketplace
+            # menu. The reconcile loop counts the first two; none is worth
+            # interrupting anybody for.
             return
 
         deltas = [

@@ -733,6 +733,8 @@ async def test_the_immediate_push_holds_no_connection_across_the_send():
             "external_sub_ref": "mod-1",
             "external_child_ref": None,
             "external_type": "MODIFIER",
+            "product_id": None,
+            "modifier_option_id": uuid.uuid4(),
         },
     )()
     held: list[str] = []  # sessions currently holding a connection
@@ -787,6 +789,9 @@ async def test_the_immediate_push_holds_no_connection_across_the_send():
         patch.object(svc, "AsyncSessionFactory", new=lambda: next(factory)),
         patch.object(svc, "send_deltas", new=send_deltas),
         patch.object(svc, "record_pushed", new=record_pushed),
+        # Branch scoping is its own read (tested on its own); nothing is scoped
+        # away here.
+        patch.object(svc, "scoped_away", new=AsyncMock(return_value=(set(), set()))),
     ):
         await svc._push_many(
             branch_id=branch_id,

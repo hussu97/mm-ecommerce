@@ -29,7 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -130,11 +130,25 @@ class MenuGroup(Base, UUIDMixin, TimestampMixin):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: On an **integrator category** only: the branches whose marketplace menus
+    #: carry it. Null — every existing category — is every branch. A list keeps
+    #: the category's items off every other outlet: inactive at that Foodics
+    #: branch, never created on a non-Foodics portal, never pushed to that
+    #: GrubOps location. Resolved per product by
+    #: `menu_group_service.marketplace_scope_for_product`.
+    marketplace_branch_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(
             "root_kind IN ('branch', 'integrator')",
             name="ck_menu_groups_root_kind",
+        ),
+        CheckConstraint(
+            "marketplace_branch_ids IS NULL OR "
+            "(root_kind = 'integrator' AND parent_id IS NOT NULL)",
+            name="ck_menu_groups_marketplace_scope_integrator",
         ),
         # A branch root must name its branch; the integrator tree must not.
         # (Enforced on roots, which is where the columns are authoritative.)

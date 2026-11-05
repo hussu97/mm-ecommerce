@@ -20702,6 +20702,21 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "marketplace_branch_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace Branch Ids"
+          },
           "name": {
             "maxLength": 150,
             "minLength": 1,
@@ -20833,6 +20848,21 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "marketplace_branch_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace Branch Ids"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -20958,6 +20988,21 @@
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
+          },
+          "marketplace_branch_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace Branch Ids"
           },
           "name": {
             "title": "Name",
@@ -21088,6 +21133,21 @@
               }
             ],
             "title": "Is Active"
+          },
+          "marketplace_branch_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace Branch Ids"
           },
           "name": {
             "anyOf": [
@@ -21220,6 +21280,22 @@
       },
       "ModifierOptionCreate": {
         "properties": {
+          "aggregator_price": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Price"
+          },
           "calories": {
             "anyOf": [
               {
@@ -21283,6 +21359,17 @@
       },
       "ModifierOptionResponse": {
         "properties": {
+          "aggregator_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Price"
+          },
           "calories": {
             "anyOf": [
               {
@@ -21351,6 +21438,22 @@
       },
       "ModifierOptionUpdate": {
         "properties": {
+          "aggregator_price": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Price"
+          },
           "calories": {
             "anyOf": [
               {
@@ -29510,6 +29613,22 @@
       },
       "ProductCreate": {
         "properties": {
+          "aggregator_price": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Price"
+          },
           "base_price": {
             "anyOf": [
               {
@@ -29934,6 +30053,17 @@
       },
       "ProductResponse": {
         "properties": {
+          "aggregator_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Price"
+          },
           "base_price": {
             "title": "Base Price",
             "type": "number"
@@ -30162,6 +30292,22 @@
       },
       "ProductUpdate": {
         "properties": {
+          "aggregator_price": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Price"
+          },
           "base_price": {
             "anyOf": [
               {

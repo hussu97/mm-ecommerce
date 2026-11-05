@@ -16915,6 +16915,8 @@ export interface components {
              * @default true
              */
             is_active: boolean;
+            /** Marketplace Branch Ids */
+            marketplace_branch_ids?: string[] | null;
             /** Name */
             name: string;
             /** Name Localized */
@@ -16963,6 +16965,8 @@ export interface components {
             image_url?: string | null;
             /** Is Active */
             is_active: boolean;
+            /** Marketplace Branch Ids */
+            marketplace_branch_ids?: string[] | null;
             /** Name */
             name: string;
             /** Name Localized */
@@ -17009,6 +17013,8 @@ export interface components {
             image_url?: string | null;
             /** Is Active */
             is_active: boolean;
+            /** Marketplace Branch Ids */
+            marketplace_branch_ids?: string[] | null;
             /** Name */
             name: string;
             /** Name Localized */
@@ -17052,6 +17058,8 @@ export interface components {
             image_url?: string | null;
             /** Is Active */
             is_active?: boolean | null;
+            /** Marketplace Branch Ids */
+            marketplace_branch_ids?: string[] | null;
             /** Name */
             name?: string | null;
             /** Name Localized */
@@ -17089,6 +17097,8 @@ export interface components {
         };
         /** ModifierOptionCreate */
         ModifierOptionCreate: {
+            /** Aggregator Price */
+            aggregator_price?: number | string | null;
             /** Calories */
             calories?: number | null;
             /**
@@ -17122,6 +17132,8 @@ export interface components {
         };
         /** ModifierOptionResponse */
         ModifierOptionResponse: {
+            /** Aggregator Price */
+            aggregator_price?: number | null;
             /** Calories */
             calories: number | null;
             /** Display Order */
@@ -17156,6 +17168,8 @@ export interface components {
         };
         /** ModifierOptionUpdate */
         ModifierOptionUpdate: {
+            /** Aggregator Price */
+            aggregator_price?: number | string | null;
             /** Calories */
             calories?: number | null;
             /** Display Order */
@@ -19895,6 +19909,8 @@ export interface components {
         };
         /** ProductCreate */
         ProductCreate: {
+            /** Aggregator Price */
+            aggregator_price?: number | string | null;
             /**
              * Base Price
              * @default 0
@@ -20073,6 +20089,8 @@ export interface components {
         };
         /** ProductResponse */
         ProductResponse: {
+            /** Aggregator Price */
+            aggregator_price?: number | null;
             /** Base Price */
             base_price: number;
             /** Calories */
@@ -20164,6 +20182,8 @@ export interface components {
         };
         /** ProductUpdate */
         ProductUpdate: {
+            /** Aggregator Price */
+            aggregator_price?: number | string | null;
             /** Base Price */
             base_price?: number | string | null;
             /** Calories */

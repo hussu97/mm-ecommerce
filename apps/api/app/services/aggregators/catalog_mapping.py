@@ -92,18 +92,45 @@ async def _category_index(db: AsyncSession) -> dict[str, Any]:
     return {normalize_ref(n): cid for cid, n in rows if n}
 
 
+async def _option_rows(db: AsyncSession) -> list[tuple[Any, str, Decimal]]:
+    """Every MM option as (id, name, price-the-channels-quote).
+
+    A channel's menu carries the **marketplace** price, so an option given an
+    aggregator price is matched on that (`aggregator_pricing.option_price`) —
+    an iced latte Medium at 15 on the counter is 23 on Talabat, and matching on
+    15 would leave it unmapped. The counter price is offered as well, as a
+    second key, for a channel still showing the price from before the markup;
+    the marketplace key is listed first so it wins when both are present.
+    Mirrors `catalog.aggregator_pricing.option_price`, done in SQL-row form."""
+    rows = (
+        await db.execute(
+            select(
+                ModifierOption.id,
+                ModifierOption.name,
+                ModifierOption.price,
+                ModifierOption.aggregator_price,
+            )
+        )
+    ).all()
+    out: list[tuple[Any, str, Decimal]] = []
+    for oid, name, price, agg in rows:
+        if name is None:
+            continue
+        if agg is not None:
+            out.append((oid, name, Decimal(str(agg))))
+        if price is not None and (
+            agg is None or Decimal(str(price)) != Decimal(str(agg))
+        ):
+            out.append((oid, name, Decimal(str(price))))
+    return out
+
+
 async def _option_index(db: AsyncSession) -> dict[tuple[str, Any], Any]:
     """MM modifier options keyed by (normalised name, price) — the pair an
     aggregator's option read carries, since a bare name is ambiguous."""
-    rows = (
-        await db.execute(
-            select(ModifierOption.id, ModifierOption.name, ModifierOption.price)
-        )
-    ).all()
     out: dict[tuple[str, Any], Any] = {}
-    for oid, name, price in rows:
-        if name is not None and price is not None:
-            out[(normalize_ref(name), Decimal(str(price)))] = oid
+    for oid, name, price in reversed(await _option_rows(db)):
+        out[(normalize_ref(name), price)] = oid
     return out
 
 
@@ -192,19 +219,13 @@ async def resolve_menu(
         for cid, n in (await db.execute(select(Category.id, Category.name))).all()
         if n
     ]
-    opt_rows = (
-        await db.execute(
-            select(ModifierOption.id, ModifierOption.name, ModifierOption.price)
-        )
-    ).all()
+    opt_rows = await _option_rows(db)
     products_fold = _fold_index(prod_rows)
     categories_fold = _fold_index(cat_rows)
     opt_fold_counts: dict[tuple[str, Any], int] = {}
     options_fold: dict[tuple[str, Any], Any] = {}
     for oid, name, price in opt_rows:
-        if name is None or price is None:
-            continue
-        key = (normalize_name(name), Decimal(str(price)))
+        key = (normalize_name(name), price)
         opt_fold_counts[key] = opt_fold_counts.get(key, 0) + 1
         options_fold[key] = oid
     options_fold = {k: v for k, v in options_fold.items() if opt_fold_counts[k] == 1}

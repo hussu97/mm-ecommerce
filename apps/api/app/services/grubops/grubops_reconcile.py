@@ -154,8 +154,17 @@ async def desired_state(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]
         .all()
     )
 
+    # Items whose integrator category is limited to other branches are not on
+    # this location's menu: neither "out" nor "in" means anything there.
+    away_products, away_options = await grubops_service.scoped_away(db, branch_id)
+
     desired: list[Desired] = []
     for mapping in mappings:
+        if (
+            mapping.product_id in away_products
+            or mapping.modifier_option_id in away_options
+        ):
+            continue
         if mapping.product_id is not None:
             available = mapping.product_id not in out_products
             until = None if available else until_products.get(mapping.product_id)

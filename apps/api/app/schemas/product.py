@@ -85,6 +85,9 @@ class ProductCreate(BaseModel):
     description: str | None = None
     translations: dict[str, dict[str, str]] = Field(default_factory=dict)
     base_price: Decimal = Field(ge=0, decimal_places=2, default=Decimal("0"))
+    #: What the marketplaces charge instead of ``base_price``. Null = the counter
+    #: price. On a sized item (base 0) the markup belongs on its options instead.
+    aggregator_price: Decimal | None = Field(None, ge=0, decimal_places=2)
     calories: int | None = None
     preparation_time: int | None = None
     is_sold_by_weight: bool = False
@@ -123,6 +126,8 @@ class ProductUpdate(BaseModel):
     description: str | None = None
     translations: dict[str, dict[str, str]] | None = None
     base_price: Decimal | None = Field(None, ge=0)
+    #: Sending null clears it (back to the counter price).
+    aggregator_price: Decimal | None = Field(None, ge=0, decimal_places=2)
     calories: int | None = None
     preparation_time: int | None = None
     is_sold_by_weight: bool | None = None
@@ -155,6 +160,8 @@ class ProductResponse(BaseModel):
     description: str | None
     translations: dict[str, dict[str, str]] = {}
     base_price: float
+    #: The marketplace price when it differs from ``base_price``; null otherwise.
+    aggregator_price: float | None = None
     calories: int | None
     preparation_time: int | None
     is_sold_by_weight: bool

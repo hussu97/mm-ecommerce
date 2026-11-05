@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -59,7 +59,7 @@ from app.models.catalog_sync import (
     TARGET_FOODICS,
     AggregatorMenuSnapshot,
 )
-from app.models.external_item_map import METHOD_FUZZY, ExternalItemMap
+from app.models.external_item_map import METHOD_EXACT, METHOD_FUZZY, ExternalItemMap
 from app.models.menu import MenuGroup
 from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
@@ -84,7 +84,7 @@ from app.services.aggregators.menu_normalized import (
     NormalizedOption,
     NormalizedShift,
 )
-from app.services.catalog import menu_group_service
+from app.services.catalog import aggregator_pricing, menu_group_service
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +165,9 @@ def _product_to_item(product: Product) -> NormalizedItem:
                         name=o.name,
                         name_ar=_ar(o, "name"),
                         external_ref=o.sku,
-                        price=Decimal(o.price) if o.price is not None else None,
+                        # The marketplace price — the aggregator price when
+                        # one is set — because this is what the channels quote.
+                        price=aggregator_pricing.option_price(o),
                         is_available=o.is_active,
                     )
                     for o in sorted(mod.options, key=lambda x: x.display_order)
@@ -181,14 +183,16 @@ def _product_to_item(product: Product) -> NormalizedItem:
         description=product.description,
         description_ar=_ar(product, "description"),
         image_url=images[0] if images else None,
-        price=Decimal(product.base_price) if product.base_price is not None else None,
+        price=aggregator_pricing.product_price(product),
         is_available=product.is_active,
         category_ref=str(product.category_id) if product.category_id else None,
         modifier_groups=groups,
     )
 
 
-async def build_mm_menu(db: AsyncSession, *, target: str) -> NormalizedMenu:
+async def build_mm_menu(
+    db: AsyncSession, *, target: str, branch_id: Any = None
+) -> NormalizedMenu:
     """MM's desired menu for one target — the integrator menu tree, as-laid-out.
 
     The desired menu is now the **integrator root**: its L1 groups are the
@@ -201,13 +205,18 @@ async def build_mm_menu(db: AsyncSession, *, target: str) -> NormalizedMenu:
 
     `target` no longer changes membership — the one integrator menu is the source
     for every marketplace; the target only decides where the diff/write lands.
+    `branch_id`, when given, is the outlet the menu is for: a category limited to
+    other branches (`MenuGroup.marketplace_branch_ids`) is left out, so that
+    outlet's drift does not report the category as missing. Without it (Foodics,
+    which is account-level) every live category is included.
     """
     root = await menu_group_service.integrator_root(db)
     if root is None:
         return NormalizedMenu(source="mm", categories=[])
 
-    l1_groups = list(
-        (
+    l1_groups = [
+        group
+        for group in (
             await db.execute(
                 select(MenuGroup)
                 .where(
@@ -221,7 +230,10 @@ async def build_mm_menu(db: AsyncSession, *, target: str) -> NormalizedMenu:
         )
         .scalars()
         .unique()
-    )
+        if branch_id is None
+        or group.marketplace_branch_ids is None
+        or branch_id in group.marketplace_branch_ids
+    ]
 
     # Every product in the tree, loaded once with its modifiers.
     member_ids = [m.product_id for g in l1_groups for m in g.members]
@@ -590,7 +602,7 @@ async def compute_menu_drift(
     snap = await _get_snapshot(db, target, branch_id, SNAPSHOT_MENU)
     if snap is None or snap.normalized is None:
         return None
-    desired = await build_mm_menu(db, target=target)
+    desired = await build_mm_menu(db, target=target, branch_id=branch_id)
     actual = NormalizedMenu.from_dict(snap.normalized)
     result = diff_menu(
         desired,
@@ -973,8 +985,11 @@ async def create_menu_item(
 
     from app.services.providers import foodics_provider as fp
 
+    # The Foodics product carries the counter price (POS parity); the Grubtech
+    # price tag — what the marketplaces read — carries the marketplace price.
     price = product.base_price
-    if price is None:
+    agg_price = aggregator_pricing.product_price(product)
+    if price is None or agg_price is None:
         raise BadRequestError(
             f"Product {product.name!r} has no base price; set one before syncing."
         )
@@ -997,7 +1012,7 @@ async def create_menu_item(
             "description_localized": i18n["description_ar"],
             "image": i18n["image_url"],
             "price": str(price),
-            "aggregator_price": str(price),  # strict parity
+            "aggregator_price": str(agg_price),
             "category": cat_name,
             "grubtech_subgroup_id": subgroup_id,
             "price_tag_id": fp.FOODICS_GRUBTECH_PRICE_TAG_ID,
@@ -1030,7 +1045,7 @@ async def create_menu_item(
         image=i18n["image_url"],
         sku=product.sku,
         subgroup_id=subgroup_id,
-        aggregator_price=price,
+        aggregator_price=agg_price,
     )
     foodics_id = (created or {}).get("data", {}).get("id") or (created or {}).get("id")
     # Attach the Grubtech price tag as a SEPARATE POST — the product create's inline
@@ -1044,7 +1059,7 @@ async def create_menu_item(
     if foodics_id:
         try:
             await fp.provider.set_price_tag_product_price(
-                fp.FOODICS_GRUBTECH_PRICE_TAG_ID, str(foodics_id), float(price)
+                fp.FOODICS_GRUBTECH_PRICE_TAG_ID, str(foodics_id), float(agg_price)
             )
             price_tag_attached = True
         except Exception as exc:  # noqa: BLE001 — surfaced in the plan, not fatal
@@ -1063,11 +1078,231 @@ async def create_menu_item(
     plan["dry_run"] = False
     plan["foodics_id"] = foodics_id
     plan["price_tag_attached"] = price_tag_attached
+    if foodics_id:
+        # A sized item's price lives on its options, which the product create
+        # cannot carry; and a category limited to some branches must be inactive
+        # at the others. Both are the same parity step the update path runs.
+        plan["modifiers"] = await _foodics_copy_modifiers(product, str(foodics_id))
+        plan["parity"] = await _foodics_marketplace_parity(
+            db, product, str(foodics_id), subgroup_id=subgroup_id
+        )
     plan["note"] = (
         "Created in Foodics and mapped. The marketplaces sync from Foodics; their "
         "external_item_map rows record on the next menu read + resolve."
     )
     return plan
+
+
+async def _product_with_options(db: AsyncSession, product_id: Any) -> Product:
+    return (
+        await db.execute(
+            select(Product)
+            .where(Product.id == product_id)
+            .options(
+                selectinload(Product.product_modifiers)
+                .selectinload(ProductModifier.modifier)
+                .selectinload(Modifier.options)
+            )
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+
+async def _foodics_marketplace_parity(
+    db: AsyncSession, product: Product, foodics_id: str, *, subgroup_id: str | None
+) -> dict[str, Any]:
+    """Bring one Foodics product to what MM's integrator menu says about it.
+
+    Foodics feeds the marketplaces of the two integrated branches through four
+    things, and this sets all four from MM, idempotently:
+
+    * **price tag, product** — the Grubtech price-tag pivot carries the product's
+      marketplace price (`aggregator_pricing.product_price`);
+    * **price tag, options** — each option's pivot carries its marketplace price.
+      A sized item (every coffee) is priced entirely by its options, so without
+      this its marketplace price is whatever Foodics last had;
+    * **subgroup** — the product sits in its integrator category's Grubtech
+      subgroup, and that subgroup in the Grubtech group, or it reaches no
+      marketplace;
+    * **branch activity** — the product is active at each Foodics branch its
+      category is sold at and inactive at the rest, which is what keeps a
+      Barsha-only category off Sharjah's API stores.
+
+    Each step is isolated: one failing is reported and the rest still run.
+    """
+    from app.models.aggregator import FoodicsBranchMap
+    from app.services.providers import foodics_provider as fp
+
+    product = await _product_with_options(db, product.id)
+    out: dict[str, Any] = {}
+
+    async def step(name: str, coro) -> None:
+        try:
+            out[name] = await coro
+        except Exception as exc:  # noqa: BLE001 — one step must not stop the rest
+            logger.warning("foodics parity %s for %s: %s", name, product.sku, exc)
+            out[name] = {"error": str(exc)[:300]}
+
+    agg = aggregator_pricing.product_price(product)
+
+    async def _product_tag() -> str:
+        await fp.provider.set_price_tag_product_price(
+            fp.FOODICS_GRUBTECH_PRICE_TAG_ID, foodics_id, float(agg or 0)
+        )
+        return str(agg)
+
+    async def _live_options() -> dict[str, Any]:
+        live = await fp.provider.get_product(foodics_id) or {}
+        return {
+            str(o.get("sku")): o
+            for m in live.get("modifiers") or []
+            for o in m.get("options") or []
+            if o.get("sku")
+        }
+
+    async def _option_tags() -> dict[str, Any]:
+        by_sku = await _live_options()
+        wanted = {
+            o.sku
+            for pm in product.product_modifiers
+            for o in pm.modifier.options
+            if o.is_active
+        }
+        done: dict[str, Any] = {}
+        if wanted - by_sku.keys():
+            # The Foodics product is missing options MM sells it with (created
+            # before modifiers were copied, or edited by hand) — give it them, so
+            # the price below has something to land on.
+            done["copied"] = await _foodics_copy_modifiers(product, foodics_id)
+            by_sku = await _live_options()
+        for pm in product.product_modifiers:
+            for option in pm.modifier.options:
+                if not option.is_active:
+                    continue
+                remote = by_sku.get(option.sku)
+                if remote is None:
+                    done[option.sku] = "not on the Foodics product"
+                    continue
+                price = aggregator_pricing.option_price(option)
+                await fp.provider.set_price_tag_modifier_option_price(
+                    fp.FOODICS_GRUBTECH_PRICE_TAG_ID, str(remote["id"]), float(price)
+                )
+                done[option.sku] = str(price)
+        return done
+
+    async def _subgroup() -> str:
+        if not subgroup_id:
+            return "no integrator subgroup"
+        await fp.provider.ensure_grubtech_subgroup(subgroup_id)
+        await fp.provider.ensure_product_in_group(foodics_id, subgroup_id)
+        return subgroup_id
+
+    async def _branches() -> dict[str, bool]:
+        scope = await menu_group_service.marketplace_scope_for_product(db, product.id)
+        maps = (
+            (
+                await db.execute(
+                    select(FoodicsBranchMap).where(FoodicsBranchMap.is_active.is_(True))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        done: dict[str, bool] = {}
+        for m in maps:
+            active = menu_group_service.sold_at(scope, m.branch_id)
+            await fp.provider.set_product_branch_active(
+                foodics_id, str(m.foodics_branch_id), active
+            )
+            done[str(m.branch_id)] = active
+        return done
+
+    await step("price_tag_product", _product_tag())
+    await step("price_tag_options", _option_tags())
+    await step("subgroup", _subgroup())
+    await step("branches", _branches())
+    return out
+
+
+async def _foodics_copy_modifiers(product: Product, foodics_id: str) -> dict[str, Any]:
+    """Give a just-created Foodics product the modifiers MM sells it with.
+
+    The product create carries no modifiers, and a sized item has nothing to
+    sell without them. Reuses a Foodics modifier with the same `reference` and
+    options with the same SKU (MM's catalogue came from Foodics, so most exist);
+    creates what is missing at the counter price. Marketplace prices are set
+    afterwards on the price tag by `_foodics_marketplace_parity`.
+    """
+    # Callers may hold a product loaded without its modifiers; reload with them
+    # rather than trip an async lazy load.
+    from sqlalchemy.orm import object_session
+
+    from app.services.providers import foodics_provider as fp
+
+    session = object_session(product)
+    if session is not None:
+        product = (
+            await session.execute(
+                select(Product)
+                .where(Product.id == product.id)
+                .options(
+                    selectinload(Product.product_modifiers)
+                    .selectinload(ProductModifier.modifier)
+                    .selectinload(Modifier.options)
+                )
+            )
+        ).scalar_one()
+    return await fp.provider.copy_modifiers_to_product(
+        foodics_id,
+        [
+            {
+                "reference": pm.modifier.reference,
+                "name": pm.modifier.name,
+                "name_localized": _ar(pm.modifier, "name") or pm.modifier.name,
+                "minimum_options": pm.minimum_options,
+                "maximum_options": pm.maximum_options,
+                "free_options": pm.free_options,
+                "unique_options": pm.unique_options,
+                "index": pm.display_order,
+                "options": [
+                    {
+                        "sku": o.sku,
+                        "name": o.name,
+                        "name_localized": _ar(o, "name") or o.name,
+                        "price": float(o.price or 0),
+                        "index": o.display_order,
+                    }
+                    for o in sorted(pm.modifier.options, key=lambda x: x.display_order)
+                    if o.is_active
+                ],
+            }
+            for pm in sorted(product.product_modifiers, key=lambda x: x.display_order)
+        ],
+    )
+
+
+async def _adopt_foodics_by_sku(
+    db: AsyncSession, *, product_id: Any, foodics: dict[str, Any]
+) -> str:
+    """Map a product that already exists in Foodics instead of creating it twice.
+
+    Most of MM's catalogue was imported from Foodics, so an item reaching the
+    integrator menu for the first time usually already has a Foodics product
+    with the same SKU — and creating another would put a duplicate on every
+    marketplace. `foodics` is the live product `find_product_by_sku` returned;
+    this records it as the approved mapping and returns its id.
+    """
+    await catalog_mapping._upsert(  # noqa: SLF001 — one recorder, reused
+        db,
+        system=TARGET_FOODICS,
+        external_ref=str(foodics["id"]),
+        external_name=foodics.get("name"),
+        mm_kind=catalog_mapping.KIND_PRODUCT,
+        product_id=product_id,
+        approve=True,
+        method=METHOD_EXACT,
+    )
+    return str(foodics["id"])
 
 
 async def _foodics_ref_for(db: AsyncSession, product_id: Any) -> str | None:
@@ -1193,19 +1428,24 @@ async def enrich_existing_item(
             image=i18n["image_url"],
             price=price,
         )
-        # Keep the Grubtech price-tag pivot at parity so the marketplaces get the
-        # new price too (the product price alone does not drive the aggregator).
-        if price is not None:
-            await fp.provider.set_price_tag_product_price(
-                fp.FOODICS_GRUBTECH_PRICE_TAG_ID, str(ref), float(price)
-            )
+        # The Foodics product keeps the counter price; the Grubtech price-tag
+        # pivots (product + options) carry the marketplace price, the subgroup
+        # membership and per-branch activity carry where it is sold. One step,
+        # shared with the create path.
+        l1 = await menu_group_service.integrator_l1_group_for_product(db, product.id)
+        out["parity"] = await _foodics_marketplace_parity(
+            db, product, str(ref), subgroup_id=l1.reference if l1 else None
+        )
         out["fields"] = {
             "name_ar": "ok",
             "description": "ok",
             "image": "ok",
             "price": "ok",
         }
-        out["note"] = "Foodics enriched (name_ar + desc EN/AR + image + price parity)."
+        out["note"] = (
+            "Foodics enriched (name_ar + desc EN/AR + image) and the Grubtech price "
+            "tag, subgroup and branch activity brought to MM's marketplace menu."
+        )
         return out
 
     if target == "careem":
@@ -1248,7 +1488,7 @@ async def enrich_existing_item(
             name_ar=i18n["name_ar"],
             description=i18n["description"],
             description_ar=i18n["description_ar"],
-            price=product.base_price,
+            price=aggregator_pricing.product_price(product),
         )
         out["fields"]["text"] = "ok"
         out["fields"]["price"] = "ok"
@@ -1340,7 +1580,7 @@ async def enrich_existing_item(
             name_ar=i18n["name_ar"],
             description=i18n["description"],
             description_ar=i18n["description_ar"],
-            price=product.base_price,
+            price=aggregator_pricing.product_price(product),
             image=noon_image_path,
             publish=False,
         )
@@ -1442,7 +1682,7 @@ async def enrich_existing_item(
             name_ar=i18n["name_ar"],
             description_en=i18n["description"],
             description_ar=i18n["description_ar"],
-            price=product.base_price,
+            price=aggregator_pricing.product_price(product),
             plu=product.sku,
             image_cdn_url=image_cdn_url,
             image_s3key=image_s3key,
@@ -1521,7 +1761,7 @@ async def enrich_existing_item(
             name_ar=i18n["name_ar"],
             description=i18n["description"],
             description_ar=i18n["description_ar"],
-            price=product.base_price,
+            price=aggregator_pricing.product_price(product),
             image_url=i18n["image_url"],
         )
         out["fields"] = {"text": "ok", "price": "ok", "image": "ok"}
@@ -1563,21 +1803,29 @@ async def _is_mapped(db: AsyncSession, system: str, product_id: Any) -> bool:
     return row is not None
 
 
-async def _create_branch_for(db: AsyncSession, system: str) -> tuple[bool, Any]:
-    """(has_target, branch_id) for a CREATE of `system`. foodics/noon are account-
-    level (branch None). careem/talabat create on a non-Foodics outlet that trades
-    on the channel; returns has_target False when there is none."""
-    if system in (TARGET_FOODICS, "noon"):
-        return True, None
-    branches = (
-        (await db.execute(select(Branch).where(Branch.is_active.is_(True))))
-        .scalars()
-        .all()
-    )
-    for b in branches:
-        if not b.has_foodics and system in b.aggregators:
-            return True, b.id
-    return False, None
+def _outlets_for(
+    system: str, branches: list[Branch], scope: frozenset | None
+) -> list[Branch]:
+    """The outlets a write to `system` is for, given where the product is sold.
+
+    Foodics is written once for its integrated branches (and drives their API
+    stores); every other server system is written directly only for the
+    **non-Foodics** outlets that trade on it. Either way, only outlets the
+    product's integrator category is sold at count — a Barsha-only category
+    has no Karama/DSO outlet, so nothing is created on those portals."""
+    if system == TARGET_FOODICS:
+        return [
+            b
+            for b in branches
+            if b.has_foodics and menu_group_service.sold_at(scope, b.id)
+        ]
+    return [
+        b
+        for b in branches
+        if not b.has_foodics
+        and system in b.aggregators
+        and menu_group_service.sold_at(scope, b.id)
+    ]
 
 
 async def sync_product(
@@ -1607,9 +1855,51 @@ async def sync_product(
     if l1 is None:
         return {"skipped": "product is not in the integrator menu"}
 
+    scope = await menu_group_service.marketplace_scope_for_product(db, product.id)
+    # Plain values, not ORM rows: each system below commits or rolls back, which
+    # expires every loaded instance, and reading `has_foodics` off an expired
+    # Branch would lazy-load under asyncio (MissingGreenlet) on the next system.
+    branches = [
+        SimpleNamespace(id=b.id, has_foodics=b.has_foodics, aggregators=b.aggregators)
+        for b in (
+            await db.execute(select(Branch).where(Branch.is_active.is_(True)))
+        ).scalars()
+    ]
+    sku = product.sku
+
     results: dict[str, Any] = {}
     for system in _SERVER_SYSTEMS:
+        outlets = _outlets_for(system, branches, scope)
+        if not outlets and not (
+            # A Foodics product already mapped still needs its branch activity
+            # rewritten when its category stops being sold at every Foodics
+            # branch; anywhere else, no outlet means nothing to write.
+            system == TARGET_FOODICS and await _is_mapped(db, system, product_id)
+        ):
+            results[system] = {
+                "skipped": "not sold at an outlet this system is written for"
+            }
+            continue
         try:
+            if system == TARGET_FOODICS and not await _is_mapped(
+                db, system, product_id
+            ):
+                # Already in Foodics under this SKU? Adopt it — a second create
+                # would put a duplicate on every marketplace.
+                from app.services.providers import foodics_provider as fp
+
+                found = await fp.provider.find_product_by_sku(sku) if sku else None
+                if found and dry_run:
+                    results[system] = {
+                        "would_adopt": found["id"],
+                        "note": "Dry run — exists in Foodics by SKU; would map it "
+                        "and bring it to parity instead of creating it.",
+                    }
+                    continue
+                if found:
+                    results["foodics_adopted"] = await _adopt_foodics_by_sku(
+                        db, product_id=product_id, foodics=found
+                    )
             # Deliveroo self-serve is a single create-or-update (`selfserve_upsert_item`
             # matches the item on the live draft by plu/name), so it always takes the
             # enrich path — no separate create branch to keep in sync.
@@ -1621,10 +1911,11 @@ async def sync_product(
                     "action", results[system].get("fields", {}).get("action", "update")
                 )
             else:
-                has_target, branch_id = await _create_branch_for(db, system)
-                if not has_target:
-                    results[system] = {"skipped": "no outlet trades on this channel"}
-                    continue
+                # foodics and noon are account-level; careem/talabat create on the
+                # outlet (the first in-scope non-Foodics one trading on them).
+                branch_id = (
+                    None if system in (TARGET_FOODICS, "noon") else outlets[0].id
+                )
                 results[system] = await create_menu_item(
                     db,
                     product_id=product_id,
@@ -1647,9 +1938,13 @@ async def sync_product(
     # keeta: Barsha/Sharjah ride Foodics; Karama/DSO still need the VM worker
     # (mtgsig create + Venus updateSpuPicture) — not an httpx target. deliveroo is
     # now handled in the loop above via the self-serve draft upsert.
-    results["keeta"] = {
-        "handoff": "VM worker: aggregator-bootstrap create-keeta-item + set-keeta-image"
-    }
+    results["keeta"] = (
+        {
+            "handoff": "VM worker: aggregator-bootstrap create-keeta-item + set-keeta-image"
+        }
+        if _outlets_for("keeta", branches, scope)
+        else {"skipped": "not sold at a non-Foodics keeta outlet"}
+    )
     return results
 
 
@@ -1759,7 +2054,7 @@ async def _create_on_careem(
         raise BadRequestError("careem create needs a branch_id (the outlet).")
     cat_name = category_name
     i18n = _product_i18n(product)
-    price = product.base_price
+    price = aggregator_pricing.product_price(product)
     if price is None:
         raise BadRequestError(f"Product {product.name!r} has no base price.")
 
@@ -1909,7 +2204,7 @@ async def _create_on_noon(
 
     cat_name = category_name
     i18n = _product_i18n(product)
-    price = product.base_price
+    price = aggregator_pricing.product_price(product)
     if price is None:
         raise BadRequestError(f"Product {product.name!r} has no base price.")
 
@@ -2059,7 +2354,7 @@ async def _create_on_talabat(
         raise BadRequestError("talabat create needs a branch_id (the outlet).")
     cat_name = category_name
     i18n = _product_i18n(product)
-    price = product.base_price
+    price = aggregator_pricing.product_price(product)
     if price is None:
         raise BadRequestError(f"Product {product.name!r} has no base price.")
 

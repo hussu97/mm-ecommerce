@@ -308,6 +308,55 @@ Consolidated view of what each channel can do, by operation. `Y`=server-callable
 
 ---
 
+## 11. Aggregator price & branch-scoped categories (2026-11-05)
+
+**Aggregator price.** `products.aggregator_price` and
+`modifier_options.aggregator_price` (nullable, migration 319) are what the
+marketplaces charge *instead of* the counter price. Null = the counter price.
+Every marketplace reader goes through `services/catalog/aggregator_pricing.py`
+(`product_price`, `option_price`): the desired menu (`catalog_sync._product_to_item`),
+so the drift report and every push; the Foodics Grubtech price tag; the direct
+Careem/noon/Talabat/Deliveroo writes; and the name+price option matcher
+(`catalog_mapping._option_rows`, marketplace key first, counter key as fallback).
+The counter, website and margin estimates keep the counter price; aggregator
+orders are priced from their own feed (`promote`), never from the catalogue.
+A sized item (base 0, price on its options — every coffee) carries its markup on
+its **options**.
+
+**Branch-scoped integrator categories.** `menu_groups.marketplace_branch_ids`
+(integrator L1 categories only, CHECK-enforced; null = every branch) limits a
+category's items to those branches' marketplace menus.
+`menu_group_service.marketplace_scope_for_product` resolves a product's scope
+(union over its live categories; empty = not on the integrator menu). It drives:
+
+| Writer | Effect of a Barsha-only category |
+|---|---|
+| Foodics (`_foodics_marketplace_parity`) | product **active at Barsha, inactive at Sharjah** (`POST /products/{id}/branches/{branch}`), so only Barsha's API stores get it |
+| Direct portals (`sync_product` → `_outlets_for`) | nothing created/updated on Karama/DSO (careem, noon, talabat, deliveroo, keeta hand-off) |
+| GrubOps OOS (`grubops_service.scoped_away`) | pushed to the Barsha location only (`desired_state` + the immediate push) |
+| Drift (`build_mm_menu(branch_id=…)`) | the category is not reported "missing" at other outlets |
+
+**Foodics parity, one step for create and update** (`_foodics_marketplace_parity`):
+price-tag pivot for the product **and each option** (`POST /price_tags/{tag}/
+modifier_options/{id}`), membership of the category's Grubtech subgroup (product
+PUT with the *whole* `groups` list — it replaces) and of that subgroup in the
+Grubtech group (group PUT with the whole `subgroups` list — it replaces; an empty
+read refuses to write), and per-branch activity. A Foodics create now also copies
+MM's modifiers (`copy_modifiers_to_product`: `POST /modifiers`, `POST
+/modifiers/{id}/options`, attach `POST /products/{id}/modifiers/{mid}`), and an
+unmapped product that already exists in Foodics by SKU is **adopted**, never
+re-created. All routes verified live on 2026-11-05.
+
+**Triggers.** A product save, an option add/edit/delete (every product carrying
+the modifier), and an integrator category's membership / scope / on-off change
+all write the catalog-sync outbox. Operator path:
+`python -m scripts.sync_product_to_integrators --sku … --sync [--apply]`.
+
+**Live use.** Hot Coffee + Cold Coffee (22 drinks) are integrator categories
+limited to Barsha Heights, every size at counter + AED 8 (migration 320).
+
+---
+
 ## Appendix — Operations
 
 **Manual re-run for a date** (idempotent; keeta re-ingests from stored raw). The

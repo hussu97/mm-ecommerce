@@ -1026,6 +1026,180 @@ class FoodicsClient:
             json_body={"url": f"/products/{product_id}", "payload": payload},
         )
 
+    # ── marketplace parity (catalog sync) ──────────────────────────────────────
+    # Every route below was confirmed live against the console on 2026-11-05.
+    # The pattern Foodics uses throughout: a pivot is POST-upserted at
+    # `/<parent>/<id>/<relation>/<child>` where such a route exists (price tags,
+    # product branches), and a relation without one is written by PUTting the
+    # parent with the WHOLE list (groups, subgroups, modifiers) — the list
+    # REPLACES what is there, so these read first and always send everything.
+
+    async def set_price_tag_modifier_option_price(
+        self, price_tag_id: str, option_id: str, price: Any
+    ) -> Any:
+        """Set one modifier option's marketplace price on the price tag (its
+        `pivot.price`), adding it to the tag if absent — the option twin of
+        `set_price_tag_product_price`, same POST-upsert route shape."""
+        return await self._call(
+            "POST",
+            _CREATING,
+            json_body={
+                "url": f"/price_tags/{price_tag_id}/modifier_options/{option_id}",
+                "payload": {"price": price},
+            },
+        )
+
+    async def set_product_branch_active(
+        self, product_id: str, branch_id: str, active: bool
+    ) -> Any:
+        """Mark a product active or inactive at one Foodics branch — the console's
+        "Inactive in Branches". `POST /products/{id}/branches/{branch}` upserts
+        the pivot (PUT 405s; a `branches` list on the product PUT is ignored).
+        Inactive at a branch keeps it off that branch's marketplace API stores."""
+        return await self._call(
+            "POST",
+            _CREATING,
+            json_body={
+                "url": f"/products/{product_id}/branches/{branch_id}",
+                "payload": {"is_active": bool(active)},
+            },
+        )
+
+    async def ensure_product_in_group(self, product_id: str, group_id: str) -> bool:
+        """Put a product in a group, keeping every group it is already in. There
+        is no pivot route (`/groups/{g}/products/{p}` 404s), and the product PUT's
+        `groups` replaces the list — so read, append, write. Returns True when it
+        had to add it."""
+        product = await self.get_product(product_id) or {}
+        current = [g["id"] for g in product.get("groups") or [] if g.get("id")]
+        if group_id in current:
+            return False
+        await self._call(
+            "PUT",
+            _UPDATING,
+            json_body={
+                "url": f"/products/{product_id}",
+                "payload": {
+                    "groups": [
+                        {"id": g, "is_active": True} for g in current + [group_id]
+                    ]
+                },
+            },
+        )
+        return True
+
+    async def ensure_grubtech_subgroup(self, group_id: str) -> bool:
+        """Make a group one of the Grubtech group's subgroups, keeping all the
+        others. The group PUT's `subgroups` REPLACES the list (verified with a
+        throwaway group: omitting one detaches it), so this reads the current
+        list and sends it whole with the new one added. Returns True when added."""
+        payload = await self._call(
+            "GET",
+            _GETTING,
+            params={"url": "/groups", "id": FOODICS_GRUBTECH_GROUP_ID},
+        )
+        group = _order_of(payload) or {}
+        current = [s["id"] for s in group.get("subgroups") or [] if s.get("id")]
+        if not current:
+            # An empty read is a failed read, not an empty menu — writing it back
+            # would detach every category from every marketplace.
+            raise FoodicsError("Grubtech group read returned no subgroups")
+        if group_id in current:
+            return False
+        await self._call(
+            "PUT",
+            _UPDATING,
+            json_body={
+                "url": f"/groups/{FOODICS_GRUBTECH_GROUP_ID}",
+                "payload": {
+                    "subgroups": [
+                        {"id": g, "is_active": True} for g in current + [group_id]
+                    ]
+                },
+            },
+        )
+        return True
+
+    async def find_product_by_sku(self, sku: str) -> dict | None:
+        """The live (undeleted) product with this SKU, or None. A full listing —
+        the account has ~150 products — read only when a product reaches the
+        integrator menu without a mapping."""
+        target = (sku or "").strip().casefold()
+        for row in await self._list_all("/products", cap_pages=40):
+            if str(row.get("sku") or "").strip().casefold() == target and not row.get(
+                "deleted_at"
+            ):
+                return row
+        return None
+
+    async def copy_modifiers_to_product(
+        self, product_id: str, modifiers: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Give a product the modifiers MM sells it with, creating what Foodics
+        lacks. Each spec: `{reference, name, name_localized, minimum_options,
+        maximum_options, free_options, unique_options, index, options:[{sku, name,
+        name_localized, price, index}]}`.
+
+        A modifier is matched by `reference`, an option by SKU (both unique on
+        each side), so re-running creates nothing twice; the attach is an upsert.
+        Routes confirmed live 2026-11-05 on a throwaway product."""
+        if not modifiers:
+            return {"modifiers": "none"}
+        report: dict[str, Any] = {}
+        existing_mods = {
+            str(m.get("reference")): m
+            for m in await self._list_all("/modifiers", cap_pages=40)
+            if m.get("reference") and not m.get("deleted_at")
+        }
+        existing_opts = {
+            str(o.get("sku")): o
+            for o in await self._list_all("/modifier_options", cap_pages=80)
+            if o.get("sku") and not o.get("deleted_at")
+        }
+        for spec in modifiers:
+            mod = existing_mods.get(spec["reference"])
+            if mod is None:
+                created = await self._create(
+                    "/modifiers",
+                    {
+                        "name": spec["name"],
+                        "name_localized": spec["name_localized"],
+                        "reference": spec["reference"],
+                    },
+                )
+                mod = _order_of(created) or {}
+                report[spec["reference"]] = "created"
+            for opt in spec["options"]:
+                if opt["sku"] in existing_opts:
+                    continue
+                # Options are created under their modifier (`/modifier_options`
+                # itself is GET-only — 405 on POST).
+                await self._create(
+                    f"/modifiers/{mod['id']}/options",
+                    {
+                        "name": opt["name"],
+                        "name_localized": opt["name_localized"],
+                        "sku": opt["sku"],
+                        "price": opt["price"],
+                        "costing_method": FOODICS_COSTING_METHOD,
+                        "is_active": True,
+                    },
+                )
+                report[opt["sku"]] = "created"
+            # The product↔modifier pivot is POST-upserted on its own route (a
+            # `modifiers` list on the product PUT is silently ignored).
+            await self._create(
+                f"/products/{product_id}/modifiers/{mod['id']}",
+                {
+                    "minimum_options": spec["minimum_options"],
+                    "maximum_options": spec["maximum_options"],
+                    "free_options": spec["free_options"],
+                    "unique_options": bool(spec["unique_options"]),
+                    "index": spec["index"],
+                },
+            )
+        return report
+
     async def get_product(self, product_id: str) -> dict | None:
         """One product's full record (`category`, `groups`, `price_tags`, …) — used
         to confirm a create landed and to read back the id the mapping stores."""

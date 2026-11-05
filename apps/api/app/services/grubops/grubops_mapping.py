@@ -37,7 +37,7 @@ import uuid
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.branch import Branch
@@ -51,6 +51,7 @@ from app.models.grubops import (
     TYPE_RECIPE,
     GrubOpsLocationMap,
 )
+from app.models.menu import ROOT_KIND_INTEGRATOR, MenuGroup, MenuGroupProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.services.providers.grubops_provider import GrubOpsError, provider
@@ -289,7 +290,13 @@ def _name_of(item: dict) -> str:
 async def _our_menu(
     db: AsyncSession,
 ) -> tuple[list[Product], dict[uuid.UUID, list[tuple[ModifierOption, str]]]]:
-    """The products the website sells, and each one's options with their group.
+    """The products sold through GrubOps, and each one's options with their group.
+
+    That is everything the website sells **and** everything on the integrator
+    menu — the marketplace catalogue Foodics feeds to GrubTech. A counter-only
+    drink pushed to the marketplaces (every coffee) is not a website product,
+    and without the second half it would never be mapped, so marking it out of
+    stock would never reach the aggregators.
 
     Keyed by product because that is what tells two identically-named options
     apart: this catalogue has seventeen modifier groups called "Your Choice of
@@ -298,11 +305,20 @@ async def _our_menu(
     group, option) is a unique key on both sides and the pairing is
     one-to-one.
     """
+    integrator_members = (
+        select(MenuGroupProduct.product_id)
+        .join(MenuGroup, MenuGroup.id == MenuGroupProduct.group_id)
+        .where(
+            MenuGroup.root_kind == ROOT_KIND_INTEGRATOR,
+            MenuGroup.deleted_at.is_(None),
+        )
+    )
     products = list(
         (
             await db.execute(
                 select(Product).where(
-                    Product.is_active.is_(True), sells_on(WEB_CHANNEL)
+                    Product.is_active.is_(True),
+                    or_(sells_on(WEB_CHANNEL), Product.id.in_(integrator_members)),
                 )
             )
         )

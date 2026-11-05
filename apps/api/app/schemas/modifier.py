@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ModifierOptionResponse(BaseModel):
@@ -15,6 +15,8 @@ class ModifierOptionResponse(BaseModel):
     translations: dict[str, dict[str, str]] = {}
     sku: str
     price: float
+    #: The marketplace price when it differs from ``price``; null otherwise.
+    aggregator_price: float | None = None
     calories: int | None
     is_active: bool
     display_order: int
@@ -61,6 +63,8 @@ class ModifierOptionCreate(BaseModel):
     translations: dict[str, dict[str, str]] = {}
     sku: str
     price: Decimal = Decimal("0")
+    #: What the marketplaces charge instead of ``price``; null = the same.
+    aggregator_price: Decimal | None = Field(None, ge=0, decimal_places=2)
     calories: int | None = None
     is_active: bool = True
     display_order: int = 0
@@ -71,6 +75,8 @@ class ModifierOptionUpdate(BaseModel):
     translations: dict[str, dict[str, str]] = {}
     sku: str | None = None
     price: Decimal | None = None
+    #: Sending null clears it (back to the counter price).
+    aggregator_price: Decimal | None = Field(None, ge=0, decimal_places=2)
     calories: int | None = None
     is_active: bool | None = None
     display_order: int | None = None

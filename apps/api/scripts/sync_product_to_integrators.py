@@ -25,6 +25,14 @@ This is that action. Given a product (by SKU or id) it:
    propagated/created items land in `external_item_map` without waiting for the
    next scheduled sweep (which is off in prod: `CATALOG_SYNC_SWEEP_MINUTES=0`).
 
+**--sync** is the one to reach for: it runs `catalog_sync.sync_product` — the
+same create-or-update the admin's "save product" queues — which knows where each
+product is sold (an integrator category limited to some branches, e.g. coffee at
+Barsha only) and brings Foodics' price tag, subgroup and per-branch activity to
+MM's marketplace menu. The create matrix below predates that and is kept for
+backfills; it now honours the same branch scope, so a Barsha-only item is never
+created on a Karama/DSO portal from here either.
+
 Default is a DRY RUN: it resolves everything and prints the exact create each
 target would POST, mutating nothing. Pass `--apply` to actually create, and
 `--map` to run the mapping phase after. Per-target isolated: one dead session or
@@ -59,6 +67,7 @@ from app.services.aggregators.catalog_sync import (
     _CREATE_NEEDS_WORKER,
     _DIRECT_CREATE_CHANNELS,
 )
+from app.services.catalog import menu_group_service
 
 
 async def _resolve_products(
@@ -86,8 +95,8 @@ async def _resolve_products(
 
 async def _plan_matrix(
     db: Any,
-) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]], dict[Any, str]]:
-    """Return (server_creates, worker_handoffs, branch_names).
+) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]], dict[Any, str], list[Branch]]:
+    """Return (server_creates, worker_handoffs, branch_names, branches).
 
     Foodics is one account-level create (branch_id None). Non-Foodics branches get
     a per-channel create for each channel they trade on; server-callable channels
@@ -126,7 +135,7 @@ async def _plan_matrix(
                 server.append((channel, b.id))
             elif channel in _CREATE_NEEDS_WORKER:
                 worker.append((channel, b.id))
-    return server, worker, names
+    return server, worker, names, list(branches)
 
 
 async def run(args: argparse.Namespace) -> None:
@@ -141,7 +150,29 @@ async def run(args: argparse.Namespace) -> None:
         # re-queries its own Product, and a rollback on an error would otherwise
         # expire these ORM instances and trigger a sync lazy-load (MissingGreenlet).
         prods = [(p.id, p.sku, p.name, p.base_price) for p in products]
-        server, worker, names = await _plan_matrix(db)
+        server, worker, names, branches = await _plan_matrix(db)
+        scopes = {
+            pid: await menu_group_service.marketplace_scope_for_product(db, pid)
+            for pid, *_ in prods
+        }
+
+        if args.sync:
+            print(f"\n{'APPLY' if args.apply else 'DRY RUN'} — sync_product\n")
+            for pid, sku, pname, _ in prods:
+                print(f"== {sku}  {pname} ==")
+                try:
+                    res = await catalog_sync.sync_product(
+                        db, product_id=pid, dry_run=not args.apply
+                    )
+                    if args.apply:
+                        await db.commit()
+                    for system, outcome in res.items():
+                        print(f"  [{system:16}] {outcome}")
+                except Exception as exc:  # noqa: BLE001 — isolate per product
+                    await db.rollback()
+                    print(f"  ERROR {exc}")
+                print()
+            return
         if args.targets:
             wanted = set(args.targets)
             server = [t for t in server if t[0] in wanted]
@@ -155,8 +186,17 @@ async def run(args: argparse.Namespace) -> None:
             print(f"\n{'APPLY' if args.apply else 'DRY RUN'} — creates per product\n")
         for pid, sku, pname, price in prods if create_phase else []:
             print(f"== {sku}  {pname}  (AED {price}) ==")
+            scope = scopes[pid]
             for target, branch_id in server:
                 where = names.get(branch_id, str(branch_id))
+                sold = (
+                    bool(catalog_sync._outlets_for(target, branches, scope))  # noqa: SLF001
+                    if branch_id is None
+                    else menu_group_service.sold_at(scope, branch_id)
+                )
+                if not sold:
+                    print(f"  [{target:9}/{where:20}] skip — not sold there")
+                    continue
                 try:
                     plan = await catalog_sync.create_menu_item(
                         db,
@@ -181,6 +221,8 @@ async def run(args: argparse.Namespace) -> None:
                     print(f"  [{target:9}/{where:20}] ERROR {exc}")
             for target, branch_id in worker:
                 where = names.get(branch_id, str(branch_id))
+                if not menu_group_service.sold_at(scope, branch_id):
+                    continue
                 print(
                     f"  [{target:9}/{where:20}] HANDOFF — worker-only "
                     f"(no server-callable menu API); create on the portal/worker."
@@ -264,6 +306,13 @@ def main() -> None:
         "--map",
         action="store_true",
         help="After creating, refresh menu snapshots and resolve mappings.",
+    )
+    ap.add_argument(
+        "--sync",
+        action="store_true",
+        help="Run catalog_sync.sync_product (scoped create-or-update on every "
+        "integrator + Foodics price-tag/subgroup/branch parity). Dry-run unless "
+        "--apply.",
     )
     ap.add_argument(
         "--enrich",

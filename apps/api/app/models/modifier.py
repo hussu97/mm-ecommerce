@@ -59,6 +59,10 @@ class ModifierOption(Base, UUIDMixin):
     price: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, server_default="0"
     )
+    #: The option's marketplace price, as `Product.aggregator_price` is the
+    #: product's. A sized item carries its whole price on its options (base 0),
+    #: so a marketplace markup on it is set here. Null = the counter price.
+    aggregator_price: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
     cost: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
     calories: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

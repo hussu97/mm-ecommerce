@@ -73,6 +73,12 @@ class Product(Base, UUIDMixin, TimestampMixin):
     base_price: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, server_default="0"
     )
+    #: What the marketplaces charge instead of `base_price` — the integrator menu
+    #: (Foodics' Grubtech price tag and the portals MM writes to directly) quotes
+    #: this when it is set. Null, the ordinary case, is "same as the counter".
+    #: Read through `catalog.aggregator_pricing`, never directly, so the sync,
+    #: the drift report and the mapping all agree on one effective figure.
+    aggregator_price: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
     barcode: Mapped[str | None] = mapped_column(String(100), nullable=True)
     calories: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preparation_time: Mapped[int | None] = mapped_column(Integer, nullable=True)

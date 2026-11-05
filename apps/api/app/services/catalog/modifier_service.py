@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import ConflictError, NotFoundError
-from app.models.modifier import Modifier, ModifierOption
+from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.schemas.modifier import (
     ModifierCreate,
     ModifierOptionCreate,
@@ -117,6 +117,33 @@ async def delete(db: AsyncSession, modifier_id: uuid.UUID) -> None:
     await db.flush()
 
 
+async def _enqueue_products_using(db: AsyncSession, modifier_id: uuid.UUID) -> None:
+    """An option's price or availability is part of every product carrying its
+    modifier, so a change to one is a change those products' integrators must
+    hear about — the same outbox a product save writes to. `sync_product` skips
+    anything not on the integrator menu, so the queue needs no filtering here."""
+    from app.services.aggregators import catalog_sync
+
+    product_ids = (
+        (
+            await db.execute(
+                select(ProductModifier.product_id).where(
+                    ProductModifier.modifier_id == modifier_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for product_id in sorted(set(product_ids)):
+        try:
+            await catalog_sync.enqueue_product_sync(
+                db, product_id=product_id, reason="option updated"
+            )
+        except Exception:  # noqa: BLE001 — a queue hiccup must not fail the save
+            pass
+
+
 async def add_option(
     db: AsyncSession, modifier_id: uuid.UUID, data: ModifierOptionCreate
 ) -> ModifierResponse:
@@ -134,6 +161,7 @@ async def add_option(
     option = ModifierOption(modifier_id=modifier_id, **data.model_dump())
     db.add(option)
     await db.flush()
+    await _enqueue_products_using(db, modifier_id)
 
     stmt = (
         select(Modifier)
@@ -167,6 +195,7 @@ async def update_option(
         setattr(option, key, val)
 
     await db.flush()
+    await _enqueue_products_using(db, modifier_id)
 
     stmt = (
         select(Modifier)
@@ -197,6 +226,7 @@ async def delete_option(
 
     option.is_active = False
     await db.flush()
+    await _enqueue_products_using(db, modifier_id)
 
     stmt = (
         select(Modifier)

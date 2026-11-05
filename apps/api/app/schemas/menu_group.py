@@ -16,6 +16,9 @@ class MenuGroupBase(BaseModel):
     parent_id: UUID | None = None
     display_order: int = 0
     is_active: bool = True
+    #: Integrator categories only: the branches whose marketplace menus carry
+    #: this category. Null (the default) is every branch.
+    marketplace_branch_ids: list[UUID] | None = None
 
 
 class MenuGroupCreate(MenuGroupBase):
@@ -41,6 +44,9 @@ class MenuGroupUpdate(BaseModel):
     parent_id: UUID | None = None
     display_order: int | None = None
     is_active: bool | None = None
+    #: Sending null clears the restriction (every branch again); leaving the
+    #: key out leaves it as it is.
+    marketplace_branch_ids: list[UUID] | None = None
     product_ids: list[UUID] | None = None
     #: Subset of ``product_ids`` kept on the register but left off the menu PDF.
     #: Only applied when ``product_ids`` is also sent (contents are set together).
@@ -72,6 +78,9 @@ class MenuGroupNode(BaseModel):
     parent_id: UUID | None = None
     display_order: int
     is_active: bool
+    #: Integrator categories only: the branches whose marketplace menus carry
+    #: this category. Null (the default) is every branch.
+    marketplace_branch_ids: list[UUID] | None = None
     product_ids: list[UUID] = []
     pdf_excluded_product_ids: list[UUID] = []
     product_count: int = 0
@@ -93,6 +102,9 @@ class MenuGroupResponse(BaseModel):
     parent_id: UUID | None = None
     display_order: int
     is_active: bool
+    #: Integrator categories only: the branches whose marketplace menus carry
+    #: this category. Null (the default) is every branch.
+    marketplace_branch_ids: list[UUID] | None = None
     product_ids: list[UUID] = []
     pdf_excluded_product_ids: list[UUID] = []
 

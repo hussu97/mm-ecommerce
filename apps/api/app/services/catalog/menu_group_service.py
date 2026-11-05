@@ -230,6 +230,7 @@ async def list_tree(
                 "parent_id": g.parent_id,
                 "display_order": g.display_order,
                 "is_active": g.is_active,
+                "marketplace_branch_ids": g.marketplace_branch_ids,
                 "product_ids": [m.product_id for m in g.members],
                 "pdf_excluded_product_ids": [
                     m.product_id for m in g.members if m.exclude_from_pdf
@@ -356,6 +357,12 @@ async def create(db: AsyncSession, data: dict) -> MenuGroup:
         parent_id=data.get("parent_id"),
         display_order=data.get("display_order", 0),
         is_active=data.get("is_active", True),
+        marketplace_branch_ids=await _validated_marketplace_scope(
+            db,
+            data.get("marketplace_branch_ids"),
+            root_kind=root_kind,
+            is_child=parent is not None,
+        ),
     )
     db.add(group)
     await db.flush()
@@ -367,6 +374,11 @@ async def create(db: AsyncSession, data: dict) -> MenuGroup:
         data.get("product_ids"),
         data.get("pdf_excluded_product_ids"),
     )
+    if root_kind == ROOT_KIND_INTEGRATOR and parent is not None:
+        # A new integrator category's items are new to the marketplaces.
+        await _enqueue_marketplace_sync(
+            db, set(data.get("product_ids") or []), reason="integrator menu"
+        )
     # Flush, not commit. The request-scoped `get_db` dependency owns the
     # commit; a service that commits mid-request turns everything the router
     # did before it into a fait accompli that a later failure in the same
@@ -397,6 +409,7 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
             )
         group.parent_id = new_parent_id
 
+    was_active = group.is_active
     # root_kind / branch_id / root_id are fixed when a root is created; they are
     # not editable here — a menu does not change which shop it belongs to.
     for field in (
@@ -411,6 +424,20 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
         if field in data and data[field] is not None:
             setattr(group, field, data[field])
 
+    # Unlike the fields above, an explicit null here means something — "every
+    # branch again" — so it is applied whenever the key was sent.
+    scope_changed = False
+    if "marketplace_branch_ids" in data:
+        scope = await _validated_marketplace_scope(
+            db,
+            data["marketplace_branch_ids"],
+            root_kind=group.root_kind,
+            is_child=group.parent_id is not None,
+        )
+        scope_changed = _scope_key(scope) != _scope_key(group.marketplace_branch_ids)
+        group.marketplace_branch_ids = scope
+
+    before = await _member_ids(db, group.id)
     if "product_ids" in data:
         await _set_products(
             db,
@@ -421,7 +448,159 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
 
     # Flush, not commit — see `create`. The request commits once, at the end.
     await db.flush()
+
+    # An integrator category's contents and reach ARE the marketplace menu, so
+    # a change to either is a change every member's integrators must hear about
+    # — the same outbox a product save writes to. Products that just arrived
+    # need creating; a re-scoped category needs every member's branch activity
+    # rewritten; a product that just left is reported by the drift sweep.
+    if group.root_kind == ROOT_KIND_INTEGRATOR and group.parent_id is not None:
+        after = await _member_ids(db, group.id)
+        reach_changed = scope_changed or group.is_active != was_active
+        touched = (after - before) | (after if reach_changed else set())
+        await _enqueue_marketplace_sync(db, touched, reason="integrator menu")
     return await get(db, group_id)
+
+
+def _scope_key(ids) -> frozenset | None:
+    return None if ids is None else frozenset(ids)
+
+
+async def _validated_marketplace_scope(
+    db: AsyncSession, ids, *, root_kind: str, is_child: bool
+) -> list[uuid.UUID] | None:
+    """The scope to store, or a 400. Null stays null (every branch); a list must
+    be on an integrator category, name real branches, and not be empty — a
+    category live nowhere is a switched-off category, and `is_active` says that."""
+    if ids is None:
+        return None
+    if root_kind != ROOT_KIND_INTEGRATOR or not is_child:
+        raise BadRequestError(
+            "Only an integrator menu category can be limited to some branches."
+        )
+    unique = list(dict.fromkeys(ids))
+    if not unique:
+        raise BadRequestError(
+            "Pick at least one branch, or clear the list to sell it at every "
+            "branch. To take a category off every marketplace, switch it off."
+        )
+    found = set(
+        (await db.execute(select(Branch.id).where(Branch.id.in_(unique))))
+        .scalars()
+        .all()
+    )
+    missing = [str(b) for b in unique if b not in found]
+    if missing:
+        raise NotFoundError(f"No such branch: {', '.join(missing)}")
+    return unique
+
+
+async def _member_ids(db: AsyncSession, group_id: uuid.UUID) -> set[uuid.UUID]:
+    return set(
+        (
+            await db.execute(
+                select(MenuGroupProduct.product_id).where(
+                    MenuGroupProduct.group_id == group_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _enqueue_marketplace_sync(
+    db: AsyncSession, product_ids: set[uuid.UUID], *, reason: str
+) -> None:
+    if not product_ids:
+        return
+    from app.services.aggregators import catalog_sync
+
+    for product_id in sorted(product_ids):
+        try:
+            await catalog_sync.enqueue_product_sync(
+                db, product_id=product_id, reason=reason
+            )
+        except Exception:  # noqa: BLE001 — a queue hiccup must not fail the save
+            pass
+
+
+async def marketplace_scope_for_product(
+    db: AsyncSession, product_id: uuid.UUID
+) -> frozenset[uuid.UUID] | None:
+    """
+    The branches whose marketplace menus carry this product.
+
+    ``None`` is every branch — it sits in at least one live integrator category
+    with no branch list (every category before scoping existed). A frozenset is
+    the union of the lists of every live category holding it; an **empty**
+    frozenset means it is in no live integrator category at all, so it is on no
+    marketplace. Union, because a product two categories carry is sold wherever
+    either of them is.
+    """
+    root = await integrator_root(db)
+    if root is None:
+        return frozenset()
+    scopes = (
+        (
+            await db.execute(
+                select(MenuGroup.marketplace_branch_ids)
+                .join(MenuGroupProduct, MenuGroupProduct.group_id == MenuGroup.id)
+                .where(
+                    MenuGroup.parent_id == root.id,
+                    MenuGroup.deleted_at.is_(None),
+                    MenuGroup.is_active == True,  # noqa: E712
+                    MenuGroupProduct.product_id == product_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not scopes:
+        return frozenset()
+    if any(scope is None for scope in scopes):
+        return None
+    return frozenset(b for scope in scopes for b in scope)
+
+
+def sold_at(scope: frozenset[uuid.UUID] | None, branch_id: uuid.UUID) -> bool:
+    """Whether a `marketplace_scope_for_product` result includes one branch."""
+    return scope is None or branch_id in scope
+
+
+async def marketplace_excluded_product_ids(
+    db: AsyncSession, branch_id: uuid.UUID
+) -> set[uuid.UUID]:
+    """
+    Integrator-menu products whose categories all leave this branch out.
+
+    The set a per-branch marketplace writer (the GrubOps availability push, the
+    drift report) must skip there. Only products that ARE in the integrator
+    tree can be scoped away; anything outside it is not this function's call
+    and is never returned.
+    """
+    root = await integrator_root(db)
+    if root is None:
+        return set()
+    rows = (
+        await db.execute(
+            select(MenuGroupProduct.product_id, MenuGroup.marketplace_branch_ids)
+            .join(MenuGroup, MenuGroup.id == MenuGroupProduct.group_id)
+            .where(
+                MenuGroup.parent_id == root.id,
+                MenuGroup.deleted_at.is_(None),
+                MenuGroup.is_active == True,  # noqa: E712
+            )
+        )
+    ).all()
+    included: set[uuid.UUID] = set()
+    seen: set[uuid.UUID] = set()
+    for product_id, scope in rows:
+        seen.add(product_id)
+        if scope is None or branch_id in scope:
+            included.add(product_id)
+    return seen - included
 
 
 async def clone_tree(
