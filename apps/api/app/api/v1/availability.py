@@ -1,12 +1,19 @@
 """
-"86 it" — the website menu, as the counter sees it.
+"86 it" — the online menu, as the counter sees it.
 
 Deliberately a screen of its own rather than a control on the register's
 product grid. The two lists are not the same list: the grid is what this shop
-sells over the counter, and this is what the *website* offers, which includes
-boxes the counter never rings up and excludes the coffee it sells all day. A
-cashier marking pistachio out is answering a question about the website, and
-mixing that into the till would mean marking things out that were never on it.
+sells over the counter, and this is what it sells *online* — the website, plus
+whatever this branch's marketplace menus carry. That includes boxes the counter
+never rings up, and at Barsha the coffee, which is on the delivery apps but not
+the website. A cashier marking pistachio out is answering a question about the
+online menu, and mixing that into the till would mean marking things out that
+were never on it.
+
+One switch covers both online surfaces: the same branch row hides it on the
+website and is pushed to GrubOps for the marketplaces. So "online" here is the
+union — a marketplace-only drink left off this list is a drink nobody at the
+counter can take off the delivery apps.
 
 Everything here is scoped to the terminal's own branch. A device token names one
 shop; being able to close another shop's menu from this counter is not a
@@ -19,7 +26,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,7 +39,11 @@ from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.models.user import User
-from app.services.catalog import availability_service, catalogue_cache
+from app.services.catalog import (
+    availability_service,
+    catalogue_cache,
+    menu_group_service,
+)
 from app.services.grubops import grubops_service
 
 from .devices import get_current_device
@@ -103,7 +114,8 @@ async def _rows(
     db: AsyncSession, device: Device, product_ids: list[uuid.UUID] | None = None
 ) -> list[ProductAvailability]:
     """
-    The website menu for this branch, or just the products named.
+    The online menu for this branch (website + marketplaces), or just the
+    products named.
 
     One builder for the list screen and for the reply to a change, so a row the
     terminal renders after marking something out is assembled exactly like the
@@ -112,7 +124,13 @@ async def _rows(
     """
     stmt = (
         select(Product)
-        .where(Product.is_active.is_(True), sells_on(WEB_CHANNEL))
+        .where(
+            Product.is_active.is_(True),
+            or_(
+                sells_on(WEB_CHANNEL),
+                menu_group_service.sold_on_marketplaces_at(device.branch_id),
+            ),
+        )
         .options(
             selectinload(Product.category),
             *availability_service.products_load_options(),
@@ -217,11 +235,13 @@ async def list_availability(
     device: Device = Depends(get_current_device),
 ) -> list[ProductAvailability]:
     """
-    The website menu for this terminal's branch, with what is out marked.
+    The online menu for this terminal's branch, with what is out marked.
 
-    Reads the same `sells_on(WEB_CHANNEL)` the storefront lists from, so the
-    screen cannot drift from the site: an item that is not on the website has
-    no business being markable out of stock *on* the website.
+    Reads the same `sells_on(WEB_CHANNEL)` the storefront lists from, unioned
+    with this branch's marketplace menus (`sold_on_marketplaces_at`, the scope
+    the GrubOps push honours), so the screen cannot drift from either: an item
+    sold on neither has no business being markable out of stock online, and an
+    item sold on either must be.
 
     Inactive products are excluded — a de-listed cake is not "out of stock",
     and offering it here would invite somebody to put it back in a place that
@@ -264,7 +284,7 @@ async def set_product_availability(
     user: User = Depends(require("pos.products.availability")),
 ) -> ProductAvailability:
     """
-    Mark one website product out at this branch, or put it back.
+    Mark one online product out at this branch, or put it back.
 
     `include_options` is what "all of it" means on a build-your-own box: the
     product itself *and* every filling, so the customer is not offered a choice

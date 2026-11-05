@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Select, and_, select
+from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -605,6 +605,45 @@ async def marketplace_excluded_product_ids(
         if scope is None or branch_id in scope:
             included.add(product_id)
     return seen - included
+
+
+def marketplace_product_ids_subquery(branch_id: uuid.UUID) -> Select:
+    """
+    Product ids this branch's marketplace menus carry, as SQL.
+
+    The in-query twin of `marketplace_scope_for_product` + `sold_at`: a member of
+    a live integrator category whose scope is null (every branch) or names this
+    one. A product in two categories is carried wherever either is, which the
+    ``IN`` gives for free. The integrator root is resolved inside the query, so
+    an estate without one carries nothing.
+    """
+    root = (
+        select(MenuGroup.id)
+        .where(
+            MenuGroup.parent_id.is_(None),
+            MenuGroup.deleted_at.is_(None),
+            MenuGroup.root_kind == ROOT_KIND_INTEGRATOR,
+        )
+        .scalar_subquery()
+    )
+    return (
+        select(MenuGroupProduct.product_id)
+        .join(MenuGroup, MenuGroup.id == MenuGroupProduct.group_id)
+        .where(
+            MenuGroup.parent_id == root,
+            MenuGroup.deleted_at.is_(None),
+            MenuGroup.is_active == True,  # noqa: E712
+            or_(
+                MenuGroup.marketplace_branch_ids.is_(None),
+                MenuGroup.marketplace_branch_ids.contains([branch_id]),
+            ),
+        )
+    )
+
+
+def sold_on_marketplaces_at(branch_id: uuid.UUID):
+    """Whether a product is on this branch's marketplace menus — see above."""
+    return Product.id.in_(marketplace_product_ids_subquery(branch_id))
 
 
 async def clone_tree(
