@@ -1082,7 +1082,7 @@ async def create_menu_item(
         # A sized item's price lives on its options, which the product create
         # cannot carry; and a category limited to some branches must be inactive
         # at the others. Both are the same parity step the update path runs.
-        plan["modifiers"] = await _foodics_copy_modifiers(product, str(foodics_id))
+        plan["modifiers"] = await _foodics_copy_modifiers(db, product, str(foodics_id))
         plan["parity"] = await _foodics_marketplace_parity(
             db, product, str(foodics_id), subgroup_id=subgroup_id
         )
@@ -1173,7 +1173,7 @@ async def _foodics_marketplace_parity(
             # The Foodics product is missing options MM sells it with (created
             # before modifiers were copied, or edited by hand) — give it them, so
             # the price below has something to land on.
-            done["copied"] = await _foodics_copy_modifiers(product, foodics_id)
+            done["copied"] = await _foodics_copy_modifiers(db, product, foodics_id)
             by_sku = await _live_options()
         for pm in product.product_modifiers:
             for option in pm.modifier.options:
@@ -1224,7 +1224,9 @@ async def _foodics_marketplace_parity(
     return out
 
 
-async def _foodics_copy_modifiers(product: Product, foodics_id: str) -> dict[str, Any]:
+async def _foodics_copy_modifiers(
+    db: AsyncSession, product: Product, foodics_id: str
+) -> dict[str, Any]:
     """Give a just-created Foodics product the modifiers MM sells it with.
 
     The product create carries no modifiers, and a sized item has nothing to
@@ -1233,25 +1235,13 @@ async def _foodics_copy_modifiers(product: Product, foodics_id: str) -> dict[str
     creates what is missing at the counter price. Marketplace prices are set
     afterwards on the price tag by `_foodics_marketplace_parity`.
     """
-    # Callers may hold a product loaded without its modifiers; reload with them
-    # rather than trip an async lazy load.
-    from sqlalchemy.orm import object_session
-
+    # Reload with modifiers through the caller's AsyncSession — a caller may
+    # hold the product without them, and an async lazy load raises. (Not
+    # `object_session()`: that is the sync Session under the async one, and
+    # executing on it is a MissingGreenlet.)
     from app.services.providers import foodics_provider as fp
 
-    session = object_session(product)
-    if session is not None:
-        product = (
-            await session.execute(
-                select(Product)
-                .where(Product.id == product.id)
-                .options(
-                    selectinload(Product.product_modifiers)
-                    .selectinload(ProductModifier.modifier)
-                    .selectinload(Modifier.options)
-                )
-            )
-        ).scalar_one()
+    product = await _product_with_options(db, product.id)
     return await fp.provider.copy_modifiers_to_product(
         foodics_id,
         [

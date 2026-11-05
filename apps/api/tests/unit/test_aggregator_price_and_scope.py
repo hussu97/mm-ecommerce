@@ -398,3 +398,49 @@ async def test_an_unmapped_item_already_in_foodics_is_adopted_not_recreated(
     assert adopted == ["foodics-cappuccino"]
     assert res["foodics_adopted"] == "foodics-cappuccino"
     assert enrich.await_args_list[0].kwargs["target"] == "foodics"
+
+
+@pytest.mark.asyncio
+async def test_copying_modifiers_reloads_through_the_async_session(monkeypatch):
+    """Regression (2026-11-05 prod run): the reload used `object_session()`, the
+    sync Session under the AsyncSession, and executing on it raised
+    MissingGreenlet for every product whose Foodics twin lacked an option."""
+    option = SimpleNamespace(
+        sku="FM0222",
+        name="Medium",
+        translations={},
+        price=Decimal("18"),
+        display_order=0,
+        is_active=True,
+    )
+    loaded = SimpleNamespace(
+        product_modifiers=[
+            SimpleNamespace(
+                display_order=0,
+                minimum_options=1,
+                maximum_options=1,
+                free_options=0,
+                unique_options=False,
+                modifier=SimpleNamespace(
+                    reference="mod_mat_lte_cf",
+                    name="Size",
+                    translations={},
+                    options=[option],
+                ),
+            )
+        ]
+    )
+    reload = AsyncMock(return_value=loaded)
+    monkeypatch.setattr(catalog_sync, "_product_with_options", reload)
+    copy = AsyncMock(return_value={"FM0222": "created"})
+    monkeypatch.setattr(foodics_provider.provider, "copy_modifiers_to_product", copy)
+
+    db = object()
+    out = await catalog_sync._foodics_copy_modifiers(
+        db, SimpleNamespace(id=uuid4()), "foodics-id"
+    )
+    assert out == {"FM0222": "created"}
+    assert reload.await_args.args[0] is db
+    [spec] = copy.await_args.args[1]
+    assert spec["reference"] == "mod_mat_lte_cf"
+    assert spec["options"][0]["sku"] == "FM0222"
