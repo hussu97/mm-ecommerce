@@ -388,7 +388,10 @@ async def login_talabat(
     await email_input.fill(address)
     await password_input.fill(pwd)
     otp_since = datetime.now(UTC)
-    await page.locator("button[type='submit']").click(timeout=5_000)
+    # Talabat can start navigation before the click action settles; give Chrome
+    # enough time to finish rather than treating a successful /2fa redirect as
+    # a failed click and abandoning the SMS prompt.
+    await page.locator("button[type='submit']").click(timeout=30_000)
     await page.wait_for_timeout(4_000)
     logger.info("talabat: submitted credentials, url=%s", page.url)
     await _talabat_debug_shot(page, "after-submit")
