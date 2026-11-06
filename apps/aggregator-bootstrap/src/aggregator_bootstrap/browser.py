@@ -1118,6 +1118,7 @@ async def login_with_account(
     email: str,
     password: str = "",
     mailbox: dict[str, Any] | None = None,
+    allow_sms_prompt: bool = False,
 ) -> ProbeResult:
     """Headed Chrome, drive stored login after anti-bot, then capture.
 
@@ -1273,6 +1274,7 @@ async def login_with_account(
                                 email=email,
                                 password=password,
                                 page=page,
+                                allow_sms_prompt=allow_sms_prompt,
                             )
                             filled = True
                         elif channel == "careem" and not filled:

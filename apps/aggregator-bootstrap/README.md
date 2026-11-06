@@ -45,6 +45,7 @@ aggregator-bootstrap store-account --channel deliveroo --email you@x --password 
 aggregator-bootstrap mailbox-auth --channel talabat   # one-time Microsoft Graph connect
 aggregator-bootstrap login --channel deliveroo --auto   # fill stored creds after Cloudflare
 aggregator-bootstrap login --channel careem             # headed, you sign in
+aggregator-bootstrap login --channel talabat --auto --sms-prompt  # enter Talabat SMS code in the terminal
 aggregator-bootstrap hydrate              # pull DB → local files
 aggregator-bootstrap capture-and-push --all
 aggregator-bootstrap warm-sessions        # hydrate + warm all (one-shot, manual)
@@ -61,6 +62,13 @@ returned on the admin health read. Deliveroo is `email_password` (no OTP), so
 `--auto` can re-auth on a machine that can pass Cloudflare. OTP channels
 (Talabat, Noon) need a connected Graph mailbox before the worker can pull the
 code unattended. IMAP remains as a fallback on the same form.
+
+If Talabat selects SMS on its 2FA page, the unattended login reports that
+challenge immediately. For a supervised login, run `login --channel talabat
+--auto --sms-prompt` in an interactive terminal and enter the code when prompted.
+The code is not stored. Talabat controls the delivery method; restoring
+unattended login requires Talabat to send email OTP again or an approved SMS
+receiving integration for this account.
 
 ## Configuration
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -308,6 +309,7 @@ async def login_talabat(
     email: str | None = None,
     password: str | None = None,
     page=None,
+    allow_sms_prompt: bool = False,
 ) -> None:
     address = (email or settings.TALABAT_EMAIL or "").strip()
     pwd = password or settings.TALABAT_PASSWORD or ""
@@ -401,31 +403,45 @@ async def login_talabat(
         logger.info("talabat: no /2fa step after submit — treating as through")
         return page  # no 2FA step — already through
 
-    logger.info("talabat: 2FA step reached, polling the Graph mailbox for the OTP")
-    # PREFER the mailbox recipe's own sender/subject filters, exactly like
-    # login_careem — the recipe holds the real, maintainable values
-    # (`no-reply@partner-app.talabat.com` / "Your code to access Partner Portal").
-    # The module constants were a stale fallback: "no reply" (a SPACE) never
-    # substring-matches "no-reply" (a HYPHEN), so the OTP mail was silently never
-    # matched and every unattended login timed out at the 2FA step.
-    box = mailbox or {}
-    try:
-        otp = await wait_for_otp(
-            sender_filter=str(box.get("sender_filter") or "") or TALABAT_OTP_SENDER,
-            subject_filter=str(box.get("subject_filter") or "") or TALABAT_OTP_SUBJECT,
-            since=otp_since,
-            timeout=90,
-            mailbox=mailbox,
-            channel="talabat",
-        )
-    except OTPPollingError as exc:
-        await _talabat_debug_shot(page, "no-otp")
-        raise LoginChallengeError(
-            "Talabat requested a 2FA OTP but none could be read from the "
-            "linked mailbox. Save this channel's Microsoft app on Admin → "
-            "Logins, run mailbox-auth, or complete the login manually."
-        ) from exc
-    logger.info("talabat: OTP retrieved (len=%d), typing", len(otp.strip()))
+    challenge_text = (await page.locator("body").inner_text(timeout=5_000)).lower()
+    sms_challenge = (
+        "code to your phone" in challenge_text
+        or "code to your mobile" in challenge_text
+    )
+    if sms_challenge:
+        if not allow_sms_prompt or not sys.stdin.isatty():
+            await _talabat_debug_shot(page, "sms-otp-required")
+            raise LoginChallengeError(
+                "Talabat sent the OTP by SMS. The linked email mailbox cannot receive it. "
+                "Run `login --channel talabat --auto --sms-prompt` interactively "
+                "and enter the SMS code, or ask Talabat to restore email OTP."
+            )
+        import getpass
+
+        otp = await asyncio.to_thread(getpass.getpass, "Talabat SMS code: ")
+        if len(otp.strip()) != 6 or not otp.strip().isdigit():
+            raise LoginChallengeError("Talabat SMS code must be six digits.")
+    else:
+        logger.info("talabat: email 2FA step reached, polling the Graph mailbox")
+        # Prefer the mailbox recipe's sender and subject filters. Its values
+        # override these defaults for email challenges only.
+        box = mailbox or {}
+        try:
+            otp = await wait_for_otp(
+                sender_filter=str(box.get("sender_filter") or "") or TALABAT_OTP_SENDER,
+                subject_filter=str(box.get("subject_filter") or "") or TALABAT_OTP_SUBJECT,
+                since=otp_since,
+                timeout=90,
+                mailbox=mailbox,
+                channel="talabat",
+            )
+        except OTPPollingError as exc:
+            await _talabat_debug_shot(page, "no-otp")
+            raise LoginChallengeError(
+                "Talabat requested an email OTP but none could be read from the "
+                "linked mailbox. Check the Microsoft app on Admin → Logins."
+            ) from exc
+    logger.info("talabat: OTP available (len=%d), typing", len(otp.strip()))
 
     inputs = page.locator("input[type='tel']")
     count = await inputs.count()

@@ -91,6 +91,11 @@ def login(
         "--auto",
         help="Drive stored login: Deliveroo email/password; Noon/Talabat email+Graph OTP.",
     ),
+    sms_prompt: bool = typer.Option(
+        False,
+        "--sms-prompt",
+        help="For Talabat --auto, ask for the SMS code on the terminal if Talabat selects phone verification.",
+    ),
 ) -> None:
     """Open a headed browser, wait for you to sign in, capture and push.
 
@@ -100,6 +105,8 @@ def login(
     """
     if channel not in CHANNEL_PROBES:
         raise typer.BadParameter(f"unknown channel {channel}")
+    if sms_prompt and (channel != "talabat" or not auto):
+        raise typer.BadParameter("--sms-prompt requires --channel talabat --auto")
     try:
         if auto:
             account = _load_account(channel, require_password=(channel != "noon"))
@@ -109,6 +116,7 @@ def login(
                     email=account.email,
                     password=account.password,
                     mailbox=account.mailbox or None,
+                    allow_sms_prompt=sms_prompt,
                 )
             )
         else:
