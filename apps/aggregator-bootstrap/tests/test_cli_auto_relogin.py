@@ -73,6 +73,17 @@ def test_try_auto_relogin_drives_stored_login_and_pushes(monkeypatch):
     assert seen["push"][0] == "talabat"
 
 
+def test_talabat_sms_marker_blocks_another_automatic_login(monkeypatch, tmp_path):
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    (tmp_path / "talabat.sms_otp_required").write_text("SMS required")
+
+    def should_not_load_account(*_args, **_kwargs):
+        raise AssertionError("An SMS challenge must not trigger another login")
+
+    monkeypatch.setattr(reauth, "_load_account", should_not_load_account)
+    assert reauth._try_auto_relogin("talabat") is reauth.ReloginOutcome.NEEDS_HUMAN
+
+
 def test_try_auto_relogin_returns_needs_human_when_human_needed(monkeypatch):
     account = SimpleNamespace(email="ops@shop.ae", password="pw", mailbox=None)
     monkeypatch.setattr(

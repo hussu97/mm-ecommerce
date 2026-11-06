@@ -122,6 +122,25 @@ TALABAT_LOGIN_URL = "https://partner-app.talabat.com/login"
 #: substring-matched it, which is why the unattended OTP login silently failed.
 TALABAT_OTP_SENDER = "no-reply@partner-app.talabat.com"
 TALABAT_OTP_SUBJECT = "Partner Portal"
+TALABAT_SMS_MARKER = "talabat.sms_otp_required"
+
+
+def _talabat_sms_marker() -> Path:
+    return Path(settings.STORAGE_STATE_DIR) / TALABAT_SMS_MARKER
+
+
+def _record_talabat_sms_challenge() -> None:
+    try:
+        _talabat_sms_marker().write_text(datetime.now(UTC).isoformat())
+    except OSError:
+        logger.warning("talabat: could not persist SMS challenge marker")
+
+
+def _clear_talabat_sms_challenge() -> None:
+    try:
+        _talabat_sms_marker().unlink(missing_ok=True)
+    except OSError:
+        logger.warning("talabat: could not clear SMS challenge marker")
 
 
 #: The portal's trusted-device marker: a ~100-year JWT issued after a successful
@@ -331,6 +350,7 @@ async def login_talabat(
         # The persisted accessToken is often stale on this path — refresh it before
         # the caller captures the session, or the vendor-api read 401s an hour later.
         if await _ensure_fresh_talabat_token(page):
+            _clear_talabat_sms_challenge()
             # RETURN THE PAGE, not None: login_with_account does
             # `page = await login_talabat(...)`, so a bare `return` set page=None
             # and the heal then timed out even though the profile was already
@@ -404,6 +424,7 @@ async def login_talabat(
                 "credentials; not bypassed."
             )
         logger.info("talabat: no /2fa step after submit — treating as through")
+        _clear_talabat_sms_challenge()
         return page  # no 2FA step — already through
 
     challenge_text = (await page.locator("body").inner_text(timeout=5_000)).lower()
@@ -412,6 +433,7 @@ async def login_talabat(
         or "code to your mobile" in challenge_text
     )
     if sms_challenge:
+        _record_talabat_sms_challenge()
         if not allow_sms_prompt or not sys.stdin.isatty():
             await _talabat_debug_shot(page, "sms-otp-required")
             raise LoginChallengeError(
@@ -432,7 +454,8 @@ async def login_talabat(
         try:
             otp = await wait_for_otp(
                 sender_filter=str(box.get("sender_filter") or "") or TALABAT_OTP_SENDER,
-                subject_filter=str(box.get("subject_filter") or "") or TALABAT_OTP_SUBJECT,
+                subject_filter=str(box.get("subject_filter") or "")
+                or TALABAT_OTP_SUBJECT,
                 since=otp_since,
                 timeout=90,
                 mailbox=mailbox,
@@ -462,6 +485,7 @@ async def login_talabat(
         ) from exc
     await page.wait_for_timeout(5_000)
     await _ensure_fresh_talabat_token(page)
+    _clear_talabat_sms_challenge()
     logger.info("talabat: login complete, url=%s", page.url)
     if owned_page:
         return
@@ -1023,8 +1047,7 @@ async def login_careem(
 
     if outcome == "score_fail":
         logger.warning(
-            "careem: recaptcha/score failure at %s — reloading the email "
-            "step once",
+            "careem: recaptcha/score failure at %s — reloading the email step once",
             page.url,
         )
         await _careem_capture_failure(page, "recaptcha-score")
@@ -1686,9 +1709,7 @@ async def _careem_wait_email_input(page):
         if await _careem_is_authenticated(page):
             return None
         await _careem_capture_failure(page, "no-email-input-retry")
-        raise LoginError(
-            f"Careem login did not expose an email input at {page.url}"
-        )
+        raise LoginError(f"Careem login did not expose an email input at {page.url}")
     return email_input
 
 

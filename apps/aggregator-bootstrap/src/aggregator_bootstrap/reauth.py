@@ -88,6 +88,15 @@ def _try_auto_relogin(channel: str) -> ReloginOutcome:
     the login genuinely needs a person (captcha/passkey/no mailbox, or no stored
     credentials), `TRANSIENT` for anything that a retry would clear, `OK` on success.
     Never raises — a channel's re-login must not crash the cron."""
+    if (
+        channel == "talabat"
+        and (Path(settings.STORAGE_STATE_DIR) / "talabat.sms_otp_required").exists()
+    ):
+        logger.warning(
+            "talabat auto re-login paused: Talabat selected SMS verification; "
+            "run a supervised login when a code can be received"
+        )
+        return ReloginOutcome.NEEDS_HUMAN
     try:
         account = _load_account(channel, require_password=(channel != "noon"))
     except typer.BadParameter as exc:

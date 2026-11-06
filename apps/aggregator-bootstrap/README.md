@@ -69,6 +69,8 @@ challenge immediately. For a supervised login, run `login --channel talabat
 The code is not stored. Talabat controls the delivery method; restoring
 unattended login requires Talabat to send email OTP again or an approved SMS
 receiving integration for this account.
+Once Talabat selects SMS, the worker records that challenge and stops opening
+new automatic Talabat logins. A successful supervised login clears the marker.
 
 ## Configuration
 
