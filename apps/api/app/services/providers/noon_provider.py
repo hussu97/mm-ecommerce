@@ -1448,6 +1448,31 @@ class NoonClient(BaseAggregatorClient):
             return Decimal(0)
         return _money(value * (Decimal(1) + _FEE_VAT_RATE))
 
+    @staticmethod
+    def _signed_commission_from(row: dict[str, Any]) -> Decimal | None:
+        """The commission as a signed, VAT-inclusive statement line amount.
+
+        On an ordinary row every fee is a charge (negative), and this is exactly
+        `-_commission_from(row)`, floor included. A row carrying a credit — noon
+        handing a fee back on a later statement — has to keep the signs, because
+        `_commission_from` works in magnitudes: on a row that only refunds the
+        cancellation fee (`fees_exc_vat` and `cancellation_fee` both positive and
+        equal) the commission is the signed remainder, 0, and a commission refund
+        comes out positive.
+        """
+        fees_exc_vat = _num(_first(row, "fees_exc_vat", "feesExcVat"))
+        if fees_exc_vat is None:
+            return None
+        others = [
+            _num(_first(row, snake, camel))
+            for snake, camel in NoonClient._NOON_NON_COMMISSION_FEES
+        ]
+        others = [o for o in others if o is not None]
+        if fees_exc_vat <= 0 and all(o <= 0 for o in others):
+            commission = NoonClient._commission_from(row)
+            return -commission if commission else commission
+        return _money((fees_exc_vat - sum(others, Decimal(0))) * (1 + _FEE_VAT_RATE))
+
     #: The Tax Invoice lines that are genuinely statement-level: no order row
     #: carries them, so they are booked as summary-grain lines with no order id.
     #: Keyed on the lower-cased `feeName` (noon has served "Long Distance Fee" and
@@ -1901,7 +1926,7 @@ class NoonClient(BaseAggregatorClient):
         # `_VAT_INCLUSIVE_FEE_CHANNELS`). `total_vat` is that same fee VAT
         # (5% of `fees_exc_vat`), NOT the sale's VAT, so booking it as well would
         # count the VAT twice.
-        commission = NoonClient._commission_from(row)
+        commission = NoonClient._signed_commission_from(row)
         candidates: list[tuple[str, str, str | None, Decimal | None]] = [
             (
                 "net_payable",
@@ -1919,14 +1944,19 @@ class NoonClient(BaseAggregatorClient):
                 "commission",
                 "fee",
                 "commission",
-                -commission if commission else commission,
+                commission,
             ),
         ]
+        # Signed as noon books them: a charge is negative, a credit positive.
+        # Taking the magnitude turned a reversal into a second charge: in Oct
+        # 2026 a cancelled order billed its fees on one weekly statement had the
+        # cancellation fee handed back on the next (a positive cancellation_fee
+        # and net_payable), and the line was booked as a second charge.
         for snake, camel, category, keep_zero in NoonClient._ORDER_FEE_LINES:
-            fee = _fee_incl_vat(_abs(_num(_first(row, snake, camel))))
+            fee = _fee_incl_vat(_num(_first(row, snake, camel)))
             if fee is None or (fee == 0 and not keep_zero):
                 continue
-            candidates.append((category, "fee", category, -fee))
+            candidates.append((category, "fee", category, fee))
         lines: list[StandardStatementLine] = []
         for label, line_type, fee_category, amount in candidates:
             if amount is None:

@@ -551,6 +551,46 @@ async def test_settlement_backfill_makes_noon_statement_fees_the_orders(db):
     assert await ingest.backfill_order_economics_from_statement(db, "noon", stmt) == 0
 
 
+async def test_settlement_backfill_sums_a_noon_order_across_statements(db):
+    """noon re-lists an order on a later statement when it moves money on it after
+    the week closed, and each statement books only that movement: a cancelled
+    order charged its fees on one statement and refunded the cancellation fee on
+    the next settles at the sum. Ingesting either statement, in either order,
+    books the sum, not the last statement's row alone."""
+    branch_id = await _branch(db)
+    first = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    second = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    agg = await _agg_order(
+        db, channel="noon", branch_id=branch_id, gross_sales=Decimal("0")
+    )
+    oid = agg.external_order_id
+    for stmt, category, amount in (
+        (first, "net_payable", "-12.18"),
+        (first, "commission", "-10.50"),
+        (first, "payment_fee", "-0.84"),
+        (first, "cancellation_fee", "-0.84"),
+        (second, "net_payable", "0.84"),
+        (second, "commission", "0.00"),
+        (second, "payment_fee", "0.00"),
+        (second, "cancellation_fee", "0.84"),
+    ):
+        await _stmt_line(
+            db,
+            channel="noon",
+            statement_id=stmt,
+            external_order_id=oid,
+            fee_category=category,
+            amount=amount,
+        )
+    for stmt in (second, first, second):
+        await ingest.backfill_order_economics_from_statement(db, "noon", stmt)
+        await db.refresh(agg)
+        assert agg.net_payable == Decimal("-11.34")
+        assert agg.payment_fee == Decimal("0.84")
+        assert agg.cancellation_fee == Decimal("0.00")
+    assert await ingest.backfill_order_economics_from_statement(db, "noon", first) == 0
+
+
 async def test_settlement_backfill_never_overwrites_sales_feed_commission(db):
     """A commission already stamped by the sales feed is a gap-fill no-op — the
     statement never clobbers it (they are equal by construction anyway)."""

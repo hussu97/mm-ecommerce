@@ -299,6 +299,48 @@ def test_statement_lines_book_a_per_order_long_distance_fee():
     assert cats["commission"] == Decimal("-10.50")  # unchanged
 
 
+def test_statement_lines_keep_the_sign_of_a_reversal_row():
+    """A later statement that hands a fee back books it as a credit: a row that
+    refunds a cancellation fee charged the week before was booked as a second
+    charge when the parser took the magnitude. The lines sum to the row's net."""
+    row = {
+        **_RMS_ROW,
+        "net_payable": "0.84",
+        "payment_fee": "0.0",
+        "cancellation_fee": "0.8",
+        "lead_generation_fee": "0.0",
+        "fees_exc_vat": "0.8",
+        "total_vat": "0.04",
+        "fees_inc_vat": "0.84",
+    }
+    lines = provider._statement_lines_from_order_row("STMT", row)
+    by_cat = {ln.fee_category: ln.amount for ln in lines if ln.line_type == "fee"}
+    assert by_cat == {
+        "commission": Decimal("0.00"),
+        "payment_fee": Decimal("0.00"),
+        "cancellation_fee": Decimal("0.84"),
+    }
+    assert sum(by_cat.values()) == Decimal("0.84")
+
+
+def test_statement_lines_book_a_commission_refund_as_a_credit():
+    """A refunded commission alongside a fee still charged keeps both signs."""
+    row = {
+        **_RMS_ROW,
+        "payment_fee": "0.0",
+        "cancellation_fee": "-0.8",
+        "lead_generation_fee": "10.0",
+        "fees_exc_vat": "9.2",
+    }
+    by_cat = {
+        ln.fee_category: ln.amount
+        for ln in provider._statement_lines_from_order_row("STMT", row)
+        if ln.line_type == "fee"
+    }
+    assert by_cat["commission"] == Decimal("10.50")
+    assert by_cat["cancellation_fee"] == Decimal("-0.84")
+
+
 @pytest.mark.asyncio
 async def test_curl_timeout_surfaces_as_unavailable(monkeypatch):
     """A curl_cffi timeout (noon hours save, prod 2026-10-09) must reach callers as

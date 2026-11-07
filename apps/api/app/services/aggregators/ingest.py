@@ -1307,6 +1307,51 @@ async def _fill_statement_totals_from_lines(
     )
 
 
+#: Channels whose statements are a ledger: each statement books only that
+#: period's movement, so an order that appears on two of them owes the SUM of
+#: its lines, not whichever statement was ingested last. noon re-lists an order
+#: when it moves money on it after the week closed: in Oct 2026 a cancelled order
+#: charged its fees on one statement and refunded the cancellation fee on the
+#: next was booked at the refund alone, a small credit, instead of the charge
+#: net of it. Keeta is not here on purpose: its bills are per requested range,
+#: and two overlapping requests list the same order twice.
+_LEDGER_STATEMENT_CHANNELS = (CHANNEL_NOON,)
+
+
+async def _settlement_across_statements(
+    db: AsyncSession, channel: str, statement_id: str
+) -> dict[str, tuple[Any, Any, Any]]:
+    """For each order on `statement_id`, its net / payment fee / cancellation
+    fee summed over every statement of the channel that lists it (see
+    `_LEDGER_STATEMENT_CHANNELS`)."""
+    ln = AggregatorStatementLine
+    on_statement = select(ln.external_order_id).where(
+        ln.channel == channel,
+        ln.statement_id == statement_id,
+        ln.grain == STATEMENT_GRAIN_ORDER,
+        ln.external_order_id.is_not(None),
+    )
+    rows = (
+        await db.execute(
+            select(
+                ln.external_order_id,
+                func.sum(ln.amount).filter(is_net_line(ln)),
+                func.sum(ln.amount).filter(is_payment_fee_line(ln)),
+                func.sum(ln.amount).filter(is_cancellation_fee_line(ln)),
+            )
+            .where(
+                ln.channel == channel,
+                ln.grain == STATEMENT_GRAIN_ORDER,
+                ln.external_order_id.in_(on_statement),
+            )
+            .group_by(ln.external_order_id)
+        )
+    ).all()
+    return {
+        oid: (net, payment, cancellation) for oid, net, payment, cancellation in rows
+    }
+
+
 async def backfill_order_economics_from_statement(
     db: AsyncSession, channel: str, statement_id: str
 ) -> int:
@@ -1389,6 +1434,12 @@ async def backfill_order_economics_from_statement(
         )
     ).all()
 
+    ledger = (
+        await _settlement_across_statements(db, channel, statement_id)
+        if channel in _LEDGER_STATEMENT_CHANNELS
+        else {}
+    )
+
     updated = 0
     for (
         external_order_id,
@@ -1400,6 +1451,8 @@ async def backfill_order_economics_from_statement(
         compensation,
         legs,
     ) in rows:
+        if external_order_id in ledger:
+            net, payment, cancellation = ledger[external_order_id]
         values: dict[str, Any] = {}
         changed = []
         # Older Keeta bills (the 40-column layout, before ~Sep 8) have no
