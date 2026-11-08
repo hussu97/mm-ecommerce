@@ -33,6 +33,7 @@ The rules that matter and are easy to get subtly wrong:
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy import Select, and_, or_, select
@@ -48,6 +49,8 @@ from app.models.menu import (
     ROOT_KIND_INTEGRATOR,
     ROOT_KINDS,
 )
+
+logger = logging.getLogger(__name__)
 
 #: A tree deeper than this is a mistake or a cycle the check constraint cannot
 #: see. The recursive query stops there rather than running away.
@@ -464,6 +467,90 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
         touched = (after - before) | (after if reach_changed else set())
         await _enqueue_marketplace_sync(db, touched, reason="integrator menu")
     return await get(db, group_id)
+
+
+async def reorder_children(
+    db: AsyncSession, parent_id: uuid.UUID, ordered_ids: list[uuid.UUID]
+) -> dict[str, str | None]:
+    """Put a group's direct children in the given order.
+
+    The list must name every live child exactly once: a console showing a stale
+    tree (a group added or deleted in another tab) is refused rather than left
+    to drop a child to the end. ``display_order`` is rewritten 1..n — the order
+    the register, the menu PDF and the integrator sync all read.
+
+    On the integrator root the categories ARE the marketplace menu, so their new
+    order is pushed to Foodics' Grubtech group as well (see
+    `_push_foodics_category_order`). The MM order is saved either way; the push's
+    outcome is returned for the console to show.
+    """
+    parent = await get(db, parent_id)
+    children = list(
+        (
+            await db.execute(
+                select(MenuGroup).where(
+                    MenuGroup.parent_id == parent_id, MenuGroup.deleted_at.is_(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {child.id: child for child in children}
+    if len(set(ordered_ids)) != len(ordered_ids):
+        raise BadRequestError("A group appears more than once in the new order")
+    if set(ordered_ids) != set(by_id):
+        raise BadRequestError(
+            "The menu changed since it was loaded — refresh and reorder again"
+        )
+    for position, group_id in enumerate(ordered_ids, start=1):
+        if by_id[group_id].display_order != position:
+            by_id[group_id].display_order = position
+    # Flush, not commit — see `create`. The request commits once, at the end.
+    await db.flush()
+
+    result: dict[str, str | None] = {"foodics_status": None, "foodics_detail": None}
+    if parent.root_kind == ROOT_KIND_INTEGRATOR and parent.parent_id is None:
+        result = await _push_foodics_category_order(
+            [by_id[group_id] for group_id in ordered_ids]
+        )
+    return result
+
+
+async def _push_foodics_category_order(
+    categories: list[MenuGroup],
+) -> dict[str, str | None]:
+    """Mirror the integrator categories' order onto Foodics' Grubtech group, the
+    menu GrubTech publishes to every marketplace. A category's ``reference`` is
+    its Foodics subgroup id; one without it has no Foodics twin to order.
+
+    Inline rather than queued: it is one admin action, three Foodics calls, and
+    the person who reordered wants to know whether the marketplaces followed.
+    Never raises — the MM order is already saved and must not roll back because
+    Foodics was unreachable."""
+    from app.core.config import settings
+    from app.services.providers import foodics_provider as fp
+
+    if not settings.CATALOG_SYNC_ENABLED:
+        return {
+            "foodics_status": "skipped",
+            "foodics_detail": "Integrator writes are switched off (CATALOG_SYNC_ENABLED)",
+        }
+    if not fp.provider.is_configured:
+        return {
+            "foodics_status": "skipped",
+            "foodics_detail": "Foodics is not configured",
+        }
+    managed = [c.reference for c in categories if c.reference]
+    try:
+        changed = await fp.provider.set_grubtech_category_order(managed)
+    except Exception as exc:  # noqa: BLE001 — reported, never raised (see above)
+        logger.warning("foodics category reorder failed: %s", exc)
+        return {"foodics_status": "failed", "foodics_detail": str(exc)}
+    return {
+        "foodics_status": "updated" if changed else "unchanged",
+        "foodics_detail": None,
+    }
 
 
 def _scope_key(ids) -> frozenset | None:

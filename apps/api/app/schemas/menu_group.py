@@ -109,4 +109,20 @@ class MenuGroupResponse(BaseModel):
     pdf_excluded_product_ids: list[UUID] = []
 
 
+class MenuGroupReorder(BaseModel):
+    """A parent's direct children, in the order they should appear — every live
+    child exactly once, so a stale console cannot silently drop one."""
+
+    group_ids: list[UUID] = Field(min_length=1)
+
+
+class MenuGroupReorderResult(BaseModel):
+    """The reorder is saved in MM whatever Foodics says; this reports the push of
+    the integrator menu's category order to Foodics' Grubtech group. Null on a
+    branch menu, which nothing outside MM renders."""
+
+    foodics_status: Literal["updated", "unchanged", "skipped", "failed"] | None = None
+    foodics_detail: str | None = None
+
+
 MenuGroupNode.model_rebuild()

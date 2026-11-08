@@ -380,6 +380,12 @@ export const menuGroupsApi = {
     api.post<MenuGroupNode>(`/menu-groups/${id}/clone`, data),
   // Takes every group nested underneath it with it.
   delete: (id: string) => api.delete<void>(`/menu-groups/${id}`),
+  // The parent's direct children in their new order — every one, exactly once.
+  // On the integrator root the API also pushes the category order to Foodics.
+  reorder: (parentId: string, groupIds: string[]) =>
+    api.post<Schemas['MenuGroupReorderResult']>(`/menu-groups/${parentId}/reorder`, {
+      group_ids: groupIds,
+    }),
   // Download a print-ready PDF of the group's menu (built live, en|ar).
   downloadPdf: (id: string, lang: 'en' | 'ar', filename: string) =>
     downloadBlob(`/menu-groups/${id}/pdf?lang=${lang}`, filename),

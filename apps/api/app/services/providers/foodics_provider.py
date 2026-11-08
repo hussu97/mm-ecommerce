@@ -1088,14 +1088,66 @@ class FoodicsClient:
         )
         return True
 
-    async def _grubtech_subgroup_ids(self) -> list[str]:
+    async def _grubtech_group(self) -> dict:
         payload = await self._call(
             "GET",
             _GETTING,
             params={"url": "/groups", "id": FOODICS_GRUBTECH_GROUP_ID},
         )
-        group = _order_of(payload) or {}
+        return _order_of(payload) or {}
+
+    async def _grubtech_subgroup_ids(self) -> list[str]:
+        group = await self._grubtech_group()
         return [s["id"] for s in group.get("subgroups") or [] if s.get("id")]
+
+    async def set_grubtech_category_order(self, managed_ids: list[str]) -> bool:
+        """Order the Grubtech group's category subgroups as MM orders its
+        integrator categories. Returns True when Foodics' order changed.
+
+        Foodics keeps a group's child order in the group's own ``items_index`` —
+        an ordered list of child ids — not on the subgroup pivot (read live
+        2026-11-08: pivots carry only ``is_active``). The new list comes from
+        `merge_items_index`: subgroups MM does not manage ("New In") keep their
+        slots, and MM's categories fill the rest in MM's order.
+
+        Like `ensure_grubtech_subgroup`, the write is checked: every subgroup
+        attached before must still be attached after, and a loss is put back at
+        once before this raises. An order Foodics did not keep raises too, so
+        the caller never reports a reorder that did not happen."""
+        group = await self._grubtech_group()
+        attached = [s["id"] for s in group.get("subgroups") or [] if s.get("id")]
+        if not attached:
+            # An empty read is a failed read, not an empty menu.
+            raise FoodicsError("Grubtech group read returned no subgroups")
+        current = [str(i) for i in group.get("items_index") or []]
+        wanted = merge_items_index(current, managed_ids, set(attached))
+        if wanted == current:
+            return False
+        await self._call(
+            "PUT",
+            _UPDATING,
+            json_body={
+                "url": f"/groups/{FOODICS_GRUBTECH_GROUP_ID}",
+                "payload": {"items_index": wanted},
+            },
+        )
+        after = await self._grubtech_group()
+        after_ids = {s["id"] for s in after.get("subgroups") or [] if s.get("id")}
+        lost = set(attached) - after_ids
+        if lost:
+            logger.error(
+                "foodics: Grubtech subgroups lost on reorder (%s); restoring",
+                sorted(lost),
+            )
+            await self._put_grubtech_subgroups(
+                list(dict.fromkeys(attached + sorted(after_ids)))
+            )
+            raise FoodicsError(
+                f"Reordering detached Grubtech subgroups {sorted(lost)}; restored"
+            )
+        if [str(i) for i in after.get("items_index") or []] != wanted:
+            raise FoodicsError("Foodics did not keep the new category order")
+        return True
 
     async def _put_grubtech_subgroups(self, ids: list[str]) -> None:
         await self._call(
@@ -1282,6 +1334,28 @@ class FoodicsClient:
             "GET", _GETTING, params={"url": "/products", "id": product_id}
         )
         return _order_of(payload)
+
+
+def merge_items_index(
+    current: list[str], managed: list[str], attached: set[str]
+) -> list[str]:
+    """A Foodics group's new ``items_index`` once MM's categories are put in MM's
+    order.
+
+    ``managed`` is MM's order of the subgroup ids it owns; only those actually
+    attached to the group are placed. Every id MM does not manage keeps its exact
+    slot (Foodics' own "New In" stays first), MM's categories fill the slots its
+    categories held, in MM's order, and a managed category Foodics had not
+    indexed yet (a subgroup attached after the index was last saved) goes after
+    them, still in MM's order."""
+    placed = [i for i in dict.fromkeys(managed) if i in attached]
+    owned = set(placed)
+    queue = iter(placed)
+    # De-duplicated first: each owned id present takes exactly one slot, so the
+    # slots never outnumber `placed` and `next` cannot run dry.
+    merged = [next(queue) if item in owned else item for item in dict.fromkeys(current)]
+    merged.extend(queue)
+    return merged
 
 
 def _order_of(payload: Any) -> dict | None:

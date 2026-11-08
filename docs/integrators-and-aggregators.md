@@ -352,6 +352,17 @@ the modifier), and an integrator category's membership / scope / on-off change
 all write the catalog-sync outbox. Operator path:
 `python -m scripts.sync_product_to_integrators --sku … --sync [--apply]`.
 
+**Category order.** Reordering the integrator root's categories in the console
+(`POST /menu-groups/{root}/reorder`) also rewrites the Grubtech group's
+`items_index` — Foodics keeps a group's child order there as an ordered id list,
+not on the subgroup pivot. Subgroups MM does not manage ("New In") keep their
+slots (`merge_items_index`); the write is checked like the subgroup write (every
+subgroup still attached, the order kept) and runs inline, so the console reports
+`updated` / `unchanged` / `skipped` / `failed`. A Foodics failure never rolls back
+the MM order. An `items_index`-only group PUT keeps subgroups, products and name
+(verified live 2026-11-08). Whether GrubTech carries the order through to each
+marketplace's category order is GrubTech's behaviour, not verified here.
+
 **Live use.** Hot Coffee + Iced Coffee (22 drinks; Iced Coffee was "Cold Coffee" until migration 321) are integrator categories
 limited to Barsha Heights, every size at counter + AED 8 (migration 320).
 
