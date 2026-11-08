@@ -47,7 +47,7 @@ _FATEMA = SimpleNamespace(
     id=uuid.uuid4(), reference="fatema", vat_registered=True, brand_name="MM Cakes"
 )
 _NAJM = SimpleNamespace(
-    id=uuid.uuid4(), reference="najm", vat_registered=False, brand_name="Attibassi"
+    id=uuid.uuid4(), reference="najm", vat_registered=False, brand_name="MM Cafe"
 )
 
 

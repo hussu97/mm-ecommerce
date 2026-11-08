@@ -261,6 +261,8 @@ neither. The summary carries customer name/phone, payment method and status.
 
 Scope confirmed with owner: **menu PDF only** (receipts stay "Attibassi Coffee" — do NOT touch the `najm` legal-entity row / no migration).
 
+> **Superseded 2026-11-08 (owner):** the `najm` entity itself is now branded "Melting Moments Cafe" + café logo (migration 322, also the Barsha address), so receipts/invoices match and the menu override was removed.
+
 ## 1. Logo asset (GCS)
 - [ ] Resize the cafe logo to 512×512 (match existing `melting-moments.png`), save as `melting-moments-cafe.png`.
 - [ ] Upload to `gs://mm-product-images/logos/melting-moments-cafe.png` (public, cache 300s), same as courier-logo pattern.

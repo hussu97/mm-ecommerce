@@ -12,7 +12,7 @@ class LegalEntity(Base, UUIDMixin, TimestampMixin):
 
     Melting Moments trades under two: **Fatema Cake Sweets** (brand "Melting
     Moments Cakes"), VAT-registered, and **Najm AlShamal Coffee Shop LLC** (brand
-    "Attibassi Coffee") at the Barsha counter, which is under the VAT threshold
+    "Melting Moments Cafe") at the Barsha counter, which is under the VAT threshold
     and not registered. Each `(branch, channel)` points at one
     (`branch_channel_tax_configs.legal_entity_id`); the resolver freezes the
     chosen entity onto every order (`orders.legal_entity_id`), and the receipt,

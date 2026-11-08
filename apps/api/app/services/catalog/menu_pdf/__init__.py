@@ -7,10 +7,9 @@ marketplaces are serving right now.
 
 Branding follows the money, not a hard-coded logo: a branch (counter) menu is
 titled by the legal entity that branch's *counter* channel trades under
-(``tax_identity_service`` — Barsha's counter is Najm AlShamal / "Attibassi
-Coffee", every other branch is Fatema / "Melting Moments"), so the same builder
-prints an Attibassi coffee menu and a Melting Moments dessert menu without
-knowing either name. The integrator tree has no branch, so it falls to the
+(``tax_identity_service`` — Barsha's counter is Najm AlShamal / "Melting
+Moments Cafe", every other branch is Fatema / "Melting Moments Cakes"), so the
+same builder prints each one's menu without knowing either name. The integrator tree has no branch, so it falls to the
 registered default entity.
 
 Layout is Jinja2 → WeasyPrint. Product images and the entity logo are fetched

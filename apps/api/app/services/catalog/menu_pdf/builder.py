@@ -24,21 +24,8 @@ from app.services.catalog import menu_group_service, product_service
 from app.services.orders import tax_identity_service
 
 from .icons import icon_key_for
-from .theme import MELTING_MOMENTS_THEME, Theme, theme_for_entity_reference
+from .theme import theme_for_entity_reference
 from .view_models import MenuColumnBlock, MenuDocument, MenuItem, MenuSection, Variant
-
-# Menu-PDF-only brand presentation, keyed by legal-entity `reference`. The Barsha
-# counter is booked under the Najm (Attibassi) trade licence for VAT, but its
-# *menu* trades as "Melting Moments Cafe" with the Melting Moments look. This is a
-# presentation override on the printed menu alone — the entity row is untouched,
-# so receipts and the VAT return keep the legal Attibassi identity.
-_MM_CAFE_LOGO = (
-    "https://storage.googleapis.com/mm-product-images/logos/melting-moments-cafe.png"
-)
-_MENU_BRAND_OVERRIDES: dict[str, tuple[str, str, Theme]] = {
-    "najm": ("Melting Moments Cafe", _MM_CAFE_LOGO, MELTING_MOMENTS_THEME),
-}
-
 
 _STRINGS = {
     "en": {"menu": "Menu", "from": "From", "order": "Order on WhatsApp", "aed": "AED"},
@@ -334,9 +321,6 @@ async def _resolve_brand(db: AsyncSession, root: MenuGroup):
         db, branch_id=root.branch_id, source="cashier"
     )
     if entity is not None:
-        override = _MENU_BRAND_OVERRIDES.get(entity.reference)
-        if override is not None:
-            return override
         return (
             entity.brand_name,
             entity.logo_url,

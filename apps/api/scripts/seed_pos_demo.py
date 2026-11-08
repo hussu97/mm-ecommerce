@@ -82,7 +82,7 @@ async def main() -> None:
             name="Barsha Heights",
             reference="B001",
             phone="04 445 1555",
-            address="Attibassi Coffee, Al Shafar Tower 1, Barsha Heights, Dubai",
+            address="Melting Moments Cafe, Al Shafar Tower 1, Barsha Heights, Dubai",
             latitude=25.0984482,
             longitude=55.1741736,
             tax_number="100123456700003",

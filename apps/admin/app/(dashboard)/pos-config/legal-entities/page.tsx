@@ -9,7 +9,7 @@ import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 /**
  * The trade licences orders are booked under. Melting Moments trades under two:
  * Fatema Cake Sweets (brand "Melting Moments Cakes", VAT-registered) and Najm
- * AlShamal Coffee Shop LLC (brand "Attibassi Coffee") at the Barsha counter.
+ * AlShamal Coffee Shop LLC (brand "Melting Moments Cafe") at the Barsha counter.
  *
  * The receipt shows the brand + TRN + the logo; the legal name is for records
  * and the VAT return. Which channel of which branch uses which entity is set on

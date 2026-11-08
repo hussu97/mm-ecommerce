@@ -123,8 +123,8 @@ export type ChannelClass = 'counter' | 'website' | 'aggregator';
 /**
  * A trade licence, optionally VAT-registered, that orders are booked under.
  * Melting Moments trades under two: Fatema Cake Sweets (brand "Melting Moments
- * Cakes", registered) and Najm AlShamal Coffee Shop LLC (brand "Attibassi
- * Coffee") at the Barsha counter. The receipt shows the brand + TRN + the
+ * Cakes", registered) and Najm AlShamal Coffee Shop LLC (brand "Melting
+ * Moments Cafe") at the Barsha counter. The receipt shows the brand + TRN + the
  * entity's logo; the legal name is for records / the VAT return.
  */
 // From the generated contract (rule 8): the invoice fields (registered address,

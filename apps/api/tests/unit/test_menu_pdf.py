@@ -8,6 +8,8 @@ missing rather than turning the whole job red.
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -16,7 +18,6 @@ import pytest
 from app.services.catalog.menu_pdf import builder as B
 from app.services.catalog.menu_pdf.icons import icon_key_for
 from app.services.catalog.menu_pdf.theme import (
-    ATTIBASSI_THEME,
     DEFAULT_THEME,
     MELTING_MOMENTS_THEME,
     theme_for_entity_reference,
@@ -274,10 +275,22 @@ def test_collect_sections_skips_pdf_excluded_products():
     assert names == ["Latte"]
 
 
-def test_barsha_najm_menu_brand_override():
-    # Barsha's menu prints "Melting Moments Cafe" with the MM look, though the
-    # entity (receipts) stays Attibassi — a menu-PDF-only presentation override.
-    name, logo, theme = B._MENU_BRAND_OVERRIDES["najm"]
+def test_barsha_najm_menu_brand_comes_from_the_entity(monkeypatch):
+    # Barsha's counter trades under `najm`, now branded Melting Moments Cafe on
+    # the entity row itself — the menu takes the entity's name and logo as-is,
+    # with the Melting Moments look, exactly as the receipt does.
+    entity = SimpleNamespace(
+        reference="najm",
+        brand_name="Melting Moments Cafe",
+        logo_url="https://example.test/logos/melting-moments-cafe.png",
+    )
+
+    async def resolve(db, *, branch_id, source):
+        return entity
+
+    monkeypatch.setattr(B.tax_identity_service, "resolve", resolve)
+    root = SimpleNamespace(branch_id=uuid.uuid4())
+    name, logo, theme = asyncio.run(B._resolve_brand(None, root))
     assert name == "Melting Moments Cafe"
     assert logo.endswith("/logos/melting-moments-cafe.png")
     assert theme is MELTING_MOMENTS_THEME
@@ -313,7 +326,7 @@ def test_order_sections_sinks_extras_but_keeps_the_rest_in_order():
 
 
 def test_theme_selection_by_entity_reference():
-    assert theme_for_entity_reference("najm") is ATTIBASSI_THEME
+    assert theme_for_entity_reference("najm") is MELTING_MOMENTS_THEME
     assert theme_for_entity_reference("fatema") is MELTING_MOMENTS_THEME
     assert theme_for_entity_reference("someone-new") is DEFAULT_THEME
     assert theme_for_entity_reference(None) is DEFAULT_THEME

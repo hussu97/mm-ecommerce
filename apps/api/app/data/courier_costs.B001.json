@@ -4,7 +4,7 @@
     "emirate": "Dubai",
     "lat": 25.0984482,
     "lng": 55.1741736,
-    "address": "Attibassi Coffee, Al Shafar Tower 1, Barsha Heights, Dubai"
+    "address": "Melting Moments Cafe, Al Shafar Tower 1, Barsha Heights, Dubai"
   },
   "source": "",
   "note": "Slider fares are live production, priced from this branch's pin (bike offered cross-emirate up to its road ceiling; null bike = car-only). lalamove_error non-null = Lalamove refuses. noon_send null = cannot serve (crosses the branch's emirate / >20km).",
