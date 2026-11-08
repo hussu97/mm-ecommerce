@@ -17,6 +17,7 @@ import type {
   SupplierItem,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
+import { liveBranches } from '@/lib/branches';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { InvoicePreview } from '@/components/ui/InvoicePreview';
@@ -565,7 +566,10 @@ function CreateOrder({
   // Sharjah is the kitchen that raises almost every PO, so default to it (falling
   // back to the first branch if it isn't in the list).
   const [branchId, setBranchId] = useState(
-    () => branches.find((b) => b.name.toLowerCase().includes('sharjah'))?.id ?? branches[0]?.id ?? '',
+    () => {
+      const open = liveBranches(branches);
+      return open.find((b) => b.name.toLowerCase().includes('sharjah'))?.id ?? open[0]?.id ?? '';
+    },
   );
   const [invoiceDate, setInvoiceDate] = useState('');
   const [supplierReference, setSupplierReference] = useState('');
@@ -747,7 +751,7 @@ function CreateOrder({
           label="Branch"
           value={branchId}
           onChange={(e) => setBranchId(e.target.value)}
-          options={branches.map((b) => ({ value: b.id, label: b.name }))}
+          options={liveBranches(branches, [branchId]).map((b) => ({ value: b.id, label: b.name }))}
           placeholder="Choose…"
         />
         <Input

@@ -91,7 +91,7 @@ export default function CountsPage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end gap-3">
-        <BranchFilter value={branchId} onChange={setBranchId} />
+        <BranchFilter value={branchId} onChange={setBranchId} live />
         <Button variant="outline" onClick={downloadTemplate} disabled={!branchId || levels.length === 0}>
           Download CSV template
         </Button>

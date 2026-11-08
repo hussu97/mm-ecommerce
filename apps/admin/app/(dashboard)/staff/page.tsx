@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { branchesApi, rolesApi, staffApi } from '@/lib/pos-api';
 import type { Branch, Role, Staff } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
+import { liveBranches } from '@/lib/branches';
 import { Badge, Button } from '@/components/ui';
 import { Modal, ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 
@@ -129,7 +130,7 @@ function BranchAssignment({
             A PIN only works at branches the staff member is assigned to.
           </p>
           <div className="space-y-2">
-            {branches.map((b) => (
+            {liveBranches(branches, staff.branch_ids).map((b) => (
               <label key={b.id} className="flex items-center gap-2 text-sm font-body">
                 <input
                   type="checkbox"

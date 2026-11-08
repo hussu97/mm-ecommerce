@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
+import { liveBranches } from '@/lib/branches';
 
 /**
  * Loads the branch list once and derives the two shapes both device screens
@@ -17,7 +18,9 @@ export function useBranchOptions() {
     void branchesApi.list().then(setBranches).catch(() => setBranches([]));
   }, []);
 
-  const branchOptions = branches.map((b) => ({ value: b.id, label: b.name }));
+  // Assign only to open branches; `branchName` still resolves a closed one for
+  // rows already there.
+  const branchOptions = liveBranches(branches).map((b) => ({ value: b.id, label: b.name }));
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
 
   return { branchOptions, branchName };

@@ -22,7 +22,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -384,6 +384,29 @@ async def _reverse_unshipped_shortfall_topups(
         )
 
 
+async def _require_open_branches(db: AsyncSession, branch_ids: set) -> None:
+    """Refuse a new transfer or return that names a closed branch.
+
+    Pickers already offer only active branches, but the API is the contract: a
+    stale form or a direct call must not ship stock to (or from) a branch that no
+    longer trades, where nothing would ever receive or sell it.
+    """
+    closed = (
+        (
+            await db.execute(
+                select(Branch.name).where(
+                    Branch.id.in_(branch_ids),
+                    or_(Branch.is_active.is_(False), Branch.deleted_at.is_not(None)),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if closed:
+        raise BadRequestError(f"{', '.join(sorted(closed))} is not an active branch")
+
+
 async def create_transfer_order(
     db: AsyncSession,
     *,
@@ -423,6 +446,11 @@ async def create_transfer_order(
     production_items = production_items or []
     if not items:
         raise BadRequestError("A transfer order needs at least one line")
+    await _require_open_branches(
+        db,
+        {source_branch.id}
+        | {a.branch_id for entry in items for a in entry.allocations},
+    )
 
     if client_request_id:
         existing = (
@@ -609,6 +637,7 @@ async def create_return_order(
         raise BadRequestError("A return needs at least one line")
     if source_branch.id == destination_branch.id:
         raise BadRequestError("A branch cannot return to itself")
+    await _require_open_branches(db, {source_branch.id, destination_branch.id})
 
     if client_request_id:
         existing = (

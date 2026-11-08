@@ -631,3 +631,16 @@ async def test_sending_to_a_non_pos_branch_auto_completes(env):
         child = await transfer_service.load_transfer(db, child_id)
         assert child.status == "closed"
         assert child.received_transaction_id is not None
+
+
+async def test_a_closed_destination_is_refused(env):
+    """A branch that has stopped trading can't be sent stock: the picker hides
+    it, and the API refuses a stale form or direct call that still names it."""
+    _engine, Session, ids = env
+    async with Session() as db:
+        dest = await db.get(Branch, ids.dest)
+        dest.is_active = False
+        await db.flush()
+        with pytest.raises(BadRequestError, match="not an active branch"):
+            await _order(db, ids, 10)
+        await db.rollback()

@@ -15,6 +15,7 @@ import {
   type Transfer,
 } from '@/lib/pos-api';
 import type { Branch, InventoryCategory, InventoryItem, InventoryTransaction } from '@/lib/pos-types';
+import { liveBranches } from '@/lib/branches';
 import { Button, Input, Pagination, Select } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -22,10 +23,13 @@ import { formatCost, formatQuantity } from '@/lib/utils';
 
 // ─── Branch selector ──────────────────────────────────────────────────────────
 
-export function BranchFilter({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+/** `live` limits the choice to open branches — for screens that act on a branch
+ *  now (counts, templates, settings). History views leave it off so a closed
+ *  branch's past movements stay reachable. */
+export function BranchFilter({ value, onChange, live = false }: { value: string; onChange: (id: string) => void; live?: boolean }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   useEffect(() => { void branchesApi.list().then(setBranches); }, []);
-  return <Select label="Branch" value={value} onChange={(e) => onChange(e.target.value)} placeholder="Choose branch" className="w-64" options={branches.map((b) => ({ value: b.id, label: b.name }))} />;
+  return <Select label="Branch" value={value} onChange={(e) => onChange(e.target.value)} placeholder="Choose branch" className="w-64" options={(live ? liveBranches(branches, [value]) : branches).map((b) => ({ value: b.id, label: b.name }))} />;
 }
 
 // ─── Items grouped by category ────────────────────────────────────────────────

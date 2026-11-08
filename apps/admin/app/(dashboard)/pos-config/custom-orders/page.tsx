@@ -20,6 +20,7 @@ import { ApiError, customOrdersApi, productsApi, type CustomOrdersStatus } from 
 import { branchesApi, businessSettingsApi, inventoryApi } from '@/lib/pos-api';
 import type { Branch, BusinessSettings, InventoryCategory } from '@/lib/pos-types';
 import type { Product } from '@/lib/types';
+import { liveBranches } from '@/lib/branches';
 import { Badge, Button, Input, LoadError, Select, Spinner } from '@/components/ui';
 import { useToast } from '@/components/ui/feedback';
 
@@ -139,7 +140,7 @@ export default function CustomOrderSettingsPage() {
               value={branchId}
               placeholder="Not set"
               onChange={e => setBranchId(e.target.value)}
-              options={branches.map(b => ({ value: b.id, label: `${b.reference} · ${b.name}` }))}
+              options={liveBranches(branches, [branchId]).map(b => ({ value: b.id, label: `${b.reference} · ${b.name}` }))}
             />
             <p className="mt-1 text-xs text-gray-400">
               Where custom orders are made and sent from. Its registers print the kitchen docket.
