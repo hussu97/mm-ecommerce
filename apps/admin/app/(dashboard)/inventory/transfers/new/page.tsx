@@ -38,6 +38,8 @@ import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/components/ui/feedback';
 import { formatQuantity, interactiveRowClass } from '@/lib/utils';
 import { groupItemsByCategory } from '../../_shared';
+import { CountAgeChip } from '@/components/inventory/CountAgeChip';
+import { latestStamp } from '@/lib/count-age';
 
 const parseNum = (value: string | undefined): number => {
   if (value === undefined) return 0;
@@ -198,6 +200,23 @@ export default function NewTransferOrderPage() {
     }
     return map;
   }, [levels]);
+
+  // When each item was last physically counted at each branch — itemId →
+  // branchId → stamp (newest across the branch's warehouses). Shown as an age
+  // chip beside the on-hand figures: a stale count means that figure is the
+  // ledger's guess, worth knowing before sending stock against it.
+  const lastCountedByItemBranch = useMemo(() => {
+    const map = new Map<string, Map<string, string | null>>();
+    for (const level of levels) {
+      if (!level.branch_id) continue;
+      let byBranch = map.get(level.item_id);
+      if (!byBranch) { byBranch = new Map(); map.set(level.item_id, byBranch); }
+      byBranch.set(level.branch_id, latestStamp(byBranch.get(level.branch_id), level.last_counted_at));
+    }
+    return map;
+  }, [levels]);
+  const lastCountedAt = (itemId: string, branchId: string): string | null | undefined =>
+    lastCountedByItemBranch.get(itemId)?.get(branchId);
 
   // The source branch's on-hand per item — a slice of the per-branch map above.
   const onHandByItem = useMemo(() => {
@@ -454,6 +473,9 @@ export default function NewTransferOrderPage() {
                           </td>
                           <td className={`px-2 py-1 text-right tabular-nums ${overThreshold ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
                             {kind === 'return' ? '—' : onHand === undefined ? <span className="text-gray-300">0</span> : formatQuantity(onHand)}
+                            {kind !== 'return' && onHand !== undefined && (
+                              <CountAgeChip at={lastCountedAt(item.id, sourceBranchId)} className="ml-1 align-middle" />
+                            )}
                             {(() => {
                               const keep = forecastLine(item.id, sourceBranchId);
                               if (!keep || !forecast) return null;
@@ -482,8 +504,11 @@ export default function NewTransferOrderPage() {
                                   className="w-16 border border-gray-300 px-1 py-0.5 text-right"
                                   placeholder="0"
                                 />
-                                <span className="text-xs normal-case text-gray-400 whitespace-nowrap" title={`Current stock at ${b.name}`}>
+                                <span className="flex items-center gap-1 text-xs normal-case text-gray-400 whitespace-nowrap" title={`Current stock at ${b.name}`}>
                                   in stock {formatQuantity(stockAt(item.id, b.id))}
+                                  {lastCountedByItemBranch.get(item.id)?.has(b.id) && (
+                                    <CountAgeChip at={lastCountedAt(item.id, b.id)} />
+                                  )}
                                 </span>
                                 {(() => {
                                   const fc = forecastLine(item.id, b.id);

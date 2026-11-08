@@ -21,11 +21,19 @@ import { RecipeButton } from '@/components/inventory/RecipeButton';
 import { CostBreakdownModal } from '@/components/inventory/CostBreakdownModal';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { formatCost, formatQuantity } from '@/lib/utils';
+import { CountAgeChip } from '@/components/inventory/CountAgeChip';
+import { COUNT_FILTER_OPTIONS, latestStamp, matchesCountFilter, type CountFilter } from '@/lib/count-age';
 
 // Made items (produced or semi-finished) are the only kinds that can own a recipe.
 const MADE_KINDS = new Set(['produced_good', 'semi_finished']);
 
-type BranchStock = { quantity: number; value: number; is_below_minimum: boolean };
+type BranchStock = {
+  quantity: number;
+  value: number;
+  is_below_minimum: boolean;
+  /** Last physical count at this branch (newest across its warehouses). */
+  last_counted_at: string | null;
+};
 type StockPivot = Map<string, Map<string, BranchStock>>;
 
 export default function ItemsPage() {
@@ -71,6 +79,10 @@ export default function ItemsPage() {
   // '' = all, 'unmapped' = items with no supplier, otherwise a supplier id.
   const [supplierFilter, setSupplierFilter] = useState('');
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  // "Last counted" — how long since a real physical count, at any branch the
+  // item is stocked at, or only at the one picked in `countBranch`.
+  const [countFilter, setCountFilter] = useState<CountFilter>('');
+  const [countBranch, setCountBranch] = useState('');
 
   useEffect(() => {
     void inventoryApi.categories().then(setCategories).catch(() => setCategories([]));
@@ -99,6 +111,7 @@ export default function ItemsPage() {
             quantity: (prev?.quantity ?? 0) + Number(level.quantity),
             value: (prev?.value ?? 0) + Number(level.total_value ?? 0),
             is_below_minimum: (prev?.is_below_minimum ?? false) || level.is_below_minimum,
+            last_counted_at: latestStamp(prev?.last_counted_at, level.last_counted_at),
           });
         }
         setPivot(next);
@@ -162,8 +175,18 @@ export default function ItemsPage() {
         if (!(par > 0 && rows.some((r) => r.quantity < par))) return false;
       }
     }
+    if (countFilter) {
+      const byBranch = pivot.get(item.id);
+      if (!byBranch) return false;
+      // Only branches that stock the item (hold a level) are asked; "at least
+      // one branch matches", like the stock filter, unless a branch is picked.
+      const cells = countBranch
+        ? [byBranch.get(countBranch)].filter((cell): cell is BranchStock => !!cell)
+        : Array.from(byBranch.values());
+      if (!cells.some((cell) => matchesCountFilter(countFilter, cell.last_counted_at))) return false;
+    }
     return true;
-  }, [categoryId, kind, status, trackingMode, stockFilter, supplierFilter, pivot]);
+  }, [categoryId, kind, status, trackingMode, stockFilter, supplierFilter, countFilter, countBranch, pivot]);
 
   // The management screen is the one place that shows inactive items (it has an
   // active/inactive/all filter), so it opts into them explicitly; everywhere else
@@ -186,6 +209,15 @@ export default function ItemsPage() {
       <select aria-label="Filter inventory stock" value={stockFilter} onChange={(event) => setStockFilter(event.target.value as typeof stockFilter)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
         <option value="">All stock</option><option value="low">Low stock</option><option value="below_par">Below par</option>
       </select>
+      <select aria-label="Filter by last physical count" value={countFilter} onChange={(event) => setCountFilter(event.target.value as CountFilter)} className={`h-9 rounded border bg-white px-2 text-xs ${countFilter ? 'border-amber-300 text-amber-900' : 'border-gray-300 text-gray-700'}`}>
+        {COUNT_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+      {countFilter && (
+        <select aria-label="Branch for the last-count filter" value={countBranch} onChange={(event) => setCountBranch(event.target.value)} className="h-9 rounded border border-amber-300 bg-white px-2 text-xs text-amber-900">
+          <option value="">at any branch</option>
+          {activeBranches.map((branch) => <option key={branch.id} value={branch.id}>at {branch.name}</option>)}
+        </select>
+      )}
       <select aria-label="Filter inventory supplier" value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
         <option value="">All suppliers</option>
         <option value="unmapped">No supplier</option>
@@ -212,11 +244,14 @@ export default function ItemsPage() {
           <span className={cell.is_below_minimum ? 'text-red-600 font-medium' : 'text-gray-700'}>
             {formatQuantity(cell.quantity)}
           </span>
-          {cell.value > 0 && (
-            <span className="block text-[10px] tabular-nums text-gray-400" title="Stock value at this branch">
-              {formatCost(cell.value)}
-            </span>
-          )}
+          <span className="mt-0.5 flex items-center justify-end gap-1.5">
+            {cell.value > 0 && (
+              <span className="text-[10px] tabular-nums text-gray-400" title="Stock value at this branch">
+                {formatCost(cell.value)}
+              </span>
+            )}
+            <CountAgeChip at={cell.last_counted_at} />
+          </span>
         </div>
       );
     },
@@ -226,7 +261,7 @@ export default function ItemsPage() {
     <>
     <ResourcePage<InventoryItem>
       title="Inventory Items"
-      description="Raw materials and tracked goods. Each item is bought in a storage unit and consumed in an ingredient unit; stock columns show the on-hand quantity at each branch."
+      description="Raw materials and tracked goods. Each item is bought in a storage unit and consumed in an ingredient unit; stock columns show the on-hand quantity at each branch, with how long since it was last physically counted there (green ≤3 days, amber 4–7, red 8+, dashed = never)."
       paginated
       stickyHeader
       load={load}

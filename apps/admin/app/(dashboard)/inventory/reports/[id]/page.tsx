@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Button, Spinner } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { formatCost, formatDateTime, formatQuantity, interactiveRowClass } from '@/lib/utils';
+import { CountAgeChip } from '@/components/inventory/CountAgeChip';
 
 type ReportLine = ShiftInventoryReport['lines'][number];
 type GridColumn = { key: string; label: string; role: string; source: string; posts: string | null; editable: boolean };
@@ -119,7 +120,12 @@ export default function ReportDetailPage() {
   const cellDisplay = (line: ReportLine, col: GridColumn): string => {
     if (col.role === 'net') return formatQuantity(editing ? liveNet(line) : num(line.expected_quantity));
     if (col.role === 'difference') {
-      if (editing) return formatQuantity(cellNumber(line, 'entered_quantity') - liveNet(line));
+      if (editing) {
+        // A row left blank is not counted: it posts nothing, so it has no difference.
+        const typed = values[line.item_id]?.entered_quantity;
+        if (typed === undefined || typed.trim() === '') return '—';
+        return formatQuantity(cellNumber(line, 'entered_quantity') - liveNet(line));
+      }
       return line.variance_quantity == null ? '—' : formatQuantity(num(line.variance_quantity));
     }
     const raw = lineValue(line, col.key);
@@ -255,7 +261,7 @@ export default function ReportDetailPage() {
         <Detail label="Approved by" value={report.approved_by_name ?? '—'} />
         <Detail label="Approved at" value={report.approved_at ? formatDateTime(report.approved_at) : '—'} />
         <Detail label="Variance value" value={formatCost(varianceTotal)} />
-        <Detail label="Progress" value={`${report.lines.filter((l) => l.confirmed).length}/${report.lines.length} confirmed`} />
+        <Detail label="Counted" value={`${report.lines.filter((l) => l.entered_quantity != null).length} of ${report.lines.length} items`} />
         {report.notes && <Detail label="Notes" value={report.notes} />}
         {report.deferred_reason && <Detail label="Reason" value={report.deferred_reason} />}
       </div>
@@ -297,7 +303,14 @@ export default function ReportDetailPage() {
               <GroupRows key={group.name} name={group.name} span={columns.length + 3}>
                 {group.lines.map((line) => (
                   <tr key={line.id} className={`border-t border-gray-100 ${interactiveRowClass}`}>
-                    <td className="px-2 py-1 font-medium">{itemName(line)}</td>
+                    <td className="px-2 py-1 font-medium">
+                      {itemName(line)}
+                      {/* Shown while the count is still open for review; once posted, the
+                          live stamp would only echo this report. */}
+                      {report.status !== 'posted' && line.last_counted_at !== undefined && (
+                        <CountAgeChip at={line.last_counted_at} className="ml-1.5 align-middle" />
+                      )}
+                    </td>
                     <td className="px-2 py-1 text-gray-500">{line.unit}</td>
                     {columns.map((col) => (
                       <td key={col.key} className="px-2 py-1 text-right">
@@ -308,6 +321,10 @@ export default function ReportDetailPage() {
                             onChange={(e) => setCell(line.item_id, col.key, e.target.value)}
                             className="w-20 border border-gray-300 px-1 py-0.5 text-right"
                           />
+                        ) : col.key === 'entered_quantity' && line.entered_quantity == null ? (
+                          // Counting is opt-in per row on the till; a skipped row posted
+                          // nothing, so say so rather than showing a 0 it never was.
+                          <span className="text-xs italic text-gray-400">not counted</span>
                         ) : (
                           cellDisplay(line, col)
                         )}
