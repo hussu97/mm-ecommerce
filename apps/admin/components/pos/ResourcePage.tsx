@@ -103,6 +103,9 @@ export interface ResourcePageProps<T extends { id: string }> {
   emptyMessage?: string;
   /** Extra controls rendered next to the "New" button. */
   toolbar?: React.ReactNode;
+  /** A full-width filter row under the header, for pages with many filters
+   *  (passthrough to `ListPage`). Prefer it over `toolbar` past two or three. */
+  filterBar?: React.ReactNode;
   rowActions?: (row: T, reload: () => void) => React.ReactNode;
   /** Contextual detail kept with a selected row (for example, that item's recipe). */
   belowTable?: React.ReactNode;
@@ -151,6 +154,7 @@ export function ResourcePage<T extends { id: string }>({
   searchPlaceholder,
   emptyMessage = 'Nothing here yet.',
   toolbar,
+  filterBar,
   rowActions,
   belowTable,
   expandedRow,
@@ -311,6 +315,7 @@ export function ResourcePage<T extends { id: string }>({
           : undefined
       }
       toolbar={toolbar}
+      filterBar={filterBar}
       primaryAction={
         create ? (
           <Button className="shrink-0" onClick={openCreate}>

@@ -80,10 +80,10 @@ export type CountFilter = '' | 'fresh' | 'over:3' | 'over:7' | 'over:14' | 'over
 export const COUNT_FILTER_OPTIONS: { value: CountFilter; label: string }[] = [
   { value: '', label: 'Any count date' },
   { value: 'fresh', label: `Counted in last ${COUNT_FRESH_MAX_DAYS} days` },
-  { value: 'over:3', label: 'Not counted in 3+ days' },
-  { value: 'over:7', label: 'Not counted in 7+ days' },
-  { value: 'over:14', label: 'Not counted in 14+ days' },
-  { value: 'over:30', label: 'Not counted in 30+ days' },
+  { value: 'over:3', label: 'Uncounted 3+ days' },
+  { value: 'over:7', label: 'Uncounted 7+ days' },
+  { value: 'over:14', label: 'Uncounted 14+ days' },
+  { value: 'over:30', label: 'Uncounted 30+ days' },
   { value: 'never', label: 'Never counted' },
 ];
 

@@ -20,7 +20,7 @@ import { RowAction } from '@/components/ui/DataTable';
 import { RecipeButton } from '@/components/inventory/RecipeButton';
 import { CostBreakdownModal } from '@/components/inventory/CostBreakdownModal';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { formatCost, formatQuantity } from '@/lib/utils';
+import { cn, formatCost, formatCurrency, formatQuantity } from '@/lib/utils';
 import { CountAgeChip } from '@/components/inventory/CountAgeChip';
 import { COUNT_FILTER_OPTIONS, latestStamp, matchesCountFilter, type CountFilter } from '@/lib/count-age';
 
@@ -83,6 +83,7 @@ export default function ItemsPage() {
   // item is stocked at, or only at the one picked in `countBranch`.
   const [countFilter, setCountFilter] = useState<CountFilter>('');
   const [countBranch, setCountBranch] = useState('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     void inventoryApi.categories().then(setCategories).catch(() => setCategories([]));
@@ -193,39 +194,74 @@ export default function ItemsPage() {
   // gets active-only by default.
   const load = useCallback(() => inventoryApi.items({ include_inactive: true }), []);
 
-  const toolbar = (
-    <div className="flex flex-wrap items-center gap-2">
-      <select aria-label="Filter inventory category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
-        <option value="">All categories</option>
-        {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-      </select>
-      <select aria-label="Filter inventory kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
-        <option value="">All kinds</option>
-        <option value="raw_material">Raw material</option><option value="packaging">Packaging</option><option value="semi_finished">Semi-finished</option><option value="produced_good">Produced good</option><option value="resale_good">Resale good</option>
-      </select>
-      <select aria-label="Filter inventory tracking" value={trackingMode} onChange={(event) => setTrackingMode(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
-        <option value="">All tracking</option><option value="stocked">Stocked</option><option value="phantom">Phantom</option>
-      </select>
-      <select aria-label="Filter inventory stock" value={stockFilter} onChange={(event) => setStockFilter(event.target.value as typeof stockFilter)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
-        <option value="">All stock</option><option value="low">Low stock</option><option value="below_par">Below par</option>
-      </select>
-      <select aria-label="Filter by last physical count" value={countFilter} onChange={(event) => setCountFilter(event.target.value as CountFilter)} className={`h-9 rounded border bg-white px-2 text-xs ${countFilter ? 'border-amber-300 text-amber-900' : 'border-gray-300 text-gray-700'}`}>
-        {COUNT_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-      {countFilter && (
-        <select aria-label="Branch for the last-count filter" value={countBranch} onChange={(event) => setCountBranch(event.target.value)} className="h-9 rounded border border-amber-300 bg-white px-2 text-xs text-amber-900">
-          <option value="">at any branch</option>
-          {activeBranches.map((branch) => <option key={branch.id} value={branch.id}>at {branch.name}</option>)}
-        </select>
-      )}
-      <select aria-label="Filter inventory supplier" value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
-        <option value="">All suppliers</option>
-        <option value="unmapped">No supplier</option>
-        {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-      </select>
-      <select aria-label="Filter inventory status" value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
-        <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option>
-      </select>
+  const filtersSet = [categoryId, kind, trackingMode, stockFilter, countFilter, supplierFilter, status !== 'active']
+    .filter(Boolean).length;
+  const clearFilters = () => {
+    setCategoryId(''); setKind(''); setTrackingMode(''); setStockFilter('');
+    setCountFilter(''); setCountBranch(''); setSupplierFilter(''); setStatus('active');
+  };
+
+  const filterBar = (
+    <div className="mb-4">
+      {/* Phones: one "Filters" button opens the panel, so the table starts on the first screen. */}
+      <div className="flex items-center gap-3 md:hidden">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((open) => !open)}
+          aria-expanded={filtersOpen}
+          className={cn(
+            'flex h-11 items-center gap-2 border px-3 text-sm font-body transition-colors',
+            filtersSet ? 'border-primary bg-primary/10 text-primary' : 'border-gray-300 bg-white text-gray-700',
+          )}
+        >
+          Filters
+          {filtersSet > 0 && (
+            <span className="rounded-full bg-primary px-1.5 text-[11px] leading-5 text-white tabular-nums">{filtersSet}</span>
+          )}
+          <span aria-hidden className={cn('text-xs transition-transform', filtersOpen && 'rotate-180')}>▾</span>
+        </button>
+        {filtersSet > 0 && <ClearFilters onClick={clearFilters} />}
+      </div>
+
+      <div className={cn('mt-2 grid-cols-2 gap-2 md:mt-0 md:flex md:flex-wrap md:items-center', filtersOpen ? 'grid' : 'hidden')}>
+        <FilterSelect label="Status" value={status} active={status !== 'active'} onChange={(v) => setStatus(v as typeof status)}>
+          <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option>
+        </FilterSelect>
+        <FilterSelect label="Category" value={categoryId} onChange={setCategoryId}>
+          <option value="">All categories</option>
+          {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+        </FilterSelect>
+        <FilterSelect label="Kind" value={kind} onChange={setKind}>
+          <option value="">All kinds</option>
+          <option value="raw_material">Raw material</option><option value="packaging">Packaging</option><option value="semi_finished">Semi-finished</option><option value="produced_good">Produced good</option><option value="resale_good">Resale good</option>
+        </FilterSelect>
+        <FilterSelect label="Tracking" value={trackingMode} onChange={setTrackingMode}>
+          <option value="">All tracking</option><option value="stocked">Stocked</option><option value="phantom">Phantom</option>
+        </FilterSelect>
+        <FilterSelect label="Stock" value={stockFilter} onChange={(v) => setStockFilter(v as typeof stockFilter)}>
+          <option value="">All stock</option><option value="low">Low stock</option><option value="below_par">Below par</option>
+        </FilterSelect>
+        <FilterSelect label="Supplier" value={supplierFilter} onChange={setSupplierFilter}>
+          <option value="">All suppliers</option>
+          <option value="unmapped">No supplier</option>
+          {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+        </FilterSelect>
+        <FilterSelect
+          label="Last counted"
+          value={countFilter}
+          onChange={(v) => { setCountFilter(v as CountFilter); if (!v) setCountBranch(''); }}
+          className={countFilter ? undefined : 'col-span-2'}
+        >
+          {COUNT_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </FilterSelect>
+        {countFilter && (
+          <FilterSelect label="Branch for last counted" value={countBranch} onChange={setCountBranch}>
+            <option value="">At any branch</option>
+            {activeBranches.map((branch) => <option key={branch.id} value={branch.id}>At {branch.name}</option>)}
+          </FilterSelect>
+        )}
+        {filtersSet > 0 && <span className="hidden md:inline"><ClearFilters onClick={clearFilters} /></span>}
+      </div>
     </div>
   );
 
@@ -261,7 +297,6 @@ export default function ItemsPage() {
     <>
     <ResourcePage<InventoryItem>
       title="Inventory Items"
-      description="Raw materials and tracked goods. Each item is bought in a storage unit and consumed in an ingredient unit; stock columns show the on-hand quantity at each branch, with how long since it was last physically counted there (green ≤3 days, amber 4–7, red 8+, dashed = never)."
       paginated
       stickyHeader
       load={load}
@@ -270,22 +305,18 @@ export default function ItemsPage() {
       remove={(id) => inventoryApi.removeItem(id)}
       searchKeys={['name', 'sku']}
       searchPlaceholder="Search by name or SKU…"
-      toolbar={toolbar}
+      filterBar={filterBar}
       filterRows={filterRows}
       summary={(visibleItems) => {
         // Total on-hand value of everything the current search + filters leave —
         // the whole filtered set, not just the page. Pagination never changes it.
         const total = visibleItems.reduce((sum, item) => sum + itemValue(item.id), 0);
         return (
-          <div className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded border border-primary/20 bg-primary/5 px-4 py-2.5">
-            <span className="text-[11px] uppercase tracking-widest text-gray-500 font-body">
-              Total inventory value
-            </span>
-            <span className="font-display text-lg tabular-nums text-primary">
-              {formatCost(total)}
-            </span>
-            <span className="text-xs text-gray-500 font-body">
-              across {visibleItems.length} item{visibleItems.length === 1 ? '' : 's'} matching the current filters
+          <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded border border-primary/20 bg-primary/5 px-4 py-2.5">
+            <span className="text-[11px] uppercase tracking-widest text-gray-500 font-body">Inventory value</span>
+            <span className="font-display text-lg tabular-nums text-primary">{formatCurrency(total)}</span>
+            <span className="text-xs tabular-nums text-gray-500 font-body">
+              {visibleItems.length} item{visibleItems.length === 1 ? '' : 's'}
             </span>
           </div>
         );
@@ -441,5 +472,48 @@ export default function ItemsPage() {
       <CostBreakdownModal item={costItem} branches={activeBranches} onClose={() => setCostItem(null)} />
     )}
     </>
+  );
+}
+
+// One filter dropdown: full-width tap target on phones, compact on desktop, and
+// tinted while it narrows the list so a set filter is visible at a glance.
+function FilterSelect({
+  label, value, active, onChange, className, children,
+}: {
+  label: string;
+  value: string;
+  /** Defaults to "value is set" — pass it for a filter whose default isn't empty. */
+  active?: boolean;
+  onChange: (value: string) => void;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const isActive = active ?? value !== '';
+  return (
+    <select
+      aria-label={label}
+      title={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className={cn(
+        'h-11 w-full min-w-0 border px-2.5 text-sm font-body outline-none transition-colors focus:border-primary md:h-9 md:w-auto md:max-w-[14rem] md:text-xs',
+        isActive ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-gray-300 bg-white text-gray-700',
+        className,
+      )}
+    >
+      {children}
+    </select>
+  );
+}
+
+function ClearFilters({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-xs font-body text-gray-500 underline underline-offset-2 hover:text-primary hover:no-underline"
+    >
+      Clear all
+    </button>
   );
 }
