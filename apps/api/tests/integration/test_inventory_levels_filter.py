@@ -181,3 +181,19 @@ async def test_below_minimum_only_is_applied_in_sql(engine, seeded):
 async def test_no_filter_returns_both(engine, seeded):
     names = await _names(engine, seeded["admin_id"], branch_id=seeded["branch_id"])
     assert names == {f"{MARKER} Flour", f"{MARKER} Sugar"}
+
+
+async def test_estate_view_drops_a_closed_branch(engine, seeded):
+    """The all-branches on-hand view is current state, so a closed branch's
+    leftover rows drop out; naming the branch still reads them."""
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        branch = await db.get(Branch, seeded["branch_id"])
+        branch.is_active = False
+        await db.commit()
+
+    assert not await _names(engine, seeded["admin_id"], search=MARKER)
+    assert await _names(engine, seeded["admin_id"], branch_id=seeded["branch_id"]) == {
+        f"{MARKER} Flour",
+        f"{MARKER} Sugar",
+    }

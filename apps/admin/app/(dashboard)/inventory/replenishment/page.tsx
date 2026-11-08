@@ -22,6 +22,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, LoadError, MultiSelect, Pagination, Select, Spinner, TabBar } from '@/components/ui';
 import { useToast } from '@/components/ui/feedback';
 import { formatQuantity } from '@/lib/utils';
+import { liveBranches } from '@/lib/branches';
 
 const isoDay = (d: Date) => d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Dubai' });
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
@@ -293,7 +294,7 @@ function SettingsTab({ branches }: { branches: Branch[] }) {
           label="Production branch"
           value={settings.production_branch_id ?? ''}
           onChange={(e) => set('production_branch_id', e.target.value || null)}
-          options={[{ value: '', label: 'None — use the form\'s source' }, ...branches.filter((b) => !b.deleted_at).map((b) => ({ value: b.id, label: b.name }))]}
+          options={[{ value: '', label: 'None — use the form\'s source' }, ...liveBranches(branches, [settings.production_branch_id]).map((b) => ({ value: b.id, label: b.name }))]}
         />
         <Select
           label="Intraday profile window"

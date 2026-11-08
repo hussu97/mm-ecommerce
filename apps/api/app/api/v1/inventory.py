@@ -694,8 +694,14 @@ async def list_levels(
     elif branch_id:
         await access_service.assert_branch_access(db, user, branch_id)
         stmt = stmt.where(Warehouse.branch_id == branch_id)
-    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        stmt = stmt.where(Warehouse.branch_id.in_(access_service.branch_ids_for(user)))
+    else:
+        # The estate-wide view is current on-hand, so a closed branch drops out;
+        # naming it by branch or warehouse above still reads what it was left with.
+        stmt = stmt.where(Branch.is_active.is_(True), Branch.deleted_at.is_(None))
+        if not (user.is_admin or (user.role and user.role.is_super_admin)):
+            stmt = stmt.where(
+                Warehouse.branch_id.in_(access_service.branch_ids_for(user))
+            )
     if category_id:
         stmt = stmt.where(InventoryItem.category_id == category_id)
     if search and search.strip():
