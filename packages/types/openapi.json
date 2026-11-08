@@ -20951,6 +20951,60 @@
         "title": "MenuGroupNode",
         "type": "object"
       },
+      "MenuGroupReorder": {
+        "description": "A parent's direct children, in the order they should appear \u2014 every live\nchild exactly once, so a stale console cannot silently drop one.",
+        "properties": {
+          "group_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Group Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "group_ids"
+        ],
+        "title": "MenuGroupReorder",
+        "type": "object"
+      },
+      "MenuGroupReorderResult": {
+        "description": "The reorder is saved in MM whatever Foodics says; this reports the push of\nthe integrator menu's category order to Foodics' Grubtech group. Null on a\nbranch menu, which nothing outside MM renders.",
+        "properties": {
+          "foodics_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Foodics Detail"
+          },
+          "foodics_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "updated",
+                  "unchanged",
+                  "skipped",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Foodics Status"
+          }
+        },
+        "title": "MenuGroupReorderResult",
+        "type": "object"
+      },
       "MenuGroupResponse": {
         "properties": {
           "branch_id": {
@@ -64238,6 +64292,65 @@
           }
         ],
         "summary": "Get Group Pdf",
+        "tags": [
+          "Menu"
+        ]
+      }
+    },
+    "/api/v1/menu-groups/{group_id}/reorder": {
+      "post": {
+        "description": "Set the order of a group's direct children (every one, exactly once). On\nthe integrator root the new category order is also pushed to Foodics.",
+        "operationId": "reorder_children_api_v1_menu_groups__group_id__reorder_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MenuGroupReorder"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuGroupReorderResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reorder Children",
         "tags": [
           "Menu"
         ]

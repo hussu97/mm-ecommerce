@@ -5718,6 +5718,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/menu-groups/{group_id}/reorder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reorder Children
+         * @description Set the order of a group's direct children (every one, exactly once). On
+         *     the integrator root the new category order is also pushed to Foodics.
+         */
+        post: operations["reorder_children_api_v1_menu_groups__group_id__reorder_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/modifiers": {
         parameters: {
             query?: never;
@@ -16997,6 +17018,27 @@ export interface components {
              * @default branch
              */
             root_kind: string;
+        };
+        /**
+         * MenuGroupReorder
+         * @description A parent's direct children, in the order they should appear — every live
+         *     child exactly once, so a stale console cannot silently drop one.
+         */
+        MenuGroupReorder: {
+            /** Group Ids */
+            group_ids: string[];
+        };
+        /**
+         * MenuGroupReorderResult
+         * @description The reorder is saved in MM whatever Foodics says; this reports the push of
+         *     the integrator menu's category order to Foodics' Grubtech group. Null on a
+         *     branch menu, which nothing outside MM renders.
+         */
+        MenuGroupReorderResult: {
+            /** Foodics Detail */
+            foodics_detail?: string | null;
+            /** Foodics Status */
+            foodics_status?: ("updated" | "unchanged" | "skipped" | "failed") | null;
         };
         /** MenuGroupResponse */
         MenuGroupResponse: {
@@ -36072,6 +36114,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reorder_children_api_v1_menu_groups__group_id__reorder_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MenuGroupReorder"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MenuGroupReorderResult"];
                 };
             };
             /** @description Validation Error */

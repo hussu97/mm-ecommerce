@@ -54,6 +54,20 @@ function isIntegratorCategory(node: Pick<MenuGroupNode, 'root_kind' | 'parent_id
   return node.root_kind === 'integrator' && !!node.parent_id;
 }
 
+/** The tree with one parent's children put in the given order (optimistic UI). */
+function withChildOrder(nodes: MenuGroupNode[], parentId: string, ids: string[]): MenuGroupNode[] {
+  return nodes.map(node => {
+    if (node.id === parentId) {
+      const rank = new Map(ids.map((id, i) => [id, i]));
+      const children = [...node.children].sort(
+        (a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0),
+      );
+      return { ...node, children };
+    }
+    return { ...node, children: withChildOrder(node.children, parentId, ids) };
+  });
+}
+
 /** Ids of a group and everything under it — never valid as its own parent. */
 function subtreeIds(node: MenuGroupNode): string[] {
   return [node.id, ...node.children.flatMap(subtreeIds)];
@@ -79,6 +93,8 @@ export default function MenuGroupsPage() {
   const [apiError, setApiError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [pdfBusy, setPdfBusy] = useState<null | 'en' | 'ar'>(null);
+  const [reordering, setReordering] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
 
   const loadEveryProduct = useCallback(async () => {
     const all: Product[] = [];
@@ -326,6 +342,40 @@ export default function MenuGroupsPage() {
     await load();
   }
 
+  /**
+   * Move a group one place up or down among its siblings. The new order shows
+   * at once; the API stores it (and, on the integrator menu, pushes the category
+   * order to Foodics' Grubtech group). A refusal reloads the true order.
+   */
+  async function move(siblings: MenuGroupNode[], parentId: string, index: number, delta: -1 | 1) {
+    const target = index + delta;
+    if (reordering || target < 0 || target >= siblings.length) return;
+    const ids = siblings.map(s => s.id);
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    setReordering(true);
+    setNotice(null);
+    setLoadError('');
+    setTree(prev => withChildOrder(prev, parentId, ids));
+    try {
+      const result = await menuGroupsApi.reorder(parentId, ids);
+      if (result.foodics_status === 'updated') {
+        setNotice({ tone: 'ok', text: 'Order saved and pushed to Foodics.' });
+      } else if (result.foodics_status === 'unchanged') {
+        setNotice({ tone: 'ok', text: 'Order saved. Foodics already had this order.' });
+      } else if (result.foodics_status === 'skipped' || result.foodics_status === 'failed') {
+        setNotice({
+          tone: 'warn',
+          text: `Order saved in MM, but Foodics was not updated: ${result.foodics_detail ?? result.foodics_status}`,
+        });
+      }
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Could not reorder the menu');
+      await load();
+    } finally {
+      setReordering(false);
+    }
+  }
+
   function toggleExpanded(id: string) {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -345,7 +395,13 @@ export default function MenuGroupsPage() {
     return ids.length === 1 ? `${branchName(ids[0])} only` : `${ids.length} branches`;
   }
 
-  function Row({ node, depth }: { node: MenuGroupNode; depth: number }) {
+  function Row({ node, depth, siblings, parentId }: {
+    node: MenuGroupNode;
+    depth: number;
+    siblings: MenuGroupNode[];
+    parentId: string;
+  }) {
+    const index = siblings.findIndex(s => s.id === node.id);
     const isOpen = expanded.has(node.id);
     const hasChildren = node.children.length > 0;
     // The integrator menu is two levels — a category, then its items — so a
@@ -404,13 +460,33 @@ export default function MenuGroupsPage() {
             </button>
           </td>
           <td className="px-4 py-2 text-right whitespace-nowrap">
+            <span className="inline-flex mr-2 align-middle">
+              <button
+                onClick={() => move(siblings, parentId, index, -1)}
+                disabled={reordering || index <= 0}
+                className="material-symbols-outlined text-base leading-none p-1 rounded text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                aria-label={`Move ${node.name} up`}
+                title="Move up"
+              >
+                arrow_upward
+              </button>
+              <button
+                onClick={() => move(siblings, parentId, index, 1)}
+                disabled={reordering || index >= siblings.length - 1}
+                className="material-symbols-outlined text-base leading-none p-1 rounded text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                aria-label={`Move ${node.name} down`}
+                title="Move down"
+              >
+                arrow_downward
+              </button>
+            </span>
             {canAddInside && <RowAction onClick={() => openAdd(node)}>Add inside</RowAction>}
             <RowAction onClick={() => openEdit(node)}>Edit</RowAction>
             <RowAction danger onClick={() => remove(node)}>Delete</RowAction>
           </td>
         </tr>
         {isOpen && node.children.map(child => (
-          <Row key={child.id} node={child} depth={depth + 1} />
+          <Row key={child.id} node={child} depth={depth + 1} siblings={node.children} parentId={node.id} />
         ))}
       </>
     );
@@ -530,6 +606,22 @@ export default function MenuGroupsPage() {
         </div>
       )}
 
+      {notice && (
+        <div
+          className={`mb-4 flex items-center gap-3 px-4 py-3 rounded font-body text-sm border ${
+            notice.tone === 'ok'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : 'bg-amber-50 border-amber-200 text-amber-800'
+          }`}
+        >
+          <span className="material-symbols-outlined text-base">
+            {notice.tone === 'ok' ? 'check_circle' : 'warning'}
+          </span>
+          <span>{notice.text}</span>
+          <button onClick={() => setNotice(null)} className="ml-auto underline">Dismiss</button>
+        </div>
+      )}
+
       <div className="bg-white rounded-lg shadow-sm overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
@@ -554,7 +646,9 @@ export default function MenuGroupsPage() {
                   This menu is empty. Add a {isIntegrator ? 'category' : 'group'} to begin.
                 </td>
               </tr>
-            ) : rows.map(node => <Row key={node.id} node={node} depth={0} />)}
+            ) : rows.map(node => (
+              <Row key={node.id} node={node} depth={0} siblings={rows} parentId={selectedRoot.id} />
+            ))}
           </tbody>
         </table>
       </div>

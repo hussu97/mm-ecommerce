@@ -23,6 +23,8 @@ from app.schemas.menu_group import (
     MenuGroupClone,
     MenuGroupCreate,
     MenuGroupNode,
+    MenuGroupReorder,
+    MenuGroupReorderResult,
     MenuGroupResponse,
     MenuGroupUpdate,
 )
@@ -161,6 +163,20 @@ async def update_group(
         db, group_id, data.model_dump(exclude_unset=True)
     )
     return _to_response(group)
+
+
+@router.post("/{group_id}/reorder", response_model=MenuGroupReorderResult)
+async def reorder_children(
+    group_id: uuid.UUID,
+    data: MenuGroupReorder,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+):
+    """Set the order of a group's direct children (every one, exactly once). On
+    the integrator root the new category order is also pushed to Foodics."""
+    return MenuGroupReorderResult(
+        **await menu_group_service.reorder_children(db, group_id, data.group_ids)
+    )
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
