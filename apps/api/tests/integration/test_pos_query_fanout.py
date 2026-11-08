@@ -699,6 +699,20 @@ async def _lines_by_item(Session, report_id) -> dict:
         return {line.item_id: line for line in report.lines}
 
 
+_COUNT_AGE_READ = (
+    "SELECT inventory_levels.item_id, max(inventory_levels.last_counted_at)"
+)
+
+
+def _assert_one_level_read_and_one_count_age_read(statements) -> None:
+    """The sheet's levels are read once for every line, plus once more for when
+    each item was last counted (one grouped read per branch, also not per line)."""
+    level_reads = statements.matching("SELECT inventory_levels")
+    count_age_reads = statements.matching(_COUNT_AGE_READ)
+    assert len(count_age_reads) == 1
+    assert len(level_reads) - len(count_age_reads) == 1
+
+
 async def test_the_count_sheet_reads_levels_once_and_matches_them(
     shop, client, statements, Session, per_line_level_reads
 ):
@@ -723,7 +737,7 @@ async def test_the_count_sheet_reads_levels_once_and_matches_them(
     assert resp.status_code == 200, resp.text
     [report] = resp.json()["reports"]
     assert per_line_level_reads == []
-    assert len(statements.matching("SELECT inventory_levels")) == 1
+    _assert_one_level_read_and_one_count_age_read(statements)
     created = len(statements.request)
 
     lines = await _lines_by_item(Session, uuid.UUID(report["id"]))
@@ -761,7 +775,7 @@ async def test_the_count_sheet_reads_levels_once_and_matches_them(
     resp = await client.get(tasks, headers=_user_headers(shop))
     assert resp.status_code == 200, resp.text
     assert per_line_level_reads == []
-    assert len(statements.matching("SELECT inventory_levels")) == 1
+    _assert_one_level_read_and_one_count_age_read(statements)
     lines = await _lines_by_item(Session, uuid.UUID(report["id"]))
     assert Decimal(str(lines[shop.item_ids[0]].expected_quantity)) == Decimal("7")
     assert Decimal(str(lines[shop.item_ids[1]].expected_quantity)) == Decimal("4")
@@ -774,7 +788,7 @@ async def test_the_count_sheet_reads_levels_once_and_matches_them(
     )
     assert resp.status_code == 200, resp.text
     assert per_line_level_reads == []
-    assert len(statements.matching("SELECT inventory_levels")) == 1
+    _assert_one_level_read_and_one_count_age_read(statements)
     # A sheet of six lines used to cost two reads and a flush per line on top.
     assert created <= 36, created
 

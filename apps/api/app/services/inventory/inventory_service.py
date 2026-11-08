@@ -531,7 +531,13 @@ async def post_transaction(
                 posted_at=posted_at,
             )
         )
-        if transaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value:
+        # Last physical count of this item here: a count and an opening balance
+        # are both someone counting the shelf. Only lines that are posted get
+        # stamped — a report row left uncounted never reaches this loop.
+        if transaction.type in (
+            InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+            InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+        ):
             level.last_counted_at = utcnow()
 
     line_costs = await costing_service.cost_posting(

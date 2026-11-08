@@ -21,6 +21,7 @@ from app.models.branch import Branch
 from app.models.inventory import (
     InventoryCategory,
     InventoryItem,
+    InventoryLevel,
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
@@ -28,6 +29,7 @@ from app.models.inventory import (
     PurchaseOrderItem,
     PurchaseOrderStatusEnum,
     TransactionStatusEnum,
+    Warehouse,
 )
 from app.models.inventory_v2 import (
     BranchInventorySettings,
@@ -195,6 +197,43 @@ async def load_report(db: AsyncSession, report_id: uuid.UUID) -> ShiftInventoryR
     if report is None:
         raise NotFoundError("Inventory report not found")
     return report
+
+
+async def attach_last_counted(
+    db: AsyncSession, reports: list[ShiftInventoryReport]
+) -> None:
+    """Stamp each line with when its item was last physically counted at the
+    report's branch (`InventoryLevel.last_counted_at`, newest across the branch's
+    warehouses) — read live, not snapshotted, so the till sees the age as of now
+    and can pick which rows are due a count. Set as a plain attribute for
+    `ShiftReportLineResponse.last_counted_at`, the way the router attaches
+    display names; a line nobody attached to serialises it as null."""
+    branch_items: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for report in reports:
+        branch_items.setdefault(report.branch_id, set()).update(
+            line.item_id for line in report.lines
+        )
+    if not branch_items:
+        return
+    stamps: dict[tuple[uuid.UUID, uuid.UUID], datetime] = {}
+    for branch_id, item_ids in branch_items.items():
+        if not item_ids:
+            continue
+        rows = await db.execute(
+            select(InventoryLevel.item_id, func.max(InventoryLevel.last_counted_at))
+            .join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id)
+            .where(
+                Warehouse.branch_id == branch_id,
+                InventoryLevel.item_id.in_(item_ids),
+            )
+            .group_by(InventoryLevel.item_id)
+        )
+        for item_id, counted_at in rows.all():
+            if counted_at is not None:
+                stamps[(branch_id, item_id)] = counted_at
+    for report in reports:
+        for line in report.lines:
+            line.last_counted_at = stamps.get((report.branch_id, line.item_id))
 
 
 async def add_comment(
@@ -1820,6 +1859,9 @@ async def _recompute_columns_at_post(
             line.variance_cost = money(
                 abs(Decimal(str(line.variance_quantity))) * per_storage_cost
             )
+        elif line.entered_quantity is None:
+            line.variance_quantity = None
+            line.variance_cost = None
         if line_delta:
             deltas[str(line.item_id)] = line_delta
     return deltas
@@ -1901,6 +1943,10 @@ async def _write_line_edits(
             line.variance_cost = money(
                 abs(Decimal(str(line.variance_quantity))) * per_storage_cost
             )
+        else:
+            # Not counted (or a count cleared): no variance to report or email.
+            line.variance_quantity = None
+            line.variance_cost = None
 
 
 async def save_report(
@@ -1974,10 +2020,22 @@ async def submit_report(
     # a sale posted between every refresh and submit. See `_NON_BLOCKING_MOVEMENT_TYPES`.
     if moved := await _competing_items_since(db, report):
         raise ConflictError(_moved_conflict_message(moved))
-    if any(
-        not line.confirmed or line.entered_quantity is None for line in report.lines
-    ):
-        raise BadRequestError("Every report line must be actively confirmed")
+    # Counting is opt-in per row: a line with no entered figure was not counted
+    # and posts nothing (see `post_report`), so the shop no longer types the
+    # system figure into rows it never looked at — which made a copied number
+    # indistinguishable from a real count. A figure that a refresh un-confirmed
+    # (its item moved after it was typed) is stale, though, and must be recounted
+    # or cleared rather than posted.
+    if stale := [
+        line
+        for line in report.lines
+        if line.entered_quantity is not None and not line.confirmed
+    ]:
+        names = ", ".join(
+            str((line.source_summary or {}).get("item_name") or line.item_id)
+            for line in stale[:5]
+        )
+        raise BadRequestError(f"Recount or clear moved items: {names}")
 
     # The reason/remark is an optional note, not a gate. Requiring one on every
     # variance made a 30-item count a wall of mandatory typing and stalled the
@@ -2304,6 +2362,10 @@ async def post_report(
     }
     grouped: dict[str, list[ShiftInventoryReportLine]] = {}
     for report_line in report.lines:
+        # An uncounted row posts nothing: no count transaction line, so its level
+        # is left as the ledger has it and its last-counted stamp does not move.
+        if report_line.entered_quantity is None:
+            continue
         required_input = (report_line.source_summary or {}).get(
             "required_input", "physical_count"
         )

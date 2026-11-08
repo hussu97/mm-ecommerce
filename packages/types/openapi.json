@@ -37725,6 +37725,18 @@
             "title": "Item Id",
             "type": "string"
           },
+          "last_counted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Counted At"
+          },
           "opening_quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Opening Quantity",

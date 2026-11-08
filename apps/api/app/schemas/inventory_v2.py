@@ -412,6 +412,10 @@ class ShiftReportLineResponse(ORMModel):
     variance_cost: Decimal | None
     override_reason: str | None
     source_summary: dict[str, Any]
+    #: When this item was last physically counted at the report's branch (a POS
+    #: report count or an admin stock audit), read live at response time. Null
+    #: when it never has been — or on a response the endpoint did not enrich.
+    last_counted_at: datetime | None = None
 
 
 class ShiftReportResponse(ORMModel):

@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import BadRequestError, ConflictError
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
@@ -1334,3 +1334,157 @@ async def test_a_sale_after_a_till_closes_is_the_next_shifts_not_the_closing_shi
         assert Decimal(str(line.opening_quantity)) == Decimal("10")
         assert Decimal(str(line.expected_quantity)) == Decimal("8")
         assert Decimal(str(line.variance_quantity)) == Decimal("0")
+
+
+async def _draft_report(
+    db, *, branch_id, template_id, item_id, entered, confirmed=True
+):
+    report = _report(branch_id, template_id, report_type="raw_materials")
+    report.status = ShiftInventoryReportStatusEnum.DRAFT.value
+    report.base_posting_sequence = await report_service.current_sequence(db, branch_id)
+    line = _line(
+        item_id,
+        expected_quantity=100,
+        source_summary={"entered_columns": [], "prefilled": {}},
+    )
+    line.entered_quantity = None if entered is None else Decimal(str(entered))
+    line.confirmed = confirmed
+    report.lines = [line]
+    db.add(report)
+    await db.flush()
+    return report.id
+
+
+async def test_an_uncounted_row_submits_and_posts_nothing(engine, env):
+    """Counting is opt-in per row. A row left blank no longer blocks the submit,
+    posts no count line (the level stays where the ledger has it) and does not
+    stamp `last_counted_at` — so the stamp means someone really counted it."""
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        # Stock arrives by adjustment, not a count, so nothing is stamped yet.
+        await _post_txn(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            user_id=user_id,
+            item_id=item_id,
+            ttype=InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+            qty=100,
+        )
+        report_id = await _draft_report(
+            db,
+            branch_id=branch_id,
+            template_id=template_id,
+            item_id=item_id,
+            entered=None,
+            confirmed=False,
+        )
+        await db.commit()
+
+    async with Session() as db:
+        report = await report_service.load_report(db, report_id)
+        user = await db.get(User, user_id)
+        posted = await report_service.submit_report(db, report=report, user=user)
+        assert posted.status == ShiftInventoryReportStatusEnum.POSTED.value
+        await db.commit()
+
+    async with Session() as db:
+        level = await inventory_service.level_for(db, item_id, warehouse_id)
+        assert Decimal(str(level.quantity)) == Decimal("100")
+        assert level.last_counted_at is None
+        counts = (
+            (
+                await db.execute(
+                    select(InventoryTransaction).where(
+                        InventoryTransaction.source_id == str(report_id)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert counts == []
+        report = await report_service.load_report(db, report_id)
+        assert report.lines[0].variance_quantity is None
+        await report_service.attach_last_counted(db, [report])
+        assert report.lines[0].last_counted_at is None
+
+
+async def test_a_counted_row_sets_the_level_and_stamps_last_counted(engine, env):
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        await _post_txn(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            user_id=user_id,
+            item_id=item_id,
+            ttype=InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+            qty=100,
+        )
+        report_id = await _draft_report(
+            db,
+            branch_id=branch_id,
+            template_id=template_id,
+            item_id=item_id,
+            entered=97,
+        )
+        await db.commit()
+
+    async with Session() as db:
+        report = await report_service.load_report(db, report_id)
+        user = await db.get(User, user_id)
+        await report_service.submit_report(db, report=report, user=user)
+        await db.commit()
+
+    async with Session() as db:
+        level = await inventory_service.level_for(db, item_id, warehouse_id)
+        assert Decimal(str(level.quantity)) == Decimal("97")
+        assert level.last_counted_at is not None
+        report = await report_service.load_report(db, report_id)
+        await report_service.attach_last_counted(db, [report])
+        assert report.lines[0].last_counted_at == level.last_counted_at
+
+
+async def test_a_count_a_refresh_unconfirmed_must_be_recounted(engine, env):
+    """A typed figure whose item moved after it was typed (refresh un-confirms it)
+    is stale: the submit refuses it rather than posting it or silently dropping it."""
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        report_id = await _draft_report(
+            db,
+            branch_id=branch_id,
+            template_id=template_id,
+            item_id=item_id,
+            entered=40,
+            confirmed=False,
+        )
+        await db.commit()
+
+    async with Session() as db:
+        report = await report_service.load_report(db, report_id)
+        user = await db.get(User, user_id)
+        with pytest.raises(BadRequestError, match="Recount"):
+            await report_service.submit_report(db, report=report, user=user)
+
+
+async def test_an_opening_balance_stamps_last_counted(engine, env):
+    branch_id, warehouse_id, user_id, item_id, _ = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        await _post_txn(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            user_id=user_id,
+            item_id=item_id,
+            ttype=InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+            qty=12,
+        )
+        await db.commit()
+    async with Session() as db:
+        level = await inventory_service.level_for(db, item_id, warehouse_id)
+        assert level.last_counted_at is not None

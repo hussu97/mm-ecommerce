@@ -22752,6 +22752,8 @@ export interface components {
              * Format: uuid
              */
             item_id: string;
+            /** Last Counted At */
+            last_counted_at?: string | null;
             /** Opening Quantity */
             opening_quantity: string;
             /** Override Reason */

@@ -699,6 +699,7 @@ async def _enrich_report_names(
         report.branch_name = branch_names.get(report.branch_id)
         report.submitted_by_name = user_names.get(report.submitted_by)
         report.approved_by_name = user_names.get(report.approved_by)
+    await report_service.attach_last_counted(db, reports)
 
 
 @control_router.get("/shift-reports", response_model=list[ShiftReportResponse])
@@ -853,6 +854,7 @@ async def inventory_tasks_for_till(
     reports, first_close, optional_available = await report_service.till_close_tasks(
         db, till=till
     )
+    await report_service.attach_last_counted(db, reports)
     return TillCloseTasksResponse(
         reports=reports,
         first_close=first_close,
@@ -872,7 +874,9 @@ async def inventory_adhoc_tasks_for_till(
     if till is None:
         raise NotFoundError("Till not found")
     await _assert_branch_access(db, user, till.branch_id)
-    return await report_service.create_adhoc_tasks_for_till(db, till=till)
+    reports = await report_service.create_adhoc_tasks_for_till(db, till=till)
+    await report_service.attach_last_counted(db, reports)
+    return reports
 
 
 @pos_inventory_router.post(
@@ -885,7 +889,9 @@ async def refresh_shift_report(
 ):
     report = await report_service.load_report(db, report_id)
     await _assert_branch_access(db, user, report.branch_id)
-    return await report_service.refresh_report(db, report)
+    report = await report_service.refresh_report(db, report)
+    await report_service.attach_last_counted(db, [report])
+    return report
 
 
 @pos_inventory_router.put("/reports/{report_id}", response_model=PosShiftReportResponse)
@@ -897,7 +903,9 @@ async def save_shift_report(
 ):
     report = await report_service.load_report(db, report_id)
     await _assert_branch_access(db, user, report.branch_id)
-    return await report_service.save_report(db, report=report, data=data)
+    report = await report_service.save_report(db, report=report, data=data)
+    await report_service.attach_last_counted(db, [report])
+    return report
 
 
 @pos_inventory_router.post(
