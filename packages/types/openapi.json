@@ -25276,13 +25276,17 @@
       "PasskeyLoginOptionsRequest": {
         "properties": {
           "email": {
-            "title": "Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           }
         },
-        "required": [
-          "email"
-        ],
         "title": "PasskeyLoginOptionsRequest",
         "type": "object"
       },
@@ -25308,12 +25312,18 @@
             "type": "object"
           },
           "email": {
-            "title": "Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           }
         },
         "required": [
-          "email",
           "credential"
         ],
         "title": "PasskeyLoginVerifyRequest",
@@ -49174,6 +49184,7 @@
     },
     "/api/v1/auth/admin/passkeys/login/options": {
       "post": {
+        "description": "Start a passkey sign-in.\n\nWith an email, the browser is told which credentials belong to that account.\nWithout one, `allowCredentials` is empty and the browser offers whichever\ndiscoverable passkeys it holds for this site: the login page's first step,\nbefore anybody has typed anything. That path looks up no account, so it\ntells a caller nothing about which emails exist.",
         "operationId": "passkey_login_options_api_v1_auth_admin_passkeys_login_options_post",
         "requestBody": {
           "content": {
@@ -49207,7 +49218,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Create passkey login options for an admin email",
+        "summary": "Create passkey login options, for an admin email or usernameless",
         "tags": [
           "Authentication"
         ]

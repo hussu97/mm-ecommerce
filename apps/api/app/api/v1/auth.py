@@ -90,6 +90,11 @@ _REFRESH_COOKIE = "mm_refresh_token"
 SUPERADMIN_EMAIL = "admin@meltingmomentscakes.com"
 ADMIN_PASSKEY_EXCLUDED_EMAILS = {SUPERADMIN_EMAIL}
 WEBAUTHN_CHALLENGE_TTL_MINUTES = 10
+#: Ceremony for a sign-in that starts without an email (the login page's
+#: "Sign in with a passkey" button and passkey autofill). Its challenge row has
+#: no user and an empty email; verify finds it by the challenge the browser
+#: signed, and the account by the credential.
+DISCOVERABLE_CEREMONY = "discoverable"
 
 #: Public-key algorithms this RP will accept when a browser creates a passkey.
 #: Stated explicitly rather than left to py_webauthn's default, because the set
@@ -238,12 +243,16 @@ async def _store_webauthn_challenge(
     ceremony: str,
 ) -> None:
     await _delete_expired_webauthn_challenges(db)
-    await db.execute(
-        delete(WebAuthnChallenge).where(
-            WebAuthnChallenge.email == email.lower(),
-            WebAuthnChallenge.ceremony == ceremony,
+    # A usernameless challenge has no email to scope "the latest one" by, and
+    # two browsers may hold one each at once, so none is superseded here: each
+    # is found by its own value and expires on the TTL.
+    if ceremony != DISCOVERABLE_CEREMONY:
+        await db.execute(
+            delete(WebAuthnChallenge).where(
+                WebAuthnChallenge.email == email.lower(),
+                WebAuthnChallenge.ceremony == ceremony,
+            )
         )
-    )
     db.add(
         WebAuthnChallenge(
             id=uuid.uuid4(),
@@ -284,6 +293,62 @@ async def _get_webauthn_challenge(
     return challenge
 
 
+def _signed_challenge(credential: dict) -> str:
+    """The challenge the authenticator signed, read from `clientDataJSON`."""
+    try:
+        client_data = json.loads(
+            base64url_to_bytes(credential["response"]["clientDataJSON"])
+        )
+        value = client_data["challenge"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BadRequestError("Invalid passkey response") from exc
+    if not isinstance(value, str) or not value:
+        raise BadRequestError("Invalid passkey response")
+    return value
+
+
+async def _get_discoverable_challenge(
+    *, db: AsyncSession, credential: dict
+) -> WebAuthnChallenge:
+    """
+    Find the usernameless challenge this response answers.
+
+    There is no email to key it by, so it is looked up by the value the browser
+    says it signed. That is only a lookup: `verify_authentication_response` then
+    checks the signature covers exactly that challenge, so a forged
+    `clientDataJSON` finds a row and still fails.
+    """
+    result = await db.execute(
+        select(WebAuthnChallenge)
+        .where(
+            WebAuthnChallenge.ceremony == DISCOVERABLE_CEREMONY,
+            WebAuthnChallenge.challenge == _signed_challenge(credential),
+            WebAuthnChallenge.expires_at >= datetime.now(timezone.utc),
+        )
+        .limit(1)
+    )
+    challenge = result.scalar_one_or_none()
+    if not challenge:
+        raise BadRequestError("Passkey challenge has expired. Please try again.")
+    return challenge
+
+
+def _user_handle_matches(credential: dict, user: User) -> bool:
+    """
+    A discoverable credential returns the user handle it was registered with
+    (`user.id.bytes`, see registration). When present it must name the same
+    account the credential id does; absent is allowed, as the spec permits.
+    """
+    response = credential.get("response")
+    handle = response.get("userHandle") if isinstance(response, dict) else None
+    if not handle:
+        return True
+    try:
+        return base64url_to_bytes(handle) == user.id.bytes
+    except (TypeError, ValueError):
+        return False
+
+
 class AdminLoginOptionsRequest(BaseModel):
     email: str
 
@@ -320,7 +385,9 @@ class AdminPasskeyResponse(BaseModel):
 
 
 class PasskeyLoginOptionsRequest(BaseModel):
-    email: str
+    #: Omit for a usernameless sign-in: the browser offers every discoverable
+    #: passkey it holds for this site and the credential names the account.
+    email: str | None = None
 
 
 class PasskeyLoginOptionsResponse(BaseModel):
@@ -328,7 +395,8 @@ class PasskeyLoginOptionsResponse(BaseModel):
 
 
 class PasskeyLoginVerifyRequest(BaseModel):
-    email: str
+    #: Omit when the options were requested without an email.
+    email: str | None = None
     credential: dict
 
 
@@ -665,7 +733,7 @@ async def delete_admin_passkey(
 @router.post(
     "/admin/passkeys/login/options",
     response_model=PasskeyLoginOptionsResponse,
-    summary="Create passkey login options for an admin email",
+    summary="Create passkey login options, for an admin email or usernameless",
 )
 @limiter.limit("10/minute")
 async def passkey_login_options(
@@ -673,6 +741,29 @@ async def passkey_login_options(
     body: PasskeyLoginOptionsRequest,
     db: AsyncSession = Depends(get_db),
 ) -> PasskeyLoginOptionsResponse:
+    """
+    Start a passkey sign-in.
+
+    With an email, the browser is told which credentials belong to that account.
+    Without one, `allowCredentials` is empty and the browser offers whichever
+    discoverable passkeys it holds for this site: the login page's first step,
+    before anybody has typed anything. That path looks up no account, so it
+    tells a caller nothing about which emails exist.
+    """
+    if not body.email:
+        options = generate_authentication_options(
+            rp_id=_admin_rp_id(),
+            user_verification=UserVerificationRequirement.PREFERRED,
+        )
+        await _store_webauthn_challenge(
+            db=db,
+            user=None,
+            email="",
+            challenge=options.challenge,
+            ceremony=DISCOVERABLE_CEREMONY,
+        )
+        return PasskeyLoginOptionsResponse(options=_options_payload(options))
+
     email = body.email.lower()
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -717,32 +808,52 @@ async def passkey_login_verify(
     body: PasskeyLoginVerifyRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    email = body.email.lower()
     credential_id = body.credential.get("id")
     if not isinstance(credential_id, str):
         raise BadRequestError("Invalid passkey response")
 
-    user_result = await db.execute(select(User).where(User.email == email))
-    user = user_result.scalar_one_or_none()
-    if not user or not _is_passkey_allowed(user):
-        raise UnauthorizedError("Passkey login is not available for this account")
+    if body.email:
+        email = body.email.lower()
+        user_result = await db.execute(select(User).where(User.email == email))
+        user = user_result.scalar_one_or_none()
+        if not user or not _is_passkey_allowed(user):
+            raise UnauthorizedError("Passkey login is not available for this account")
 
-    passkey_result = await db.execute(
-        select(AdminPasskey).where(
-            AdminPasskey.user_id == user.id,
-            AdminPasskey.credential_id == credential_id,
+        passkey_result = await db.execute(
+            select(AdminPasskey).where(
+                AdminPasskey.user_id == user.id,
+                AdminPasskey.credential_id == credential_id,
+            )
         )
-    )
-    passkey = passkey_result.scalar_one_or_none()
-    if not passkey:
-        raise UnauthorizedError("Passkey not recognized")
+        passkey = passkey_result.scalar_one_or_none()
+        if not passkey:
+            raise UnauthorizedError("Passkey not recognized")
 
-    challenge = await _get_webauthn_challenge(
-        db=db,
-        email=email,
-        ceremony="authentication",
-        user_id=user.id,
-    )
+        challenge = await _get_webauthn_challenge(
+            db=db,
+            email=email,
+            ceremony="authentication",
+            user_id=user.id,
+        )
+    else:
+        # Usernameless: the credential id (unique across all accounts) names the
+        # account. Nothing here is trusted until the signature verifies below.
+        passkey = (
+            await db.execute(
+                select(AdminPasskey).where(AdminPasskey.credential_id == credential_id)
+            )
+        ).scalar_one_or_none()
+        if not passkey:
+            raise UnauthorizedError(
+                "This passkey isn't registered to an admin account. "
+                "Sign in with your email instead."
+            )
+        user = await db.get(User, passkey.user_id)
+        if not user or not _is_passkey_allowed(user):
+            raise UnauthorizedError("Passkey login is not available for this account")
+        if not _user_handle_matches(body.credential, user):
+            raise UnauthorizedError("Passkey not recognized")
+        challenge = await _get_discoverable_challenge(db=db, credential=body.credential)
     try:
         verified = verify_authentication_response(
             credential=body.credential,

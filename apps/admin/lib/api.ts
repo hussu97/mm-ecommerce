@@ -260,9 +260,11 @@ export const authApi = {
     api.post<{ options: PublicKeyCredentialCreationOptionsJSON }>('/auth/admin/passkeys/register/options', {}),
   passkeyRegistrationVerify: (credential: unknown, name?: string) =>
     api.post<AdminPasskey>('/auth/admin/passkeys/register/verify', { credential, name }),
-  passkeyLoginOptions: (email: string) =>
+  // `email: null` starts a usernameless sign-in: the browser offers any
+  // passkey it holds for this site and the credential names the account.
+  passkeyLoginOptions: (email: string | null) =>
     api.post<{ options: PublicKeyCredentialRequestOptionsJSON }>('/auth/admin/passkeys/login/options', { email }),
-  passkeyLoginVerify: (email: string, credential: unknown) =>
+  passkeyLoginVerify: (email: string | null, credential: unknown) =>
     api.post<TokenResponse>('/auth/admin/passkeys/login/verify', { email, credential }),
   passkeys: () => api.get<AdminPasskey[]>('/auth/admin/passkeys'),
   deletePasskey: (id: string) => api.delete<void>(`/auth/admin/passkeys/${id}`),

@@ -1417,7 +1417,16 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create passkey login options for an admin email */
+        /**
+         * Create passkey login options, for an admin email or usernameless
+         * @description Start a passkey sign-in.
+         *
+         *     With an email, the browser is told which credentials belong to that account.
+         *     Without one, `allowCredentials` is empty and the browser offers whichever
+         *     discoverable passkeys it holds for this site: the login page's first step,
+         *     before anybody has typed anything. That path looks up no account, so it
+         *     tells a caller nothing about which emails exist.
+         */
         post: operations["passkey_login_options_api_v1_auth_admin_passkeys_login_options_post"];
         delete?: never;
         options?: never;
@@ -18498,7 +18507,7 @@ export interface components {
         /** PasskeyLoginOptionsRequest */
         PasskeyLoginOptionsRequest: {
             /** Email */
-            email: string;
+            email?: string | null;
         };
         /** PasskeyLoginOptionsResponse */
         PasskeyLoginOptionsResponse: {
@@ -18514,7 +18523,7 @@ export interface components {
                 [key: string]: unknown;
             };
             /** Email */
-            email: string;
+            email?: string | null;
         };
         /** PasskeyRegistrationOptionsResponse */
         PasskeyRegistrationOptionsResponse: {
