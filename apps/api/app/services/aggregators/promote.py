@@ -961,6 +961,34 @@ def _split_leading_count(name: str | None) -> tuple[int | None, str | None]:
         return None, name
 
 
+def _line_prices(
+    *,
+    unit_price: Decimal | None,
+    gross_sales: Decimal | None,
+    quantity: int,
+    options_price: Decimal,
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    """(base, options, unit, total) for one promoted line, per unit except total.
+
+    When the line's money is known, the line total is the truth and the base is
+    what is left of a unit once its options are paid for. A channel's own unit
+    price cannot be the base: Careem's and Talabat's already INCLUDE the priced
+    option (a "Fudge Brownies · 3 Pieces" line is 50 with the 50 on the option), so
+    adding the options again showed a 100 unit on a 50 line — 40 lines across
+    October and November. Without a known total, the channel's unit price is all
+    there is, and options are added to it as before.
+    """
+    options = money(options_price)
+    if gross_sales is None:
+        base = money(unit_price or Decimal(0))
+        unit = money(base + options)
+        return base, options, unit, money(unit * quantity)
+    total = money(gross_sales)
+    per_unit = total / quantity if quantity else total
+    base = money(max(per_unit - options, Decimal(0)))
+    return base, options, money(base + options), total
+
+
 async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> int:
     """Write the order's lines from the aggregator's line-grain items, mapping each
     to a catalog product by name where one is found. Returns the count of lines
@@ -979,7 +1007,6 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
     unmapped = 0
     for it in items:
         qty = int(it.quantity) if it.quantity is not None else 1
-        base_price = money(it.unit_price or Decimal("0"))
         # Resolve the product first so the modifier snapshot can fall back to this
         # product's own option tree when the global option map misses (scoped
         # quantity modifiers like "3 Pieces" carry the recipe).
@@ -990,12 +1017,11 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
         snapshot, opt_price = await _build_modifier_snapshot(
             db, agg.channel, mods, product_id=product_id
         )
-        opt_price = money(opt_price)
-        unit_price = money(base_price + opt_price)
-        total = (
-            money(it.gross_sales)
-            if it.gross_sales is not None
-            else money(unit_price * qty)
+        base_price, opt_price, unit_price, total = _line_prices(
+            unit_price=it.unit_price,
+            gross_sales=it.gross_sales,
+            quantity=qty,
+            options_price=opt_price,
         )
         db.add(
             OrderItem(

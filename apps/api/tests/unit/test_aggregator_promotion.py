@@ -2371,3 +2371,43 @@ async def test_the_scheduler_promote_pass_commits_per_order(monkeypatch):
     ranged = _db()
     assert await promote.promote_channel(ranged, "keeta") == 3
     ranged.commit.assert_not_awaited()
+
+
+# ── line money: the total is the truth, the base is what the options leave ─────
+def test_line_prices_do_not_add_an_option_the_unit_price_already_includes():
+    """Careem/Talabat report a 50 unit on "Fudge Brownies · 3 Pieces" with the 50
+    on the option too; the line is 50, not 100 (AGG-20261002-108)."""
+    assert promote._line_prices(
+        unit_price=Decimal("50"),
+        gross_sales=Decimal("50"),
+        quantity=1,
+        options_price=Decimal("50"),
+    ) == (Decimal("0.00"), Decimal("50.00"), Decimal("50.00"), Decimal("50.00"))
+
+
+def test_line_prices_per_unit_on_a_multi_quantity_line():
+    """2 × Nutella Cookies · 3 Pieces at 45 is a 90 line: a 45 unit, not 225."""
+    assert promote._line_prices(
+        unit_price=Decimal("45"),
+        gross_sales=Decimal("90"),
+        quantity=2,
+        options_price=Decimal("45"),
+    ) == (Decimal("0.00"), Decimal("45.00"), Decimal("45.00"), Decimal("90.00"))
+
+
+def test_line_prices_keep_a_real_base_beside_a_priced_add_on():
+    assert promote._line_prices(
+        unit_price=Decimal("20"),
+        gross_sales=Decimal("46"),
+        quantity=2,
+        options_price=Decimal("3"),
+    ) == (Decimal("20.00"), Decimal("3.00"), Decimal("23.00"), Decimal("46.00"))
+
+
+def test_line_prices_without_a_known_total_add_options_to_the_unit():
+    assert promote._line_prices(
+        unit_price=Decimal("10"),
+        gross_sales=None,
+        quantity=3,
+        options_price=Decimal("2"),
+    ) == (Decimal("10.00"), Decimal("2.00"), Decimal("12.00"), Decimal("36.00"))
