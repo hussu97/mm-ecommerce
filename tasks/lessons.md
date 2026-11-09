@@ -1525,3 +1525,17 @@ Before choosing a key, grep the whole of `app/` for it.
 `test_every_advisory_lock_key_is_unique` now does that check. When a safety
 net has never logged doing anything, check that it can get its lock before
 you trust that there was nothing to do.
+
+### [2026-11-09] Read a count variance back to the marketplace's own payload, not our stored line
+
+DSO's count showed Nutella Cookie +18. I traced it to three Careem orders that
+each drew 12 and floated "the listing may be a box of 3". The owner had to
+point out the order was 2 × 3 pieces = 6. Our stored line said "2 × 3 Pieces"
+per unit because the Careem parser read the option's per-LINE `count` as a
+per-unit quantity; the raw payload (`aggregator_order.raw`) carried
+`count_per_item: 1` all along. The same audit found 40 Oct–Nov lines whose
+unit price counted the option twice (Careem/Talabat units already include it).
+
+**Rule:** when a stored order line explains a stock or money gap, check it
+against the channel's raw payload before proposing a cause. A line whose
+`unit_price × quantity ≠ total_price` is a parsing bug, not a menu question.
