@@ -133,6 +133,92 @@ def test_order_gross_is_the_menu_value_not_the_charged_amount():
     ]
 
 
+# A faithful slice of order 174502215 (AGG-20261016-068): 2 × Nutella Cookies,
+# "3 Pieces" each, AED 90. The option's `count` (2) and `price.total` (90) are for
+# the whole line; `count_per_item` (1) and `menu_option.price` (45) are per unit.
+_DETAIL_MULTI = {
+    "id": 174502215,
+    "status": "delivered",
+    "created_at": "2026-10-16T17:55:00+00:00",
+    "merchant": {"id": 1069463, "currency": {"code": "AED"}},
+    "price": {"total": 90, "sub_total": 90, "original": 90, "tax": 0},
+    "items": [
+        {
+            "count": 2,
+            "price": {"total": 0, "original": 0, "total_with_options": 90},
+            "menu_item": {"item": "Nutella Cookies", "price": {"total": 0}},
+            "groups": [
+                {
+                    "name": "Your Choice of Quantity",
+                    "options": [
+                        {
+                            "name": "3 Pieces",
+                            "count": 2,
+                            "count_per_item": 1,
+                            "price": {"total": 90, "original": 90},
+                            "menu_option": {"price": {"total": 45}},
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_option_count_and_price_are_per_unit_not_per_line():
+    """2 × "3 Pieces" is 6 cookies: one "3 Pieces" per unit at 45, not two at 90
+    (which drew 12 cookies and showed a unit price of 225)."""
+    order = CareemClient()._order_from_detail(
+        _DETAIL_MULTI,
+        StandardOrder(external_order_id="174502215", external_outlet_id="1069463"),
+    )
+    line = order.items[0]
+    assert line.quantity == Decimal("2")
+    assert line.gross_sales == Decimal("90")
+    (mod,) = line.modifiers
+    assert mod.name == "3 Pieces"
+    assert mod.quantity == Decimal("1")
+    assert mod.unit_price == Decimal("45")
+
+
+def test_option_without_count_per_item_divides_the_line_count():
+    detail = {
+        **_DETAIL_MULTI,
+        "items": [
+            {
+                **_DETAIL_MULTI["items"][0],
+                "count": 5,
+                "price": {"total_with_options": 725},
+                "groups": [
+                    {
+                        "options": [
+                            {
+                                "name": "Ferrero Brownie",
+                                "count": 15,
+                                "price": {"total": 0},
+                            },
+                            {
+                                "name": "Fudge Brownie",
+                                "count": 10,
+                                "price": {"total": 0},
+                            },
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+    order = CareemClient()._order_from_detail(
+        detail,
+        StandardOrder(external_order_id="174227532", external_outlet_id="1067984"),
+    )
+    assert [(m.name, m.quantity) for m in order.items[0].modifiers] == [
+        ("Ferrero Brownie", Decimal("3")),
+        ("Fudge Brownie", Decimal("2")),
+    ]
+
+
 def test_order_from_detail_extracts_items_modifiers_driver_address_timeline():
     client = CareemClient()
     minimal = StandardOrder(

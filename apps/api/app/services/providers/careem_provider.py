@@ -196,8 +196,23 @@ def _items_from_detail(external: str, items_raw: Any) -> list[StandardOrderItem]
                 if not isinstance(opt, dict):
                     continue
                 oname = _first(opt, "name") or _localized_en(opt.get("name_localized"))
+                # An option's `count` and `price.total` are for the WHOLE line
+                # (count × count_per_item); a modifier is per unit, because
+                # promote multiplies it by the line quantity. Reading `count`
+                # first drew 2 × "3 Pieces" per unit on "2 × Nutella Cookies"
+                # (12 cookies for 6 sold) and priced each unit's option at the
+                # line's 90. `count_per_item` is the per-unit figure; without
+                # it, divide the line figure by the line count.
+                per_item = _num(_first(opt, "count_per_item"))
+                line_count = _num(_first(opt, "count"))
+                ocount = (
+                    per_item
+                    or (line_count / count if line_count and count else None)
+                    or Decimal("1")
+                )
                 oprice = _num(_first(opt.get("price") or {}, "total", "original"))
-                ocount = _num(_first(opt, "count", "count_per_item")) or Decimal("1")
+                if oprice is not None and line_count:
+                    oprice = oprice / line_count
                 if oname:
                     modifiers.append(
                         StandardModifier(
