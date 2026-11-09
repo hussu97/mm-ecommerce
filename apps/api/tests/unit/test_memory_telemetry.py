@@ -44,15 +44,27 @@ def test_the_loop_survives_a_failing_census(monkeypatch, caplog):
     assert len(calls) >= 2
 
 
+class _SamplesExhausted(BaseException):
+    """Ends the loop under test. A BaseException, so run_forever's
+    `except Exception` (telemetry must never die) does not swallow it."""
+
+
 def _run_loop(monkeypatch, settled_mb: list[int], ceiling_mb: int) -> list[int]:
     """Drive run_forever over a scripted sequence of post-trim RSS samples and
-    return the sample index (1-based) at which on_recycle fired, if any."""
+    return the sample index (1-based) at which on_recycle fired, if any.
+
+    The census runs in a worker thread, so a fixed number of event-loop turns
+    is a race: on a slow box the task was cancelled after the last sample was
+    TAKEN but before the loop acted on it. Instead the call after the last
+    sample ends the task, which means every sample has been acted on."""
     samples = iter(settled_mb)
     seen: list[int] = []
     fired: list[int] = []
 
     def fake(previous: Counter | None = None):
-        mb = next(samples)
+        mb = next(samples, None)
+        if mb is None:
+            raise _SamplesExhausted
         seen.append(mb)
         return {"rss_kb": mb * 1024, "rss_kb_after_trim": mb * 1024}, Counter()
 
@@ -68,13 +80,8 @@ def _run_loop(monkeypatch, settled_mb: list[int], ceiling_mb: int) -> list[int]:
                 on_recycle=lambda: fired.append(len(seen)),
             )
         )
-        for _ in range(200):
-            if task.done() or len(seen) >= len(settled_mb):
-                break
-            await asyncio.sleep(0)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, StopIteration):
-            await task
+        with contextlib.suppress(_SamplesExhausted):
+            await asyncio.wait_for(task, timeout=10)
 
     asyncio.run(run())
     return fired
@@ -133,5 +140,4 @@ def test_a_supervised_worker_asks_its_parent_for_a_replacement(monkeypatch):
 
 def test_keeps_asking_if_the_replacement_never_comes(monkeypatch):
     # Two streaks of two over-ceiling samples: asked twice, not once and silent.
-    # (a trailing sample lets the fourth one be acted on before the helper stops)
-    assert _run_loop(monkeypatch, [310, 320, 330, 340, 100], 300) == [2, 4]
+    assert _run_loop(monkeypatch, [310, 320, 330, 340], 300) == [2, 4]
