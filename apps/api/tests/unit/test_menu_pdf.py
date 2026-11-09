@@ -403,3 +403,85 @@ def test_render_smoke_produces_pdf():
     except OSError:
         pytest.skip("Pango runtime libraries not installed")
     assert pdf[:5] == b"%PDF-"
+
+
+# ── page-break hints (template only, no WeasyPrint) ────────────────────────────
+
+
+def _plain_item(name):
+    return MenuItem(
+        name=name,
+        description=None,
+        image_url=None,
+        image_data_uri=None,
+        single_price="5",
+        price_prefix=None,
+        variants=[],
+        column_prices=None,
+        calories=None,
+    )
+
+
+def _doc_with(sections):
+    from app.services.catalog.menu_pdf.view_models import MenuDocument
+
+    return MenuDocument(
+        lang="en",
+        direction="ltr",
+        theme=DEFAULT_THEME,
+        brand_name="Test",
+        logo_url=None,
+        logo_data_uri=None,
+        title="Menu",
+        branch_name=None,
+        whatsapp_number=None,
+        whatsapp_url=None,
+        qr_svg=None,
+        sections=sections,
+    )
+
+
+def _item_classes(html):
+    import re
+
+    return re.findall(r'<div class="(item[^"]*)">', html)
+
+
+def test_sections_are_kept_whole_in_a_two_column_flow():
+    from app.services.catalog.menu_pdf.render import render_menu_html
+
+    html = render_menu_html(_doc_with([]))
+    assert "column-count: 2" in html
+    assert ".section { margin: 0 0 4.6mm 0; break-inside: avoid; }" in html
+
+
+def test_a_split_section_never_strands_a_lone_row():
+    """Head + first two rows stay together, the last two stay together, and the
+    last row is never glued to the next section."""
+    from app.services.catalog.menu_pdf.render import render_menu_html
+
+    items = [_plain_item(f"Drink {n}") for n in range(1, 7)]
+    section = MenuSection(
+        title="Drinks",
+        icon_key="drink",
+        blocks=[
+            MenuColumnBlock(columns=None, items=items[:4]),
+            MenuColumnBlock(columns=["M", "L"], items=items[4:]),
+        ],
+    )
+    classes = _item_classes(render_menu_html(_doc_with([section])))
+    keep = [("keep-next" in c) for c in classes]
+    # rows 1,2 keep with the next; row 5 keeps with row 6; row 6 (last) never.
+    assert keep == [True, False, False, False, True, False]
+
+
+def test_single_row_section_is_not_glued_to_the_next():
+    from app.services.catalog.menu_pdf.render import render_menu_html
+
+    one = MenuSection(
+        title="Extras",
+        icon_key="extras",
+        blocks=[MenuColumnBlock(columns=None, items=[_plain_item("Gift Card")])],
+    )
+    classes = _item_classes(render_menu_html(_doc_with([one])))
+    assert classes == ["item last"]
