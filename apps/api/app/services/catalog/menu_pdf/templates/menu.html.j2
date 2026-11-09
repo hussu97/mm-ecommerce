@@ -44,7 +44,7 @@
 
 @page {
   size: A4;
-  margin: 25mm 14mm 18mm 14mm;
+  margin: 21mm 11mm 16mm 11mm;
   background: var(--page-bg);
   @top-center { content: element(masthead); vertical-align: middle; }
   @bottom-center { content: element(contactbar); vertical-align: middle; }
@@ -56,8 +56,8 @@ body {
   margin: 0; padding: 0;
   color: var(--ink);
   font-family: var(--body);
-  font-size: 11pt;
-  line-height: 1.34;
+  font-size: 9.4pt;
+  line-height: 1.3;
   -weasy-hyphens: none;
 }
 
@@ -66,17 +66,17 @@ body {
   position: running(masthead);
   text-align: center; line-height: 1.06;
 }
-.masthead .logo { height: 17mm; width: auto; margin-bottom: 1.6mm; }
+.masthead .logo { height: 12.5mm; width: auto; margin-bottom: 1mm; }
 .masthead .logo.circle { border-radius: 50%; }
-.masthead .logo.rounded { border-radius: 2.4mm; }
+.masthead .logo.rounded { border-radius: 2mm; }
 .masthead .brand {
   font-family: var(--display); color: var(--ink);
-  font-size: 21pt; letter-spacing: .4px; display: block;
+  font-size: 18pt; letter-spacing: .4px; display: block;
 }
 .masthead .kicker {
-  font-family: var(--body); font-weight: 600; font-size: 7.8pt;
-  letter-spacing: 3.5px; text-transform: uppercase; color: var(--accent);
-  margin-top: 1.6mm;
+  font-family: var(--body); font-weight: 600; font-size: 7pt;
+  letter-spacing: 3.2px; text-transform: uppercase; color: var(--accent);
+  margin-top: 1mm;
 }
 .masthead .kicker .dot { opacity: .55; margin: 0 1.6mm; }
 
@@ -86,73 +86,87 @@ body {
   display: flex; align-items: center; justify-content: center;
   gap: 3mm; white-space: nowrap;
 }
-.contactbar .qr { width: 12.5mm; height: 12.5mm; flex: none; }
-.contactbar .qr svg { width: 12.5mm; height: 12.5mm; display: block; }
+.contactbar .qr { width: 11mm; height: 11mm; flex: none; }
+.contactbar .qr svg { width: 11mm; height: 11mm; display: block; }
 .contactbar .clabel {
-  font-weight: 600; font-size: 7.6pt; letter-spacing: 2px; text-transform: uppercase;
+  font-weight: 600; font-size: 7pt; letter-spacing: 2px; text-transform: uppercase;
   color: var(--accent); white-space: nowrap;
 }
-.contactbar .cnum { font-weight: 700; font-size: 12.5pt; color: var(--ink);
+.contactbar .cnum { font-weight: 700; font-size: 11.5pt; color: var(--ink);
   direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
 
-/* ── Sections ─────────────────────────────────────────────────────────── */
-.section { margin: 0 0 6mm 0; break-inside: auto; }
+/* ── Two-column flow ──────────────────────────────────────────────────────
+   A single A4-wide column left ~60% of every row empty between the name and
+   its price. Two columns halve the page count; each category is kept whole
+   (break-inside: avoid) so a section never strands an item on the next
+   column or page. A category taller than a whole column can't be kept whole —
+   then the head stays with its first two items and the last two stay together,
+   so a split never leaves a lone row behind. */
+.menu { column-count: 2; column-gap: 9mm; column-fill: auto; }
+.section { margin: 0 0 4.6mm 0; break-inside: avoid; }
 .section-head {
-  display: flex; align-items: center; gap: 2.6mm;
-  margin: 0 0 2.6mm 0; break-after: avoid;
+  display: flex; align-items: center; gap: 2mm;
+  margin: 0 0 1.4mm 0; break-after: avoid;
 }
 .section-head .ic { color: var(--accent); display: flex; align-items: center; }
+.section-head .ic svg { width: 4.2mm; height: 4.2mm; }
 .section-title {
   font-family: var(--display);
   {% if doc.theme.title_uses_display and doc.lang != 'ar' %}
-  font-size: 18pt; font-weight: 400; letter-spacing: .4px;
+  font-size: 14.5pt; font-weight: 400; letter-spacing: .4px;
   {% else %}
-  font-size: 14.5pt; font-weight: 700; letter-spacing: .2px;
+  font-size: 11.8pt; font-weight: 700; letter-spacing: .2px;
   {% endif %}
   color: var(--ink); white-space: nowrap;
   {% if doc.theme.uppercase_titles and doc.lang != 'ar' %}text-transform: uppercase;{% endif %}
 }
 .section-rule { flex: 1; height: 0; border-top: 0.8pt solid var(--hairline); }
-.colhead { display: flex; justify-content: flex-end; gap: 0; margin-bottom: 1.4mm; }
+.colhead { display: flex; justify-content: flex-end; align-items: flex-end; gap: 0;
+  margin: 0.4mm 0 0.4mm 0; break-after: avoid; }
+/* A size label wider than its cell ("6 Pieces") wraps onto two lines rather
+   than running into its neighbour. */
 .colhead .cell {
-  width: 16mm; text-align: center; font-weight: 600; font-size: 8.4pt;
-  letter-spacing: 1px; text-transform: uppercase; color: var(--accent);
+  width: 12.5mm; padding: 0 .5mm; text-align: center; font-weight: 600; font-size: 6.3pt;
+  line-height: 1.1; letter-spacing: .3px; text-transform: uppercase; color: var(--accent);
 }
 
-/* ── Items ────────────────────────────────────────────────────────────── */
+/* ── Items ──────────────────────────────────────────────────────────────
+   align-items: center lines the thumbnail and the price up with the middle of
+   the text, whether the row is a bare name or a name over a two-line
+   description (flex-start pinned the name to the top of the photo). */
 .item {
-  display: flex; align-items: flex-start; gap: 3.4mm;
-  padding: 2.1mm 0; break-inside: avoid;
+  display: flex; align-items: center; gap: 2.6mm;
+  padding: 1.25mm 0; break-inside: avoid;
   border-bottom: 0.4pt solid color-mix(in srgb, var(--hairline) 55%, transparent);
 }
-.item:last-child { border-bottom: 0; }
+.item.last { border-bottom: 0; }
+.item.keep-next { break-after: avoid; }
 .thumb {
-  width: 15mm; height: 15mm; border-radius: 50%; object-fit: cover;
-  border: 0.6pt solid var(--hairline); flex: none;
+  width: 11mm; height: 11mm; border-radius: 50%; object-fit: cover;
+  border: 0.5pt solid var(--hairline); flex: none;
   background: color-mix(in srgb, var(--panel-bg) 70%, white);
 }
 .item .body { flex: 1; min-width: 0; }
 .item .name {
-  font-weight: 600; font-size: 12pt; color: var(--ink); line-height: 1.2;
+  font-weight: 600; font-size: 9.6pt; color: var(--ink); line-height: 1.2;
 }
 .item .desc {
-  color: var(--muted); font-size: 9.6pt; font-style: italic; line-height: 1.3;
-  margin-top: .6mm;
+  color: var(--muted); font-size: 7.4pt; font-style: italic; line-height: 1.25;
+  margin-top: .3mm;
 }
-.item .chips { margin-top: 1.2mm; display: flex; flex-wrap: wrap; gap: 1.6mm 3.4mm; }
-.item .chip { font-size: 9.6pt; color: var(--ink); white-space: nowrap; }
+.item .chips { margin-top: .6mm; display: flex; flex-wrap: wrap; gap: 1mm 2.6mm; }
+.item .chip { font-size: 8pt; color: var(--ink); white-space: nowrap; }
 .item .chip b { font-weight: 700; }
-.item .chip .sz { color: var(--accent); font-weight: 600; margin-inline-end: 1mm;
-  font-size: 8.6pt; letter-spacing: .5px; text-transform: uppercase; }
+.item .chip .sz { color: var(--accent); font-weight: 600; margin-inline-end: .8mm;
+  font-size: 7pt; letter-spacing: .4px; text-transform: uppercase; }
 
-.item .price { flex: none; text-align: {{ 'left' if doc.direction == 'rtl' else 'right' }};
-  padding-top: .4mm; }
-.item .price .amt { font-weight: 700; font-size: 12.8pt; color: var(--price-ink); }
-.item .price .pfx { font-size: 8pt; color: var(--muted); font-weight: 500;
-  display: block; letter-spacing: .5px; }
+.item .price { flex: none; text-align: {{ 'left' if doc.direction == 'rtl' else 'right' }}; }
+.item .price .amt { font-weight: 700; font-size: 10.4pt; color: var(--price-ink); }
+.item .price .pfx { font-size: 6.6pt; color: var(--muted); font-weight: 500;
+  display: block; letter-spacing: .4px; }
 .item .cells { display: flex; justify-content: flex-end; }
-.item .cells .cell { width: 16mm; text-align: center; font-weight: 700;
-  font-size: 11.8pt; color: var(--price-ink); }
+.item .cells .cell { width: 12.5mm; text-align: center; font-weight: 700;
+  font-size: 9.6pt; color: var(--price-ink); }
 .item .cells .cell.empty { color: var(--hairline); font-weight: 400; }
 </style>
 </head>
@@ -175,7 +189,10 @@ body {
   {% endif %}
 </div>
 
+<div class="menu">
 {% for section in doc.sections %}
+{% set n_items = section.blocks|sum(attribute="items", start=[])|length %}
+{% set ns = namespace(i=0) %}
 <div class="section">
   <div class="section-head">
     <span class="ic">{{ icon(section.icon_key)|safe }}</span>
@@ -189,7 +206,8 @@ body {
   </div>
   {% endif %}
   {% for item in block.items %}
-  <div class="item">
+  {% set ns.i = ns.i + 1 %}
+  <div class="item{{ ' keep-next' if ns.i < n_items and (ns.i < 2 or ns.i == n_items - 1) else '' }}{{ ' last' if ns.i == n_items else '' }}">
     {% if item.image_data_uri %}<img class="thumb" src="{{ item.image_data_uri }}" alt="" />{% endif %}
     <div class="body">
       <div class="name">{{ item.name }}</div>
@@ -213,7 +231,7 @@ body {
       {# One price in a sized block: centre it across the whole grid so it
          stays inside the columns instead of floating past them. #}
       <div class="cells">
-        <span class="cell" style="width: {{ block.columns|length * 16 }}mm">{{ item.single_price }}</span>
+        <span class="cell" style="width: {{ block.columns|length * 12.5 }}mm">{{ item.single_price }}</span>
       </div>
       {% elif item.single_price %}
       {% if item.price_prefix %}<span class="pfx">{{ item.price_prefix }}</span>{% endif %}
@@ -225,6 +243,7 @@ body {
   {% endfor %}
 </div>
 {% endfor %}
+</div>
 
 </body>
 </html>

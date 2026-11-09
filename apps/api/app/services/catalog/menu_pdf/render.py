@@ -159,9 +159,13 @@ def _jinja_env():
     return env
 
 
+def render_menu_html(document: MenuDocument) -> str:
+    """The Jinja2 pass alone — the HTML WeasyPrint lays out."""
+    return _jinja_env().get_template("menu.html.j2").render(doc=document)
+
+
 def render_menu_pdf(document: MenuDocument) -> bytes:
     """Jinja2 → HTML → WeasyPrint → PDF bytes. Pure CPU; call in a thread."""
     from weasyprint import HTML
 
-    html = _jinja_env().get_template("menu.html.j2").render(doc=document)
-    return HTML(string=html, base_url=str(_HERE)).write_pdf()
+    return HTML(string=render_menu_html(document), base_url=str(_HERE)).write_pdf()
