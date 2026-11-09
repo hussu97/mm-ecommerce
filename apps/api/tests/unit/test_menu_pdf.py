@@ -485,3 +485,15 @@ def test_single_row_section_is_not_glued_to_the_next():
     )
     classes = _item_classes(render_menu_html(_doc_with([one])))
     assert classes == ["item last"]
+
+
+def test_group_members_load_in_arranged_order():
+    """The tree (and so the printed menu) lists a group's products in the
+    order set in the console, not heap order."""
+    from app.models.menu import MenuGroup
+
+    order_by = MenuGroup.members.property.order_by
+    assert [str(c) for c in order_by] == [
+        "menu_group_products.display_order",
+        "menu_group_products.product_id",
+    ]

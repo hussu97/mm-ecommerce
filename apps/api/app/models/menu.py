@@ -193,11 +193,16 @@ class MenuGroup(Base, UUIDMixin, TimestampMixin):
         foreign_keys="MenuGroup.parent_id",
     )
 
+    #: In the order arranged in the console. Without an explicit order_by the
+    #: selectin load returns rows in heap order, and the tree (admin + printed
+    #: menu) listed a group's products in whatever order Postgres happened to
+    #: return them — newly added items drifted to the bottom of the PDF.
     members: Mapped[list[MenuGroupProduct]] = relationship(
         "MenuGroupProduct",
         back_populates="group",
         cascade="all, delete-orphan",
         lazy="selectin",
+        order_by="(MenuGroupProduct.display_order, MenuGroupProduct.product_id)",
     )
 
     def __repr__(self) -> str:
