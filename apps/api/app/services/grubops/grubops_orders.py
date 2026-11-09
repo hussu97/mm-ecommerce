@@ -128,6 +128,17 @@ async def _ingest_one(db, summary: dict, order_map: GrubOpsOrderMap) -> bool:
     grubops_order_id = str(summary.get("orderId"))
 
     info = await provider.get_order(grubops_order_id)
+    if (
+        info is not None
+        and order_map.mm_order_id is None
+        and not grubops_orders_service.has_item_lines(info)
+    ):
+        # Served before its lines were attached. Creating from it files an order
+        # with no lines that no later version rewrites (AGG-20261107-086, a Talabat
+        # sale at Barsha with nothing on it). Wait for the lines exactly as for a
+        # detail that is not served yet — including the Foodics fallback after
+        # its grace. An order already made re-polls its status as before.
+        info = None
     if info is None:
         # GrubOps listed the order but `getOrderInfo` 404s. This used to return as
         # "handled", so an order GrubOps took 11 minutes to serve (AGG-20261004-027,

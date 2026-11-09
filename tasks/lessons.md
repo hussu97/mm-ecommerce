@@ -1539,3 +1539,14 @@ unit price counted the option twice (Careem/Talabat units already include it).
 **Rule:** when a stored order line explains a stock or money gap, check it
 against the channel's raw payload before proposing a cause. A line whose
 `unit_price × quantity ≠ total_price` is a parsing bug, not a menu question.
+
+### [2026-11-09] A one-time line backfill copies the channel's money, and checks lines against the subtotal
+
+On 2026-10-10 I wrote lines for four Karama Talabat orders that had been filed
+empty. The stock was right, so I called it done, but one order's two lines went
+in at AED 0 while Talabat's own items priced them 40 and 70. It surfaced a month
+later as an order whose lines summed to 0 against a 110 subtotal.
+
+**Rule:** a script that writes order lines takes the price from the channel's
+own line data, and its verification includes `sum(order_items.total_price) =
+orders.subtotal` for every order it touched, not only the stock it drew.

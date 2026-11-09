@@ -1231,7 +1231,7 @@ async def test_the_flag_clears_when_the_detail_finally_arrives():
     order_map = GrubOpsOrderMap(
         grubops_order_id=_SUMMARY["orderId"], last_push_error=DETAIL_UNAVAILABLE
     )
-    info = {"orderHeader": {"orderStatus": "OrderStarted"}}
+    info = {"orderHeader": {"orderStatus": "OrderStarted"}, "orderLines": [_ITEM]}
     fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=info))
     ingest = AsyncMock()
     with (
@@ -1242,6 +1242,62 @@ async def test_the_flag_clears_when_the_detail_finally_arrives():
 
     assert order_map.last_push_error is None
     ingest.assert_awaited_once_with(None, info, order_map)
+
+
+_ITEM = {"type": "ITEM", "name": "Nutella Cookie Melt (250 grams)", "unitPrice": 40}
+
+
+@pytest.mark.asyncio
+async def test_a_detail_served_before_its_lines_waits_instead_of_creating(monkeypatch):
+    """AGG-20261107-086: GrubOps served the detail a second after placement with
+    no lines, and the order was filed empty forever. An unmade order now waits
+    for its lines as for a missing detail, then ingests once they arrive."""
+    monkeypatch.setattr(
+        loop.grubops_foodics_fallback,
+        "build_from_foodics",
+        AsyncMock(return_value=None),
+    )
+    order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
+    empty = {"orderHeader": {"orderStatus": "OrderStarted"}, "orderLines": []}
+    full = {**empty, "orderLines": [_ITEM]}
+    fake_provider = SimpleNamespace(get_order=AsyncMock(side_effect=[empty, full]))
+    ingest = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", ingest),
+    ):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is False
+        assert order_map.last_push_error == DETAIL_UNAVAILABLE
+        ingest.assert_not_awaited()
+
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is True
+
+    assert order_map.last_push_error is None
+    ingest.assert_awaited_once_with(None, full, order_map)
+
+
+@pytest.mark.asyncio
+async def test_a_made_order_with_a_lineless_detail_still_mirrors_its_status():
+    order_map = GrubOpsOrderMap(
+        grubops_order_id=_SUMMARY["orderId"], mm_order_id=uuid.uuid4()
+    )
+    info = {"orderHeader": {"orderStatus": "OrderCompleted"}, "orderLines": []}
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=info))
+    ingest = AsyncMock()
+    with (
+        patch.object(loop, "provider", fake_provider),
+        patch.object(loop.grubops_orders_service, "ingest", ingest),
+    ):
+        assert await loop._ingest_one(None, _SUMMARY, order_map) is True
+    ingest.assert_awaited_once_with(None, info, order_map)
+
+
+def test_only_an_item_row_counts_as_a_line():
+    has = loop.grubops_orders_service.has_item_lines
+    assert has({"orderLines": [_ITEM]})
+    assert not has({"orderLines": [{"type": "MODIFIER", "name": "3 Pieces"}]})
+    assert not has({"orderLines": None})
+    assert not has({})
 
 
 @pytest.mark.asyncio
@@ -1337,7 +1393,7 @@ async def test_a_foodics_built_order_follows_its_listing_while_detail_is_withhel
 @pytest.mark.asyncio
 async def test_a_served_order_never_touches_foodics():
     order_map = GrubOpsOrderMap(grubops_order_id=_SUMMARY["orderId"])
-    info = {"orderHeader": {"orderStatus": "OrderStarted"}}
+    info = {"orderHeader": {"orderStatus": "OrderStarted"}, "orderLines": [_ITEM]}
     fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=info))
     build = AsyncMock()
     with (

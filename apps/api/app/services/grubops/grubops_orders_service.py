@@ -454,6 +454,15 @@ def _as_uuid(value: Any) -> uuid.UUID | None:
         return None
 
 
+def has_item_lines(info: dict) -> bool:
+    """Whether a GrubOps detail carries at least one sold item yet.
+
+    GrubOps can serve an order's detail a beat before its lines are attached;
+    an order created from that detail has no lines, and lines are only written
+    at creation (AGG-20261107-086)."""
+    return bool(_group_lines(info.get("orderLines") or []))
+
+
 def _group_lines(order_lines: list[dict]) -> list[dict]:
     """Walk the flat line list into items each carrying their modifiers.
 
