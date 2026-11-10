@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import private_documents as storage
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.search import contains
 from app.models.employee import (
     EMPLOYEE_DOCUMENT_SPECS,
     Employee,
@@ -96,13 +97,13 @@ async def list_employees(
     if status:
         stmt = stmt.where(Employee.status == status)
     if search and search.strip():
-        like = f"%{search.strip()}%"
+        term = search.strip()
         stmt = stmt.where(
             or_(
-                Employee.full_name.ilike(like),
-                Employee.full_name_ar.ilike(like),
-                Employee.personal_number.ilike(like),
-                Employee.job_title.ilike(like),
+                contains(Employee.full_name, term),
+                contains(Employee.full_name_ar, term),
+                contains(Employee.personal_number, term),
+                contains(Employee.job_title, term),
             )
         )
     return list((await db.execute(stmt)).scalars().all())

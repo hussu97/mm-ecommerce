@@ -106,6 +106,8 @@ class Employee(Base, UUIDMixin, TimestampMixin):
             "gender IS NULL OR gender IN ('M', 'F')", name="ck_employees_gender"
         ),
         Index("ix_employees_status", "status"),
+        Index("ix_employees_legal_entity", "legal_entity_id"),
+        Index("ix_employees_branch", "branch_id"),
     )
 
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)

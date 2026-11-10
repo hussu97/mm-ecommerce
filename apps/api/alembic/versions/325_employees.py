@@ -101,6 +101,8 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_employees_status", "employees", ["status"])
+    op.create_index("ix_employees_legal_entity", "employees", ["legal_entity_id"])
+    op.create_index("ix_employees_branch", "employees", ["branch_id"])
 
     op.create_table(
         "employee_documents",
