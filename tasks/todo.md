@@ -1,3 +1,35 @@
+# Test suite: flakes + speed (pre-push, pr-check, deploy) — 2026-11-10
+
+## Baseline (measured)
+- CI deploy.yml, api-only push: ~12 min wall. Test API 578s (pytest 513s),
+  deploy-gcp 117s (VM script 97s: backup 25s, api cutover 29s, pos-api 21s,
+  git+pull 13s, migrate 6s), deploy-web +208s after deploy-gcp.
+- In CI `test_replenishment_forecast.py` alone = ~308s of the 513s.
+- Local (11 cores, PG17): full suite serial 237s; replenishment 121s of it.
+- Pre-push: frontend tsc/lint/vitest + full serial pytest.
+
+## Root causes / flakes
+- [ ] replenishment facts built over every branch x produced good left active by
+      earlier tests (144 x 52 after a full run) — scope `_build` to the file's
+      own world. 121s -> 19s on a polluted DB.
+- [ ] Shared mutable test DB: rows accumulate across runs (5461 had 190k rows)
+      and across files (last-admin guard, VAT sums). Per-worker DB cloned from
+      the migrated template at session start (`tests/conftest.py`).
+- [ ] Order-dependence hunt: randomised + xdist runs, fix what surfaces.
+- [ ] next/font/google network fetch at build -> next/font/local (woff2
+      committed, OFL), drop `scripts/retry-build.sh` from builds.
+- (already fixed on main: live_baskets clock dc64017a, memory_telemetry loop de7ff8b4)
+
+## Speed
+- [ ] pytest `-n 4 --dist loadfile` in deploy.yml test-api + pr-check (keep only if measured faster)
+- [ ] pre-push: changed-path gating, web/admin in parallel, pytest -n auto, uv-sync venv if missing (no silent skip)
+- [ ] deploy-web/admin: lint/test/tsc in a verify job off the critical path
+- [ ] deploy-gcp: skip pre-migration pg_dump when DB already at image head (owner OK'd 2026-11-10; nightly cron remains); drop redundant buildx setup
+
+## Verify
+- [ ] Full suite green serial + xdist, 3 randomised runs; before/after timings
+- [ ] PR: pr-check timings vs baseline; deploy.yml measured after merge (owner go-ahead)
+
 # MM-20261031-003: two couriers for one order; P&L redo double count
 
 ## Incident (2026-10-31, Barsha → International City)
