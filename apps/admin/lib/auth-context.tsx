@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { authApi, ApiError } from './api';
 import { canAccessConsole } from './nav';
+import { resetExpiryReminder } from './expiry-reminder';
 import type { User } from './types';
 
 interface AuthContextType {
@@ -33,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!canAccessConsole(res.user)) {
       throw new ApiError(403, 'You do not have console access.');
     }
+    resetExpiryReminder();
     setUser(res.user);
   }, []);
 
@@ -41,11 +43,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!canAccessConsole(res.user)) {
       throw new ApiError(403, 'You do not have console access.');
     }
+    resetExpiryReminder();
     setUser(res.user);
   }, []);
 
   const logout = useCallback(() => {
     authApi.logout();
+    resetExpiryReminder();
     setUser(null);
   }, []);
 

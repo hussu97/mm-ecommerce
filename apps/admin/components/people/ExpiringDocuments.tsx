@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { complianceApi, type ExpiringDocument } from '@/lib/people-api';
+import { dismissExpiryReminder, isExpiryReminderDismissed } from '@/lib/expiry-reminder';
 import { Badge, Button } from '@/components/ui';
 import { Modal } from '@/components/pos/ResourcePage';
 import { formatDate } from '@/components/pos/LegalEntityPaperwork';
@@ -21,8 +22,6 @@ import { formatDate } from '@/components/pos/LegalEntityPaperwork';
 
 /** The owner's lead time, in days. */
 export const EXPIRY_WARNING_DAYS = 15;
-const DISMISSED_KEY = 'mm.expiringDocuments.dismissed';
-
 type ExpiringState = {
   items: ExpiringDocument[];
   refresh: () => void;
@@ -32,22 +31,6 @@ const ExpiringContext = createContext<ExpiringState>({ items: [], refresh: () =>
 
 export function useExpiringDocuments(): ExpiringState {
   return useContext(ExpiringContext);
-}
-
-function readDismissed(): boolean {
-  try {
-    return window.sessionStorage.getItem(DISMISSED_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeDismissed() {
-  try {
-    window.sessionStorage.setItem(DISMISSED_KEY, '1');
-  } catch {
-    // Storage blocked (private mode): the popup simply shows again next load.
-  }
 }
 
 export function ExpiringDocumentsProvider({
@@ -66,7 +49,7 @@ export function ExpiringDocumentsProvider({
       try {
         const res = await complianceApi.expiringDocuments(EXPIRY_WARNING_DAYS);
         setItems(res.items);
-        if (initial && res.items.length > 0 && !readDismissed()) setOpen(true);
+        if (initial && res.items.length > 0 && !isExpiryReminderDismissed()) setOpen(true);
       } catch {
         // A warning that fails to load must not break the console.
       }
@@ -81,7 +64,7 @@ export function ExpiringDocumentsProvider({
   const value = useMemo(() => ({ items, refresh: () => void load(false) }), [items, load]);
 
   function dismiss() {
-    writeDismissed();
+    dismissExpiryReminder();
     setOpen(false);
   }
 

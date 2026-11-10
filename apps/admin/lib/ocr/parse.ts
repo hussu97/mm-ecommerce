@@ -606,9 +606,44 @@ export type TradeLicenseFields = {
   /** A key of the API's TRADE_LICENSE_AUTHORITIES, when recognised. */
   issuing_authority?: string;
   emirate?: string;
+  /** A key of the API's TRADE_LICENSE_TYPES (commercial, professional, …). */
+  license_type?: string;
+  /** The legal form, spelled as the shop records it. */
+  legal_form?: string;
   legal_name?: string;
   warnings: string[];
 };
+
+/** The licence's title ("Trading License", "Commercial License") → its type.
+ *  Sharjah calls a commercial licence a trading licence. */
+const LICENSE_TYPES: Array<[RegExp, string]> = [
+  [/\b(?:Trading|Commercial)\s+Licen[cs]e\b/i, 'commercial'],
+  [/\bProfessional\s+Licen[cs]e\b/i, 'professional'],
+  [/\bIndustrial\s+Licen[cs]e\b/i, 'industrial'],
+  [/\bTouris[mt]\s+Licen[cs]e\b/i, 'tourism'],
+  [/\bCrafts?\s+Licen[cs]e\b/i, 'crafts'],
+  [/\bAgricultur(?:al|e)\s+Licen[cs]e\b/i, 'agricultural'],
+  [/\be-?Trader\s+Licen[cs]e\b/i, 'e_trader'],
+  [/\bFreelance(?:r)?\s+(?:Licen[cs]e|Permit)\b/i, 'freelance'],
+];
+
+/** UAE legal forms, most specific first, matched in the English text wherever
+ *  the layout puts them (SEDD: beside "Legal status"; DET: a line above "Legal
+ *  Type"), and returned in the shop's spelling. */
+const LEGAL_FORMS: Array<[RegExp, string]> = [
+  [/Limited\s+Liability\s+Company\s*-?\s*Single\s+Owner/i, 'Limited Liability Company - Single Owner (LLC - SO)'],
+  [/Limited\s+Liability\s+Company/i, 'Limited Liability Company (LLC)'],
+  [/Services?\s+Agency/i, 'Services Agency'],
+  [/Sole\s+Establishment/i, 'Sole Establishment'],
+  [/Sole\s+Proprietorship/i, 'Sole Proprietorship'],
+  [/Civil\s+Company/i, 'Civil Company'],
+  [/Branch\s+of\s+(?:a\s+)?GCC\s+Company/i, 'Branch of a GCC Company'],
+  [/Branch\s+of\s+(?:a\s+)?Foreign\s+Company/i, 'Branch of a Foreign Company'],
+  [/Free\s+Zone\s+Establishment|\bFZE\b/i, 'Free Zone Establishment (FZE)'],
+  [/Free\s+Zone\s+(?:Limited\s+Liability\s+)?Company|\bFZ-?LLC\b|\bFZCO\b/i, 'Free Zone Company'],
+  [/Private\s+Joint\s+Stock/i, 'Private Joint Stock Company'],
+  [/Public\s+Joint\s+Stock/i, 'Public Joint Stock Company'],
+];
 
 const LICENSE_AUTHORITIES: Array<[RegExp, string, string]> = [
   [/Sharjah\s*Economic|SEDD|Economic\s*Development\s*Department.*Sharjah/i, 'sharjah_sedd', 'Sharjah'],
@@ -643,6 +678,8 @@ export function parseTradeLicense(raw: string): TradeLicenseFields {
   out.issue_date = issue;
   out.expiry_date = expiry;
   if (guessed) out.warnings.push('Expiry date guessed as the latest date on the licence.');
+  out.license_type = LICENSE_TYPES.find(([re]) => re.test(text))?.[1];
+  out.legal_form = LEGAL_FORMS.find(([re]) => re.test(text))?.[1];
   for (const [re, key, emirate] of LICENSE_AUTHORITIES) {
     if (re.test(text)) {
       out.issuing_authority = key;

@@ -429,6 +429,9 @@ function LicenseForm({
         registration_number: read.registration_number ?? prev.registration_number,
         issuing_authority: known && read.issuing_authority ? read.issuing_authority : prev.issuing_authority,
         emirate: (known && read.emirate) || prev.emirate,
+        license_type:
+          read.license_type && read.license_type in TRADE_LICENSE_TYPE_LABELS ? read.license_type : prev.license_type,
+        legal_form: read.legal_form ?? prev.legal_form,
         issue_date: read.issue_date ?? prev.issue_date,
         expiry_date: read.expiry_date ?? prev.expiry_date,
       }));

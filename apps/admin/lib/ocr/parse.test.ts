@@ -202,6 +202,7 @@ describe('trade licence', () => {
         'ﺭﻗﻢ ﺍﻟﺮﺧﺼﺔ 02-11-2020 Issue Date   ﺗﺎﺭﻳﺦ ﺍﻹﺻﺪﺍﺭ   License No.   778179',
         'Expiry Date   02-11-2027   ﺗﺎﺭﻳﺦ ﺍﻹﻧﺘﻬﺎﺀ   193868 Registration No.   ﺭﻗﻢ ﺍﻟﺴﺠﻞ',
         'To view license details please visit SEDD web site: www.sedd.ae',
+        'ﻭﻛﻴﻞ ﺧﺪﻣﺎﺕ Services Agency   ﺍﻟﺸﻜﻞ ﺍﻟﻘﺎﻧﻮﻧﻲ Legal status',
         'ﺗﺎﺭﻳﺦ ﺍﻟﻄﺒﺎﻋﺔ 30-10-2026   : Printing Date / 4 1',
       ].join('\n'),
     );
@@ -212,6 +213,8 @@ describe('trade licence', () => {
       expiry_date: '2027-11-02',
       issuing_authority: 'sharjah_sedd',
       emirate: 'Sharjah',
+      license_type: 'commercial',
+      legal_form: 'Services Agency',
       warnings: [],
     });
   });
@@ -222,6 +225,7 @@ describe('trade licence', () => {
         'Commercial License',
         'License No.   1081755',
         'Issue Date   تاريخ الصدار تاريخ النتهاء Expiry Date',
+        'Limited Liability Company - Single Owner(LLC - SO)',
         '18/07/2027   19/07/2022',
         'DCCI No.   عضوية الغرفة Register No.   486122 1764353   رقم السجل التجارى',
         'Print Date   11:20 21/07/2026   تاريخ الطباعة',
@@ -234,6 +238,8 @@ describe('trade licence', () => {
       expiry_date: '2027-07-18',
       issuing_authority: 'dubai_det',
       emirate: 'Dubai',
+      license_type: 'commercial',
+      legal_form: 'Limited Liability Company - Single Owner (LLC - SO)',
     });
     expect(out.registration_number).toBeUndefined();
   });
