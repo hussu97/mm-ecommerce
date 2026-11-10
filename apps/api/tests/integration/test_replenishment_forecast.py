@@ -299,16 +299,37 @@ async def world(maker):
         await db.commit()
 
 
-async def _build(maker, days: int = 22) -> None:
+async def _build(maker, world, days: int = 22) -> None:
+    """Build the facts for this test's two branches and its cookie only.
+
+    `build_day` writes one row per active branch x produced good, so on a
+    shared database it was building — and the forecast then reading — every
+    branch and produced good any earlier test had left active: 144 branches x
+    52 goods by the time this file ran in a full suite. That made the six tests
+    here 121s locally and ~300s of the 513s CI pytest step, against 6s on an
+    empty database, and grew with every test added before them. Scoping the
+    context is not a shortcut around the code under test: the per-branch,
+    per-item build is the same code path, just over the world this file owns.
+    """
     async with maker() as db:
         ctx = await facts.load_context(db)
+        mine = {world["source"].id, world["dest"].id}
+        ctx = dataclasses.replace(
+            ctx,
+            branches=[b for b in ctx.branches if b.id in mine],
+            items={
+                item_id: category
+                for item_id, category in ctx.items.items()
+                if item_id == world["cookie"].id
+            },
+        )
         for offset in range(days, 0, -1):
             await facts.build_day(db, TODAY - timedelta(days=offset), ctx)
         await db.commit()
 
 
 async def test_facts_count_sales_by_hour_and_replay_the_stock_out(maker, world):
-    await _build(maker)
+    await _build(maker, world)
     async with maker() as db:
         rows = {
             (row.branch_id, row.business_date): row
@@ -347,7 +368,7 @@ async def test_the_form_endpoint_answers_for_every_branch_and_production(maker, 
     from app.core.deps import get_current_active_user, get_db
     from app.main import app
 
-    await _build(maker)
+    await _build(maker, world)
 
     async def override_get_db():
         async with maker() as session:
@@ -386,7 +407,7 @@ async def test_the_form_endpoint_answers_for_every_branch_and_production(maker, 
 async def test_snapshot_is_unlinked_and_evaluation_matches_actuals_by_date(
     maker, world
 ):
-    await _build(maker)
+    await _build(maker, world)
     source, dest, cookie = world["source"], world["dest"], world["cookie"]
     day = TODAY - timedelta(days=2)
     async with maker() as db:
@@ -463,7 +484,7 @@ async def test_yesterdays_production_rows_do_not_keep_yesterday_pending(maker, w
     """Yesterday's production rows are scored only once today is evaluated, so
     they must not make `tick` re-evaluate yesterday on every pass (it reloaded
     56 days of facts every ten minutes until the rollover)."""
-    await _build(maker)
+    await _build(maker, world)
     source = world["source"]
     yesterday = TODAY - timedelta(days=1)
     async with maker() as db:
@@ -530,7 +551,7 @@ async def test_column_facts_and_threaded_engine_match_the_orm_path(maker, world)
     """The endpoint's speed-up (column select, engine in a thread) changes no
     output: the old path — ORM-entity facts, engine on the loop — over the same
     seeded world gives the identical response, field for field."""
-    await _build(maker)
+    await _build(maker, world)
     as_of = datetime.now(timezone.utc)
     source = world["source"].id
     async with maker() as db:
@@ -568,7 +589,7 @@ async def test_column_facts_and_threaded_engine_match_the_orm_path(maker, world)
 async def test_the_form_forecast_is_reused_per_branch_settings_and_bucket(
     maker, world, monkeypatch
 ):
-    await _build(maker)
+    await _build(maker, world)
     source, dest = world["source"].id, world["dest"].id
     # One second into the current 10-minute bucket.
     bucket_start = int(datetime.now(timezone.utc).timestamp()) // 600 * 600
