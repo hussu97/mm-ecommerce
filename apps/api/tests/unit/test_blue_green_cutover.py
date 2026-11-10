@@ -336,9 +336,14 @@ def test_deploy_web_runs_after_the_api_cutover_not_during_it():
     text = DEPLOY_YML.read_text()
     idx = text.find("deploy-web:")
     block = text[idx : idx + 2200]
-    assert "needs: [changes, test-api, deploy-gcp]" in block, (
+    needs = _needs(block)
+    assert {"changes", "test-api", "deploy-gcp"} <= needs, (
         "deploy-web must depend on deploy-gcp so its build runs after cutover"
     )
+    # Its lint/test/type-check run beforehand in verify-web, off the critical
+    # path — and must still gate the deploy.
+    assert "verify-web" in needs
+    assert "needs.verify-web.result == 'success'" in block
     # Runs on a web-only push (api unchanged ⇒ deploy-gcp skipped) OR only once
     # a changed API has actually deployed.
     assert "needs.changes.outputs.api == 'false'" in block
@@ -347,10 +352,17 @@ def test_deploy_web_runs_after_the_api_cutover_not_during_it():
     # time, so serialising it behind the cutover would only slow it down.
     admin_idx = text.find("deploy-admin:")
     admin_block = text[admin_idx : admin_idx + 2200]
-    assert "needs: [changes, test-api]" in admin_block, (
-        "deploy-admin should still depend only on [changes, test-api]"
+    assert _needs(admin_block) == {"changes", "verify-admin", "test-api"}, (
+        "deploy-admin should depend only on [changes, verify-admin, test-api]"
     )
+    assert "needs.verify-admin.result == 'success'" in admin_block
     assert "deploy-gcp" not in admin_block
+
+
+def _needs(block: str) -> set[str]:
+    match = re.search(r"^\s*needs: \[([^\]]*)\]", block, re.M)
+    assert match, "job has no `needs: [...]` line"
+    return {name.strip() for name in match.group(1).split(",")}
 
 
 def test_deploy_yml_checks_shared_types_freshness():
@@ -443,3 +455,20 @@ def test_rollback_rolls_back_web_and_admin_on_vercel():
         "a failed vercel rollback must not fail the whole job — the API/DB "
         "rollback above it is the part that must not be skipped"
     )
+
+
+def test_deploy_backs_up_before_any_migration_and_skips_only_on_proof():
+    """The pre-migration dump is skipped only when the database is provably
+    already at the image's head. Every other outcome — a pending migration, an
+    unreadable revision, a branched history that makes `get_current_head()`
+    raise — must take the backup, and the backup must precede the migration."""
+    text = DEPLOY_YML.read_text()
+    backup_at = text.find("bash scripts/backup-db.sh")
+    migrate_at = text.find("alembic upgrade head < /dev/null")
+    assert backup_at != -1 and migrate_at != -1
+    assert backup_at < migrate_at, "backup must run before the migration"
+    assert "get_current_head()" in text
+    # The only skip condition: a non-empty DB revision equal to the image head.
+    assert '[ -n "$DB_REV" ] && [ "$DB_REV" = "$IMAGE_HEAD" ]' in text
+    skip_branch = text[text.find('[ "$DB_REV" = "$IMAGE_HEAD" ]') : backup_at]
+    assert "else" in skip_branch, "the backup must be the else-branch default"
