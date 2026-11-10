@@ -19720,6 +19720,19 @@
             ],
             "title": "Logo Url"
           },
+          "peppol_id": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "pattern": "^[0-9]{4}:[A-Za-z0-9.\\-]{1,46}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peppol Id"
+          },
           "reference": {
             "maxLength": 50,
             "minLength": 1,
@@ -19762,22 +19775,66 @@
             ],
             "title": "Tax Number"
           },
-          "trade_license_number": {
+          "vat_effective_date": {
             "anyOf": [
               {
-                "maxLength": 100,
+                "format": "date",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Trade License Number"
+            "title": "Vat Effective Date"
+          },
+          "vat_emirate": {
+            "anyOf": [
+              {
+                "enum": [
+                  "Abu Dhabi",
+                  "Dubai",
+                  "Sharjah",
+                  "Ajman",
+                  "Umm Al Quwain",
+                  "Ras Al Khaimah",
+                  "Fujairah"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Emirate"
+          },
+          "vat_issuing_authority": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Issuing Authority"
           },
           "vat_registered": {
             "default": true,
             "title": "Vat Registered",
             "type": "boolean"
+          },
+          "vat_tin": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{10}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Tin"
           }
         },
         "required": [
@@ -19786,6 +19843,31 @@
           "brand_name"
         ],
         "title": "LegalEntityCreate",
+        "type": "object"
+      },
+      "LegalEntityDocumentUrl": {
+        "description": "A short-lived signed URL to one legal-entity document in the private bucket.",
+        "properties": {
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "LegalEntityDocumentUrl",
         "type": "object"
       },
       "LegalEntityResponse": {
@@ -19831,6 +19913,11 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "has_vat_certificate": {
+            "default": false,
+            "title": "Has Vat Certificate",
+            "type": "boolean"
           },
           "iban": {
             "anyOf": [
@@ -19885,6 +19972,17 @@
             ],
             "title": "Logo Url"
           },
+          "peppol_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peppol Id"
+          },
           "reference": {
             "title": "Reference",
             "type": "string"
@@ -19922,6 +20020,18 @@
             ],
             "title": "Tax Number"
           },
+          "trade_license_expiry": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Expiry"
+          },
           "trade_license_number": {
             "anyOf": [
               {
@@ -19938,9 +20048,65 @@
             "title": "Updated At",
             "type": "string"
           },
+          "vat_certificate_content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Certificate Content Type"
+          },
+          "vat_effective_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Effective Date"
+          },
+          "vat_emirate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Emirate"
+          },
+          "vat_issuing_authority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Issuing Authority"
+          },
           "vat_registered": {
             "title": "Vat Registered",
             "type": "boolean"
+          },
+          "vat_tin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Tin"
           }
         },
         "required": [
@@ -19961,6 +20127,7 @@
         "type": "object"
       },
       "LegalEntityUpdate": {
+        "description": "Every field optional. The trade-licence number/expiry are not here: they\nmirror the current licence cycle, edited under `/trade-licenses`.",
         "properties": {
           "bank_account_name": {
             "anyOf": [
@@ -20087,6 +20254,19 @@
             ],
             "title": "Logo Url"
           },
+          "peppol_id": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "pattern": "^[0-9]{4}:[A-Za-z0-9.\\-]{1,46}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peppol Id"
+          },
           "registered_address": {
             "anyOf": [
               {
@@ -20123,17 +20303,49 @@
             ],
             "title": "Tax Number"
           },
-          "trade_license_number": {
+          "vat_effective_date": {
             "anyOf": [
               {
-                "maxLength": 100,
+                "format": "date",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Trade License Number"
+            "title": "Vat Effective Date"
+          },
+          "vat_emirate": {
+            "anyOf": [
+              {
+                "enum": [
+                  "Abu Dhabi",
+                  "Dubai",
+                  "Sharjah",
+                  "Ajman",
+                  "Umm Al Quwain",
+                  "Ras Al Khaimah",
+                  "Fujairah"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Emirate"
+          },
+          "vat_issuing_authority": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Issuing Authority"
           },
           "vat_registered": {
             "anyOf": [
@@ -20145,6 +20357,18 @@
               }
             ],
             "title": "Vat Registered"
+          },
+          "vat_tin": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{10}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Tin"
           }
         },
         "title": "LegalEntityUpdate",
@@ -41645,6 +41869,372 @@
           "label"
         ],
         "title": "TradeLicenseAuthorityOption",
+        "type": "object"
+      },
+      "TradeLicenseCreate": {
+        "properties": {
+          "emirate": {
+            "enum": [
+              "Abu Dhabi",
+              "Dubai",
+              "Sharjah",
+              "Ajman",
+              "Umm Al Quwain",
+              "Ras Al Khaimah",
+              "Fujairah"
+            ],
+            "title": "Emirate",
+            "type": "string"
+          },
+          "expiry_date": {
+            "format": "date",
+            "title": "Expiry Date",
+            "type": "string"
+          },
+          "issue_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Date"
+          },
+          "issuing_authority": {
+            "enum": [
+              "dubai_det",
+              "dmcc",
+              "jafza",
+              "dafz",
+              "dso",
+              "difc",
+              "dda",
+              "dubai_south",
+              "ifza",
+              "meydan",
+              "dhcc",
+              "dwtc",
+              "dubai_commercity",
+              "dubai_maritime",
+              "abu_dhabi_ded",
+              "adgm",
+              "kezad",
+              "twofour54",
+              "masdar",
+              "adafz",
+              "sharjah_sedd",
+              "saif_zone",
+              "hamriyah",
+              "shams",
+              "spc",
+              "srtip",
+              "sharjah_healthcare",
+              "ajman_ded",
+              "ajman_free_zone",
+              "ajman_media_city",
+              "uaq_ded",
+              "uaq_ftz",
+              "rak_ded",
+              "rakez",
+              "fujairah_ded",
+              "fujairah_free_zone",
+              "creative_city",
+              "other"
+            ],
+            "title": "Issuing Authority",
+            "type": "string"
+          },
+          "license_number": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "License Number",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "registration_number": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registration Number"
+          }
+        },
+        "required": [
+          "license_number",
+          "issuing_authority",
+          "emirate",
+          "expiry_date"
+        ],
+        "title": "TradeLicenseCreate",
+        "type": "object"
+      },
+      "TradeLicenseResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "document_content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Content Type"
+          },
+          "emirate": {
+            "title": "Emirate",
+            "type": "string"
+          },
+          "expiry_date": {
+            "format": "date",
+            "title": "Expiry Date",
+            "type": "string"
+          },
+          "has_document": {
+            "title": "Has Document",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_current": {
+            "default": false,
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "issue_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Date"
+          },
+          "issuing_authority": {
+            "title": "Issuing Authority",
+            "type": "string"
+          },
+          "legal_entity_id": {
+            "format": "uuid",
+            "title": "Legal Entity Id",
+            "type": "string"
+          },
+          "license_number": {
+            "title": "License Number",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "registration_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registration Number"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "legal_entity_id",
+          "license_number",
+          "registration_number",
+          "issuing_authority",
+          "emirate",
+          "issue_date",
+          "expiry_date",
+          "notes",
+          "has_document",
+          "document_content_type",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TradeLicenseResponse",
+        "type": "object"
+      },
+      "TradeLicenseUpdate": {
+        "properties": {
+          "emirate": {
+            "anyOf": [
+              {
+                "enum": [
+                  "Abu Dhabi",
+                  "Dubai",
+                  "Sharjah",
+                  "Ajman",
+                  "Umm Al Quwain",
+                  "Ras Al Khaimah",
+                  "Fujairah"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emirate"
+          },
+          "expiry_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Date"
+          },
+          "issue_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Date"
+          },
+          "issuing_authority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dubai_det",
+                  "dmcc",
+                  "jafza",
+                  "dafz",
+                  "dso",
+                  "difc",
+                  "dda",
+                  "dubai_south",
+                  "ifza",
+                  "meydan",
+                  "dhcc",
+                  "dwtc",
+                  "dubai_commercity",
+                  "dubai_maritime",
+                  "abu_dhabi_ded",
+                  "adgm",
+                  "kezad",
+                  "twofour54",
+                  "masdar",
+                  "adafz",
+                  "sharjah_sedd",
+                  "saif_zone",
+                  "hamriyah",
+                  "shams",
+                  "spc",
+                  "srtip",
+                  "sharjah_healthcare",
+                  "ajman_ded",
+                  "ajman_free_zone",
+                  "ajman_media_city",
+                  "uaq_ded",
+                  "uaq_ftz",
+                  "rak_ded",
+                  "rakez",
+                  "fujairah_ded",
+                  "fujairah_free_zone",
+                  "creative_city",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issuing Authority"
+          },
+          "license_number": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License Number"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "registration_number": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registration Number"
+          }
+        },
+        "title": "TradeLicenseUpdate",
         "type": "object"
       },
       "TrafficData": {
@@ -63711,6 +64301,547 @@
           }
         ],
         "summary": "Create Item",
+        "tags": [
+          "Legal Entities"
+        ]
+      }
+    },
+    "/api/v1/legal-entities/{entity_id}/trade-licenses": {
+      "get": {
+        "description": "Every issue\u2192expiry cycle of the entity's trade licence, newest first.",
+        "operationId": "list_trade_licenses_api_v1_legal_entities__entity_id__trade_licenses_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TradeLicenseResponse"
+                  },
+                  "title": "Response List Trade Licenses Api V1 Legal Entities  Entity Id  Trade Licenses Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Trade Licenses",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "post": {
+        "description": "Record a licence cycle (a renewal adds a new one; earlier ones are kept).",
+        "operationId": "create_trade_license_api_v1_legal_entities__entity_id__trade_licenses_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeLicenseCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeLicenseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Trade License",
+        "tags": [
+          "Legal Entities"
+        ]
+      }
+    },
+    "/api/v1/legal-entities/{entity_id}/trade-licenses/{license_id}": {
+      "delete": {
+        "description": "Remove a cycle recorded by mistake, and its document.",
+        "operationId": "delete_trade_license_api_v1_legal_entities__entity_id__trade_licenses__license_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "license_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "License Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Trade License",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "patch": {
+        "operationId": "update_trade_license_api_v1_legal_entities__entity_id__trade_licenses__license_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "license_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "License Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeLicenseUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeLicenseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Trade License",
+        "tags": [
+          "Legal Entities"
+        ]
+      }
+    },
+    "/api/v1/legal-entities/{entity_id}/trade-licenses/{license_id}/document": {
+      "delete": {
+        "operationId": "delete_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "license_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "License Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeLicenseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Trade License Document",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "get": {
+        "description": "A short-lived signed URL to view or download this cycle's licence.",
+        "operationId": "get_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "license_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "License Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityDocumentUrl"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Trade License Document",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "post": {
+        "description": "Attach this cycle's licence scan. The body is the raw file bytes (JPEG,\nPNG, WebP or PDF, max 10 MB); the type comes from the request header.",
+        "operationId": "upload_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "license_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "License Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeLicenseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upload Trade License Document",
+        "tags": [
+          "Legal Entities"
+        ]
+      }
+    },
+    "/api/v1/legal-entities/{entity_id}/vat-certificate": {
+      "delete": {
+        "operationId": "delete_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Vat Certificate",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "get": {
+        "operationId": "get_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityDocumentUrl"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Vat Certificate",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "post": {
+        "description": "Attach the FTA VAT registration certificate, replacing any earlier one.",
+        "operationId": "upload_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upload Vat Certificate",
         "tags": [
           "Legal Entities"
         ]

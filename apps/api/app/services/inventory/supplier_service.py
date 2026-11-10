@@ -289,15 +289,9 @@ async def set_supplier_items(
 #: ``<kind>_content_type`` column pair on ``Supplier``.
 DOCUMENT_KINDS = ("trn_certificate", "trade_license")
 
-_DOCUMENT_EXT = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "application/pdf": ".pdf",
-}
+_DOCUMENT_EXT = object_storage.PRIVATE_DOCUMENT_EXT
 
-#: Same ceiling as a purchase-order invoice: a scan or PDF, not an archive.
-DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
+DOCUMENT_MAX_BYTES = object_storage.PRIVATE_DOCUMENT_MAX_BYTES
 
 _DOCUMENT_LABEL = {
     "trn_certificate": "VAT (TRN) certificate",

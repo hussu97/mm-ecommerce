@@ -152,7 +152,7 @@ from .inventory_v2 import (  # noqa: F401
 )
 from .kitchen_flow import KitchenFlow, KitchenFlowCategory  # noqa: F401
 from .language import Language, UiTranslation  # noqa: F401
-from .legal_entity import LegalEntity  # noqa: F401
+from .legal_entity import LegalEntity, LegalEntityTradeLicense  # noqa: F401
 from .marketing import (  # noqa: F401
     Promotion,
     PromotionRewardEnum,
@@ -332,6 +332,7 @@ __all__ = [
     "BranchTypeEnum",
     "ChannelClassEnum",
     "LegalEntity",
+    "LegalEntityTradeLicense",
     "Role",
     "UserBranch",
     "ALL_PERMISSIONS",

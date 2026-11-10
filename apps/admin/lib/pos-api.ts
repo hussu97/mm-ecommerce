@@ -10,7 +10,8 @@ import type { Schemas } from '@mm/types';
 import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, BusinessSettingsUpdate, Charge, Device, DrawerOperation,
   BranchChannelTaxConfig, BranchChannelTaxConfigsWrite,
-  LegalEntity, LegalEntityWrite,
+  LegalEntity, LegalEntityDocumentUrl, LegalEntityUpdate, LegalEntityWrite,
+  TradeLicense, TradeLicenseUpdate, TradeLicenseWrite,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   KitchenFlow, PaymentMethod,
   PermissionCatalogue, Printer, ProducibleItemBasis, ProductionOrder, ProductionOrderCreate, ProductionOrderSummary,
@@ -149,6 +150,38 @@ export const legalEntitiesApi = {
   update: (id: string, d: Partial<LegalEntityWrite>) =>
     api.put<LegalEntity>(`/legal-entities/${id}`, d),
   remove: (id: string) => api.delete<void>(`/legal-entities/${id}`),
+  /** VAT / e-invoicing details only — a partial update of the entity. */
+  updateVat: (id: string, d: LegalEntityUpdate) => api.put<LegalEntity>(`/legal-entities/${id}`, d),
+
+  // Trade-licence history — every issue→expiry cycle, newest first.
+  tradeLicenses: (id: string) => api.get<TradeLicense[]>(`/legal-entities/${id}/trade-licenses`),
+  createTradeLicense: (id: string, d: TradeLicenseWrite) =>
+    api.post<TradeLicense>(`/legal-entities/${id}/trade-licenses`, d),
+  updateTradeLicense: (id: string, licenseId: string, d: TradeLicenseUpdate) =>
+    api.patch<TradeLicense>(`/legal-entities/${id}/trade-licenses/${licenseId}`, d),
+  removeTradeLicense: (id: string, licenseId: string) =>
+    api.delete<void>(`/legal-entities/${id}/trade-licenses/${licenseId}`),
+  /** Raw bytes to the private bucket; signed on view, never public. */
+  uploadTradeLicenseDocument: (id: string, licenseId: string, file: File) =>
+    request<TradeLicense>(`/legal-entities/${id}/trade-licenses/${licenseId}/document`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    }),
+  tradeLicenseDocumentUrl: (id: string, licenseId: string) =>
+    api.get<LegalEntityDocumentUrl>(`/legal-entities/${id}/trade-licenses/${licenseId}/document`),
+  removeTradeLicenseDocument: (id: string, licenseId: string) =>
+    api.delete<TradeLicense>(`/legal-entities/${id}/trade-licenses/${licenseId}/document`),
+
+  uploadVatCertificate: (id: string, file: File) =>
+    request<LegalEntity>(`/legal-entities/${id}/vat-certificate`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    }),
+  vatCertificateUrl: (id: string) =>
+    api.get<LegalEntityDocumentUrl>(`/legal-entities/${id}/vat-certificate`),
+  removeVatCertificate: (id: string) => api.delete<LegalEntity>(`/legal-entities/${id}/vat-certificate`),
 };
 
 export const paymentMethodsApi = {

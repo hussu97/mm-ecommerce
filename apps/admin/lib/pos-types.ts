@@ -132,6 +132,13 @@ export type ChannelClass = 'counter' | 'website' | 'aggregator';
 export type LegalEntity = Schemas['LegalEntityResponse'];
 
 export type LegalEntityWrite = Schemas['LegalEntityCreate'];
+export type LegalEntityUpdate = Schemas['LegalEntityUpdate'];
+/** One issue→expiry cycle of an entity's trade licence (the history is kept). */
+export type TradeLicense = Schemas['TradeLicenseResponse'];
+export type TradeLicenseWrite = Schemas['TradeLicenseCreate'];
+export type TradeLicenseUpdate = Schemas['TradeLicenseUpdate'];
+export type LegalEntityDocumentUrl = Schemas['LegalEntityDocumentUrl'];
+export type Emirate = TradeLicenseWrite['emirate'];
 
 /**
  * Which legal entity a (branch, sales channel) trades under. A branch can trade

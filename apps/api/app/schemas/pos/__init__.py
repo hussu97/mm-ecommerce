@@ -46,9 +46,13 @@ from .devices import (
 from .kitchen_flows import KitchenFlowCreate, KitchenFlowResponse, KitchenFlowUpdate
 from .legal_entity import (
     LegalEntityCreate,
+    LegalEntityDocumentUrl,
     LegalEntityResponse,
     LegalEntityUpdate,
     OrderLegalEntity,
+    TradeLicenseCreate,
+    TradeLicenseResponse,
+    TradeLicenseUpdate,
 )
 from .payment_methods import (
     PaymentMethodCreate,
@@ -102,6 +106,10 @@ __all__ = [
     "BranchChannelTaxConfigsUpdate",
     "BranchChannelTaxConfigUpsert",
     "LegalEntityCreate",
+    "LegalEntityDocumentUrl",
+    "TradeLicenseCreate",
+    "TradeLicenseResponse",
+    "TradeLicenseUpdate",
     "LegalEntityResponse",
     "LegalEntityUpdate",
     "OrderLegalEntity",

@@ -61,6 +61,7 @@ from .inventory_v2 import (
     pos_recipes_router,
 )
 from .item_mappings import router as item_mappings_router
+from .legal_entity_documents import router as legal_entity_documents_router
 from .marketing import (
     pos_promotions_router,
     promotion_usage_router,
@@ -181,6 +182,9 @@ api_router.include_router(taxes_router, prefix="/taxes", tags=["Taxes"])
 api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Taxes"])
 api_router.include_router(
     legal_entities_router, prefix="/legal-entities", tags=["Legal Entities"]
+)
+api_router.include_router(
+    legal_entity_documents_router, prefix="/legal-entities", tags=["Legal Entities"]
 )
 api_router.include_router(
     payment_methods_router, prefix="/payment-methods", tags=["Payment Methods"]

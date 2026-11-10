@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import Image from 'next/image';
 import { legalEntitiesApi } from '@/lib/pos-api';
 import type { LegalEntity } from '@/lib/pos-types';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
+import { RowAction } from '@/components/ui/DataTable';
+import { ExpiryBadge, LegalEntityPaperwork } from '@/components/pos/LegalEntityPaperwork';
 
 /**
  * The trade licences orders are booked under. Melting Moments trades under two:
@@ -42,6 +44,7 @@ function withCcList(d: Record<string, unknown>): Record<string, unknown> {
 
 export default function LegalEntitiesTab() {
   const load = useCallback(() => legalEntitiesApi.list(), []);
+  const [openId, setOpenId] = useState<string | null>(null);
   return (
     <ResourcePage<LegalEntity>
       title="Legal entities"
@@ -81,6 +84,22 @@ export default function LegalEntitiesTab() {
           sortAccessor: (e) => (e.vat_registered ? 'Registered' : 'Not registered'),
           render: (e) => (e.vat_registered ? `TRN ${e.tax_number ?? '—'}` : 'Not registered'),
         },
+        {
+          header: 'Trade licence',
+          sortable: true,
+          sortAccessor: (e) => e.trade_license_expiry ?? '',
+          render: (e) =>
+            e.trade_license_number ? (
+              <span className="flex flex-col">
+                <span className="font-mono">{e.trade_license_number}</span>
+                <span className="text-xs text-gray-500">
+                  Expires <ExpiryBadge expiry={e.trade_license_expiry} />
+                </span>
+              </span>
+            ) : (
+              <span className="text-gray-400">—</span>
+            ),
+        },
         { header: 'Invoice title', render: (e) => e.invoice_title },
         {
           header: 'Status',
@@ -89,6 +108,14 @@ export default function LegalEntitiesTab() {
           render: (e) => <StatusBadge active={e.is_active} />,
         },
       ]}
+      rowActions={(e) => (
+        <RowAction icon="description" onClick={() => setOpenId(openId === e.id ? null : e.id)}>
+          {openId === e.id ? 'Close' : 'Licences & VAT'}
+        </RowAction>
+      )}
+      expandedRow={(e, reload) =>
+        openId === e.id ? <LegalEntityPaperwork entity={e} onChanged={reload} /> : null
+      }
       fields={[
         { name: 'reference', label: 'Reference (slug, e.g. fatema)', required: true },
         { name: 'legal_name', label: 'Legal name (trade licence holder)', required: true },
@@ -96,7 +123,6 @@ export default function LegalEntitiesTab() {
         { name: 'vat_registered', label: 'VAT-registered', type: 'checkbox' },
         { name: 'tax_number', label: 'TRN (blank if not registered)' },
         { name: 'invoice_title', label: 'Invoice title (e.g. Tax Invoice / Invoice)', required: true },
-        { name: 'trade_license_number', label: 'Trade licence number (optional)' },
         {
           name: 'logo_url',
           label: 'Logo',

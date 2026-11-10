@@ -5586,6 +5586,99 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/legal-entities/{entity_id}/trade-licenses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Trade Licenses
+         * @description Every issue→expiry cycle of the entity's trade licence, newest first.
+         */
+        get: operations["list_trade_licenses_api_v1_legal_entities__entity_id__trade_licenses_get"];
+        put?: never;
+        /**
+         * Create Trade License
+         * @description Record a licence cycle (a renewal adds a new one; earlier ones are kept).
+         */
+        post: operations["create_trade_license_api_v1_legal_entities__entity_id__trade_licenses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/trade-licenses/{license_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Trade License
+         * @description Remove a cycle recorded by mistake, and its document.
+         */
+        delete: operations["delete_trade_license_api_v1_legal_entities__entity_id__trade_licenses__license_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Trade License */
+        patch: operations["update_trade_license_api_v1_legal_entities__entity_id__trade_licenses__license_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/trade-licenses/{license_id}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trade License Document
+         * @description A short-lived signed URL to view or download this cycle's licence.
+         */
+        get: operations["get_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_get"];
+        put?: never;
+        /**
+         * Upload Trade License Document
+         * @description Attach this cycle's licence scan. The body is the raw file bytes (JPEG,
+         *     PNG, WebP or PDF, max 10 MB); the type comes from the request header.
+         */
+        post: operations["upload_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_post"];
+        /** Delete Trade License Document */
+        delete: operations["delete_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/vat-certificate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Vat Certificate */
+        get: operations["get_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_get"];
+        put?: never;
+        /**
+         * Upload Vat Certificate
+         * @description Attach the FTA VAT registration certificate, replacing any earlier one.
+         */
+        post: operations["upload_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_post"];
+        /** Delete Vat Certificate */
+        delete: operations["delete_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/legal-entities/{item_id}": {
         parameters: {
             query?: never;
@@ -16615,6 +16708,8 @@ export interface components {
             legal_name: string;
             /** Logo Url */
             logo_url?: string | null;
+            /** Peppol Id */
+            peppol_id?: string | null;
             /** Reference */
             reference: string;
             /** Registered Address */
@@ -16623,13 +16718,29 @@ export interface components {
             swift_code?: string | null;
             /** Tax Number */
             tax_number?: string | null;
-            /** Trade License Number */
-            trade_license_number?: string | null;
+            /** Vat Effective Date */
+            vat_effective_date?: string | null;
+            /** Vat Emirate */
+            vat_emirate?: ("Abu Dhabi" | "Dubai" | "Sharjah" | "Ajman" | "Umm Al Quwain" | "Ras Al Khaimah" | "Fujairah") | null;
+            /** Vat Issuing Authority */
+            vat_issuing_authority?: string | null;
             /**
              * Vat Registered
              * @default true
              */
             vat_registered: boolean;
+            /** Vat Tin */
+            vat_tin?: string | null;
+        };
+        /**
+         * LegalEntityDocumentUrl
+         * @description A short-lived signed URL to one legal-entity document in the private bucket.
+         */
+        LegalEntityDocumentUrl: {
+            /** Content Type */
+            content_type?: string | null;
+            /** Url */
+            url: string;
         };
         /** LegalEntityResponse */
         LegalEntityResponse: {
@@ -16646,6 +16757,11 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Has Vat Certificate
+             * @default false
+             */
+            has_vat_certificate: boolean;
             /** Iban */
             iban?: string | null;
             /**
@@ -16663,6 +16779,8 @@ export interface components {
             legal_name: string;
             /** Logo Url */
             logo_url: string | null;
+            /** Peppol Id */
+            peppol_id?: string | null;
             /** Reference */
             reference: string;
             /** Registered Address */
@@ -16671,6 +16789,8 @@ export interface components {
             swift_code?: string | null;
             /** Tax Number */
             tax_number: string | null;
+            /** Trade License Expiry */
+            trade_license_expiry?: string | null;
             /** Trade License Number */
             trade_license_number: string | null;
             /**
@@ -16678,10 +16798,24 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Vat Certificate Content Type */
+            vat_certificate_content_type?: string | null;
+            /** Vat Effective Date */
+            vat_effective_date?: string | null;
+            /** Vat Emirate */
+            vat_emirate?: string | null;
+            /** Vat Issuing Authority */
+            vat_issuing_authority?: string | null;
             /** Vat Registered */
             vat_registered: boolean;
+            /** Vat Tin */
+            vat_tin?: string | null;
         };
-        /** LegalEntityUpdate */
+        /**
+         * LegalEntityUpdate
+         * @description Every field optional. The trade-licence number/expiry are not here: they
+         *     mirror the current licence cycle, edited under `/trade-licenses`.
+         */
         LegalEntityUpdate: {
             /** Bank Account Name */
             bank_account_name?: string | null;
@@ -16703,16 +16837,24 @@ export interface components {
             legal_name?: string | null;
             /** Logo Url */
             logo_url?: string | null;
+            /** Peppol Id */
+            peppol_id?: string | null;
             /** Registered Address */
             registered_address?: string | null;
             /** Swift Code */
             swift_code?: string | null;
             /** Tax Number */
             tax_number?: string | null;
-            /** Trade License Number */
-            trade_license_number?: string | null;
+            /** Vat Effective Date */
+            vat_effective_date?: string | null;
+            /** Vat Emirate */
+            vat_emirate?: ("Abu Dhabi" | "Dubai" | "Sharjah" | "Ajman" | "Umm Al Quwain" | "Ras Al Khaimah" | "Fujairah") | null;
+            /** Vat Issuing Authority */
+            vat_issuing_authority?: string | null;
             /** Vat Registered */
             vat_registered?: boolean | null;
+            /** Vat Tin */
+            vat_tin?: string | null;
         };
         /**
          * LiveCart
@@ -24051,6 +24193,98 @@ export interface components {
             code: "dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other";
             /** Label */
             label: string;
+        };
+        /** TradeLicenseCreate */
+        TradeLicenseCreate: {
+            /**
+             * Emirate
+             * @enum {string}
+             */
+            emirate: "Abu Dhabi" | "Dubai" | "Sharjah" | "Ajman" | "Umm Al Quwain" | "Ras Al Khaimah" | "Fujairah";
+            /**
+             * Expiry Date
+             * Format: date
+             */
+            expiry_date: string;
+            /** Issue Date */
+            issue_date?: string | null;
+            /**
+             * Issuing Authority
+             * @enum {string}
+             */
+            issuing_authority: "dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other";
+            /** License Number */
+            license_number: string;
+            /** Notes */
+            notes?: string | null;
+            /** Registration Number */
+            registration_number?: string | null;
+        };
+        /** TradeLicenseResponse */
+        TradeLicenseResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Document Content Type */
+            document_content_type: string | null;
+            /** Emirate */
+            emirate: string;
+            /**
+             * Expiry Date
+             * Format: date
+             */
+            expiry_date: string;
+            /** Has Document */
+            has_document: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Is Current
+             * @default false
+             */
+            is_current: boolean;
+            /** Issue Date */
+            issue_date: string | null;
+            /** Issuing Authority */
+            issuing_authority: string;
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
+            /** License Number */
+            license_number: string;
+            /** Notes */
+            notes: string | null;
+            /** Registration Number */
+            registration_number: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** TradeLicenseUpdate */
+        TradeLicenseUpdate: {
+            /** Emirate */
+            emirate?: ("Abu Dhabi" | "Dubai" | "Sharjah" | "Ajman" | "Umm Al Quwain" | "Ras Al Khaimah" | "Fujairah") | null;
+            /** Expiry Date */
+            expiry_date?: string | null;
+            /** Issue Date */
+            issue_date?: string | null;
+            /** Issuing Authority */
+            issuing_authority?: ("dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other") | null;
+            /** License Number */
+            license_number?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Registration Number */
+            registration_number?: string | null;
         };
         /** TrafficData */
         TrafficData: {
@@ -35759,6 +35993,327 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_trade_licenses_api_v1_legal_entities__entity_id__trade_licenses_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeLicenseResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_trade_license_api_v1_legal_entities__entity_id__trade_licenses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TradeLicenseCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeLicenseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_trade_license_api_v1_legal_entities__entity_id__trade_licenses__license_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                license_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_trade_license_api_v1_legal_entities__entity_id__trade_licenses__license_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                license_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TradeLicenseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeLicenseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                license_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                license_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeLicenseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_trade_license_document_api_v1_legal_entities__entity_id__trade_licenses__license_id__document_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                license_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeLicenseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_vat_certificate_api_v1_legal_entities__entity_id__vat_certificate_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
