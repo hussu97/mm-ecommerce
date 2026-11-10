@@ -33,6 +33,7 @@ SUBPACKAGES = {
     "inventory",
     "orders",
     "payments",
+    "people",
     "pos",
     "providers",
 }

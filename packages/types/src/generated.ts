@@ -2726,6 +2726,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/compliance/expiring-documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Expiring Documents
+         * @description Active employees' current visa / labour card / OHC and active legal
+         *     entities' current trade licence that expire within *within_days* days (or
+         *     already have), soonest first.
+         */
+        get: operations["expiring_documents_api_v1_compliance_expiring_documents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/custom-orders/enquiry": {
         parameters: {
             query?: never;
@@ -3443,6 +3465,160 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Employees
+         * @description Employees with each document type's current cycle. A handful of rows
+         *     (one shop's staff), so not paginated.
+         */
+        get: operations["list_employees_api_v1_employees_get"];
+        put?: never;
+        /** Create Employee */
+        post: operations["create_employee_api_v1_employees_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/document-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Types
+         * @description The document types, their labels and type-specific fields, in order.
+         */
+        get: operations["document_types_api_v1_employees_document_types_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Employee
+         * @description The employee and every cycle of every document, newest first per type.
+         */
+        get: operations["get_employee_api_v1_employees__employee_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Employee
+         * @description Remove an employee entered by mistake, with every document and scan.
+         *     Someone who has left is marked `left` instead, which keeps the history.
+         */
+        delete: operations["delete_employee_api_v1_employees__employee_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Employee */
+        patch: operations["update_employee_api_v1_employees__employee_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Document
+         * @description Record a document cycle. A renewal adds a new one; earlier ones are kept.
+         */
+        post: operations["create_document_api_v1_employees__employee_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Document
+         * @description Remove a cycle recorded by mistake, and its scan.
+         */
+        delete: operations["delete_document_api_v1_employees__employee_id__documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Document */
+        patch: operations["update_document_api_v1_employees__employee_id__documents__document_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}/documents/{document_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document File */
+        get: operations["get_document_file_api_v1_employees__employee_id__documents__document_id__file_get"];
+        put?: never;
+        /**
+         * Upload Document File
+         * @description Attach this cycle's scan. The body is the raw file bytes (JPEG, PNG,
+         *     WebP or PDF, max 10 MB); the type comes from the request header.
+         */
+        post: operations["upload_document_file_api_v1_employees__employee_id__documents__document_id__file_post"];
+        /** Delete Document File */
+        delete: operations["delete_document_file_api_v1_employees__employee_id__documents__document_id__file_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}/photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Photo */
+        get: operations["get_photo_api_v1_employees__employee_id__photo_get"];
+        put?: never;
+        /**
+         * Upload Photo
+         * @description The body is the raw image bytes (JPEG, PNG or WebP, max 10 MB).
+         */
+        post: operations["upload_photo_api_v1_employees__employee_id__photo_post"];
+        /** Delete Photo */
+        delete: operations["delete_photo_api_v1_employees__employee_id__photo_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -15001,6 +15177,288 @@ export interface components {
             /** Value */
             value: string;
         };
+        /** EmployeeCreate */
+        EmployeeCreate: {
+            /** Branch Id */
+            branch_id?: string | null;
+            /** Date Of Birth */
+            date_of_birth?: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Full Name Ar */
+            full_name_ar?: string | null;
+            /** Gender */
+            gender?: ("M" | "F") | null;
+            /** Job Title */
+            job_title?: string | null;
+            /** Joined On */
+            joined_on?: string | null;
+            /** Left On */
+            left_on?: string | null;
+            /** Legal Entity Id */
+            legal_entity_id?: string | null;
+            /** Nationality */
+            nationality?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Personal Number */
+            personal_number?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /**
+             * Status
+             * @default active
+             * @enum {string}
+             */
+            status: "active" | "left";
+        };
+        /** EmployeeDocumentCreate */
+        EmployeeDocumentCreate: {
+            /**
+             * Details
+             * @default {}
+             */
+            details: {
+                [key: string]: string | null;
+            };
+            /**
+             * Doc Type
+             * @enum {string}
+             */
+            doc_type: "passport" | "visa" | "labour_card" | "ohc";
+            /** Document Number */
+            document_number?: string | null;
+            /**
+             * Expiry Date
+             * Format: date
+             */
+            expiry_date: string;
+            /** Issue Date */
+            issue_date?: string | null;
+            /** Issuing Authority */
+            issuing_authority?: string | null;
+            /** Notes */
+            notes?: string | null;
+        };
+        /** EmployeeDocumentResponse */
+        EmployeeDocumentResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Details */
+            details: {
+                [key: string]: string;
+            };
+            /** Doc Type */
+            doc_type: string;
+            /** Document Number */
+            document_number: string | null;
+            /**
+             * Employee Id
+             * Format: uuid
+             */
+            employee_id: string;
+            /**
+             * Expiry Date
+             * Format: date
+             */
+            expiry_date: string;
+            /** File Content Type */
+            file_content_type: string | null;
+            /** Has File */
+            has_file: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Is Current
+             * @default false
+             */
+            is_current: boolean;
+            /** Issue Date */
+            issue_date: string | null;
+            /** Issuing Authority */
+            issuing_authority: string | null;
+            /** Notes */
+            notes: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * EmployeeDocumentSummary
+         * @description The current cycle of one document type, for the list's columns.
+         */
+        EmployeeDocumentSummary: {
+            /** Doc Type */
+            doc_type: string;
+            /** Document Number */
+            document_number: string | null;
+            /**
+             * Expiry Date
+             * Format: date
+             */
+            expiry_date: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** EmployeeDocumentTypeSpec */
+        EmployeeDocumentTypeSpec: {
+            /** Details */
+            details: {
+                [key: string]: string;
+            };
+            /** Doc Type */
+            doc_type: string;
+            /** Expiry Tracked */
+            expiry_tracked: boolean;
+            /** Label */
+            label: string;
+            /** Number Label */
+            number_label: string;
+        };
+        /**
+         * EmployeeDocumentUpdate
+         * @description `doc_type` is fixed once created; the key check runs in the service.
+         */
+        EmployeeDocumentUpdate: {
+            /** Details */
+            details?: {
+                [key: string]: string | null;
+            } | null;
+            /** Document Number */
+            document_number?: string | null;
+            /** Expiry Date */
+            expiry_date?: string | null;
+            /** Issue Date */
+            issue_date?: string | null;
+            /** Issuing Authority */
+            issuing_authority?: string | null;
+            /** Notes */
+            notes?: string | null;
+        };
+        /** EmployeeListItem */
+        EmployeeListItem: {
+            /** Branch Id */
+            branch_id: string | null;
+            /**
+             * Current Documents
+             * @default {}
+             */
+            current_documents: {
+                [key: string]: components["schemas"]["EmployeeDocumentSummary"];
+            };
+            /** Full Name */
+            full_name: string;
+            /** Has Photo */
+            has_photo: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Job Title */
+            job_title: string | null;
+            /** Legal Entity Id */
+            legal_entity_id: string | null;
+            /** Nationality */
+            nationality: string | null;
+            /** Status */
+            status: string;
+        };
+        /** EmployeeResponse */
+        EmployeeResponse: {
+            /** Branch Id */
+            branch_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Date Of Birth */
+            date_of_birth: string | null;
+            /**
+             * Documents
+             * @default []
+             */
+            documents: components["schemas"]["EmployeeDocumentResponse"][];
+            /** Full Name */
+            full_name: string;
+            /** Full Name Ar */
+            full_name_ar: string | null;
+            /** Gender */
+            gender: string | null;
+            /** Has Photo */
+            has_photo: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Job Title */
+            job_title: string | null;
+            /** Joined On */
+            joined_on: string | null;
+            /** Left On */
+            left_on: string | null;
+            /** Legal Entity Id */
+            legal_entity_id: string | null;
+            /** Nationality */
+            nationality: string | null;
+            /** Notes */
+            notes: string | null;
+            /** Personal Number */
+            personal_number: string | null;
+            /** Phone */
+            phone: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** EmployeeUpdate */
+        EmployeeUpdate: {
+            /** Branch Id */
+            branch_id?: string | null;
+            /** Date Of Birth */
+            date_of_birth?: string | null;
+            /** Full Name */
+            full_name?: string | null;
+            /** Full Name Ar */
+            full_name_ar?: string | null;
+            /** Gender */
+            gender?: ("M" | "F") | null;
+            /** Job Title */
+            job_title?: string | null;
+            /** Joined On */
+            joined_on?: string | null;
+            /** Left On */
+            left_on?: string | null;
+            /** Legal Entity Id */
+            legal_entity_id?: string | null;
+            /** Nationality */
+            nationality?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Personal Number */
+            personal_number?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Status */
+            status?: ("active" | "left") | null;
+        };
         /**
          * EventCount
          * @description One custom event from `apps/web/lib/analytics.ts`, and how often it fired.
@@ -15028,6 +15486,49 @@ export interface components {
             quantity: string;
             /** Recipe Version Ids */
             recipe_version_ids: string[];
+        };
+        /**
+         * ExpiringDocument
+         * @description A current document that lapses within the warning window (or has).
+         */
+        ExpiringDocument: {
+            /** Days Left */
+            days_left: number;
+            /** Doc Label */
+            doc_label: string;
+            /** Doc Type */
+            doc_type: string;
+            /** Document Number */
+            document_number: string | null;
+            /**
+             * Expiry Date
+             * Format: date
+             */
+            expiry_date: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /**
+             * Owner Kind
+             * @enum {string}
+             */
+            owner_kind: "employee" | "legal_entity";
+            /** Owner Name */
+            owner_name: string;
+        };
+        /** ExpiringDocumentsResponse */
+        ExpiringDocumentsResponse: {
+            /** Items */
+            items: components["schemas"]["ExpiringDocument"][];
+            /**
+             * Today
+             * Format: date
+             */
+            today: string;
+            /** Within Days */
+            within_days: number;
         };
         /**
          * ForecastAccuracy
@@ -23049,6 +23550,11 @@ export interface components {
             /** Transaction Id */
             transaction_id: string | null;
         };
+        /** SignedDocumentUrl */
+        SignedDocumentUrl: {
+            /** Url */
+            url: string;
+        };
         /** SourceEventRetryResponse */
         SourceEventRetryResponse: {
             /** Error Code */
@@ -30411,6 +30917,37 @@ export interface operations {
             };
         };
     };
+    expiring_documents_api_v1_compliance_expiring_documents_get: {
+        parameters: {
+            query?: {
+                within_days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExpiringDocumentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     submit_enquiry_api_v1_custom_orders_enquiry_post: {
         parameters: {
             query?: never;
@@ -31537,6 +32074,476 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EmailTemplateOption"][];
+                };
+            };
+        };
+    };
+    list_employees_api_v1_employees_get: {
+        parameters: {
+            query?: {
+                status?: "active" | "left" | "all";
+                search?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeListItem"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_employee_api_v1_employees_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmployeeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_types_api_v1_employees_document_types_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeDocumentTypeSpec"][];
+                };
+            };
+        };
+    };
+    get_employee_api_v1_employees__employee_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_employee_api_v1_employees__employee_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_employee_api_v1_employees__employee_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmployeeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_document_api_v1_employees__employee_id__documents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmployeeDocumentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_document_api_v1_employees__employee_id__documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_document_api_v1_employees__employee_id__documents__document_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmployeeDocumentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_document_file_api_v1_employees__employee_id__documents__document_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_document_file_api_v1_employees__employee_id__documents__document_id__file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_document_file_api_v1_employees__employee_id__documents__document_id__file_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_photo_api_v1_employees__employee_id__photo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_photo_api_v1_employees__employee_id__photo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_photo_api_v1_employees__employee_id__photo_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

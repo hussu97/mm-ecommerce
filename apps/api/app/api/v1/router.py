@@ -15,6 +15,7 @@ from .cart import router as cart_router
 from .catalog_sync import router as catalog_sync_router
 from .categories import router as categories_router
 from .cms import router as cms_router
+from .compliance import router as compliance_router
 from .custom_order_enquiries import (
     admin_router as custom_order_enquiries_admin_router,
 )
@@ -28,6 +29,7 @@ from .delivery_zones import router as delivery_zones_router
 from .devices import printers_router
 from .devices import router as devices_router
 from .email_logs import router as email_logs_router
+from .employees import router as employees_router
 from .export_data import router as export_router
 from .grubops import router as grubops_router
 from .i18n import router as i18n_router
@@ -186,6 +188,9 @@ api_router.include_router(
 api_router.include_router(
     legal_entity_documents_router, prefix="/legal-entities", tags=["Legal Entities"]
 )
+# Super-admin only (staff identity documents + the expiring-paperwork warning).
+api_router.include_router(employees_router, prefix="/employees", tags=["Employees"])
+api_router.include_router(compliance_router, prefix="/compliance", tags=["Employees"])
 api_router.include_router(
     payment_methods_router, prefix="/payment-methods", tags=["Payment Methods"]
 )

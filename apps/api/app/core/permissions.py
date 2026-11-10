@@ -32,7 +32,19 @@ from app.core.deps import get_current_active_user
 from app.core.exceptions import ForbiddenError
 from app.models.user import User
 
-__all__ = ["assert_no_escalation", "ensure", "require", "require_any"]
+__all__ = [
+    "SUPERADMIN",
+    "assert_no_escalation",
+    "ensure",
+    "require",
+    "require_any",
+    "require_superadmin",
+]
+
+#: The stamp `require_superadmin` carries in place of a slug. It is not in
+#: `ALL_PERMISSIONS`, so no role can be granted it: only `User.is_superadmin`
+#: (the console-admin flag, or a role flagged super-admin) passes.
+SUPERADMIN = "superadmin"
 
 
 def ensure(user: User, permission: str, *, message: str | None = None) -> None:
@@ -95,6 +107,26 @@ def require_any(
     # carries the full set for anything that wants it.
     _check.permission = permissions[0]  # type: ignore[attr-defined]
     _check.permissions = permissions  # type: ignore[attr-defined]
+    return _check
+
+
+def require_superadmin(*, message: str | None = None) -> Callable[..., Awaitable[User]]:
+    """A dependency that admits only a super-admin.
+
+    For data the owner wants kept above every delegable permission — staff
+    passports, visas and labour cards, which no role may be granted access to,
+    however broad. A slug could be added to some role by anyone holding
+    `admin.users.manage`; `is_superadmin` can only be set by an admin
+    (`assert_no_escalation`).
+    """
+
+    async def _check(user: User = Depends(get_current_active_user)) -> User:
+        if not user.is_superadmin:
+            raise ForbiddenError(message or "Only a super-admin can do this")
+        return user
+
+    # Same stamp `require` leaves, so the route-authenticator guard sees it.
+    _check.permission = SUPERADMIN  # type: ignore[attr-defined]
     return _check
 
 

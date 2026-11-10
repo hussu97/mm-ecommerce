@@ -1,0 +1,205 @@
+"""Employees and their right-to-work paperwork (super-admin only).
+
+An *employee* is a person the shop employs, whatever they do — not a console or
+till account (that is a `User`). Most employees never sign in to anything; the
+record exists because UAE employment hangs on four documents that each expire:
+the passport, the residence visa, the MOHRE labour card (work permit) and the
+municipality Occupational Health Card. A lapsed visa, labour card or OHC is a
+fine for the employer, so the console warns a super-admin 15 days ahead.
+
+Each document is versioned by its issue→expiry cycle: a renewal adds a row and
+the old one stays on file with its scan. The row expiring last is the current
+one. The scans live in the private finance bucket, signed on read.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import date
+from typing import Any
+
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, TimestampMixin, UUIDMixin
+
+#: Employment status. Mirrored by the CHECK in migration `325_employees`.
+EMPLOYEE_STATUSES: tuple[str, ...] = ("active", "left")
+
+#: The document types, in the order the console shows them. Mirrored by the
+#: CHECK in migration `325_employees`.
+EMPLOYEE_DOCUMENT_TYPES: tuple[str, ...] = ("passport", "visa", "labour_card", "ohc")
+
+#: The types whose lapse the expiry warning tracks. A passport is renewed long
+#: before it matters (the visa cannot outlive it), so the owner left it out.
+EXPIRY_TRACKED_TYPES: tuple[str, ...] = ("visa", "labour_card", "ohc")
+
+#: Per type: the label, what its number is called, and the type-specific fields
+#: kept in `employee_documents.details` (key → label). Served to the console by
+#: `GET /employees/document-types`, so the form and this list cannot drift.
+EMPLOYEE_DOCUMENT_SPECS: dict[str, dict[str, Any]] = {
+    "passport": {
+        "label": "Passport",
+        "number_label": "Passport number",
+        "details": {
+            "surname": "Surname",
+            "given_names": "Given names",
+            "nationality": "Nationality",
+            "date_of_birth": "Date of birth",
+            "sex": "Sex",
+            "place_of_birth": "Place of birth",
+            "place_of_issue": "Place of issue",
+        },
+    },
+    "visa": {
+        "label": "Residence visa",
+        "number_label": "File number",
+        "details": {
+            "uid_number": "UID number",
+            "passport_number": "Passport number",
+            "profession": "Profession",
+            "sponsor": "Sponsor / employer",
+            "place_of_issue": "Place of issue",
+        },
+    },
+    "labour_card": {
+        "label": "Labour card",
+        "number_label": "Work permit number",
+        "details": {
+            "personal_number": "Personal number",
+            "profession": "Profession",
+            "establishment": "Establishment",
+        },
+    },
+    "ohc": {
+        "label": "Occupational Health Card",
+        "number_label": "Card number",
+        "details": {
+            "reference": "Reference / audit trail",
+            "result": "Medical result / remarks",
+        },
+    },
+}
+
+
+def _in_list(column: str, values: tuple[str, ...], name: str) -> CheckConstraint:
+    allowed = ", ".join(f"'{v}'" for v in values)
+    return CheckConstraint(f"{column} IN ({allowed})", name=name)
+
+
+class Employee(Base, UUIDMixin, TimestampMixin):
+    """A person on the payroll, with the identity the documents carry."""
+
+    __tablename__ = "employees"
+    __table_args__ = (
+        _in_list("status", EMPLOYEE_STATUSES, "ck_employees_status"),
+        CheckConstraint(
+            "gender IS NULL OR gender IN ('M', 'F')", name="ck_employees_gender"
+        ),
+        Index("ix_employees_status", "status"),
+    )
+
+    full_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    full_name_ar: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    nationality: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: The MOHRE person code — printed on every labour card as "Personal No"
+    #: and stable across renewals, unlike the work-permit number.
+    personal_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: The trade licence that sponsors the visa ("Establishment" on the card).
+    legal_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    joined_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    left_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: `left` keeps the record and its history but drops it from expiry warnings.
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="active"
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Passport-style photo, private bucket, signed on read.
+    photo_object_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    photo_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    documents: Mapped[list[EmployeeDocument]] = relationship(
+        "EmployeeDocument",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeeDocument.expiry_date.desc()",
+        lazy="selectin",
+    )
+
+    @property
+    def has_photo(self) -> bool:
+        return bool(self.photo_object_key)
+
+    def __repr__(self) -> str:
+        return f"<Employee {self.full_name}>"
+
+
+class EmployeeDocument(Base, UUIDMixin, TimestampMixin):
+    """One issue→expiry cycle of one of an employee's documents."""
+
+    __tablename__ = "employee_documents"
+    __table_args__ = (
+        _in_list("doc_type", EMPLOYEE_DOCUMENT_TYPES, "ck_employee_documents_doc_type"),
+        UniqueConstraint(
+            "employee_id",
+            "doc_type",
+            "expiry_date",
+            name="uq_employee_documents_cycle",
+        ),
+        CheckConstraint(
+            "issue_date IS NULL OR issue_date <= expiry_date",
+            name="ck_employee_documents_dates",
+        ),
+        Index("ix_employee_documents_employee", "employee_id", "doc_type"),
+        Index("ix_employee_documents_expiry", "expiry_date"),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    doc_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: Passport no., visa file no., work-permit no., OHC card no.
+    document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    issuing_authority: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: The type-specific fields named in `EMPLOYEE_DOCUMENT_SPECS`.
+    details: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_object_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    employee: Mapped[Employee] = relationship("Employee", back_populates="documents")
+
+    @property
+    def has_file(self) -> bool:
+        return bool(self.file_object_key)
+
+    def __repr__(self) -> str:
+        return f"<EmployeeDocument {self.doc_type} → {self.expiry_date}>"
