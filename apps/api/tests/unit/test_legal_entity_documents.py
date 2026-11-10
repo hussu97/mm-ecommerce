@@ -23,7 +23,12 @@ from pydantic import ValidationError
 from app.api.v1 import legal_entity_documents as routes
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.inventory import TRADE_LICENSE_AUTHORITIES
-from app.models.legal_entity import EMIRATES, LegalEntity, LegalEntityTradeLicense
+from app.models.legal_entity import (
+    EMIRATES,
+    TRADE_LICENSE_TYPES,
+    LegalEntity,
+    LegalEntityTradeLicense,
+)
 from app.schemas.pos import (
     LegalEntityCreate,
     LegalEntityResponse,
@@ -55,6 +60,7 @@ def test_migration_lists_match_the_model():
     m = _migration()
     assert m._EMIRATES == EMIRATES
     assert m._AUTHORITIES == tuple(TRADE_LICENSE_AUTHORITIES)
+    assert m._LICENSE_TYPES == tuple(TRADE_LICENSE_TYPES)
 
 
 def test_model_checks_name_every_emirate_and_authority():
@@ -65,6 +71,8 @@ def test_model_checks_name_every_emirate_and_authority():
     }
     for emirate in EMIRATES:
         assert f"'{emirate}'" in checks["ck_legal_entity_trade_licenses_emirate"]
+    for code in TRADE_LICENSE_TYPES:
+        assert f"'{code}'" in checks["ck_legal_entity_trade_licenses_type"]
     for code in TRADE_LICENSE_AUTHORITIES:
         assert f"'{code}'" in checks["ck_legal_entity_trade_licenses_authority"]
     entity_checks = {
@@ -95,7 +103,12 @@ def test_migration_seed_matches_the_documents():
         "2022-07-19",
         "2027-07-18",
     )
-    for ref, *_rest, key in m._LICENSES:
+    assert by_ref["fatema"][8:] == ("commercial", "Services Agency")
+    assert by_ref["najm"][8:] == (
+        "commercial",
+        "Limited Liability Company - Single Owner (LLC - SO)",
+    )
+    for ref, *_rest, key, _kind, _form in m._LICENSES:
         assert key.startswith(f"legal-entities/{ref}/trade-licenses/")
 
 
@@ -139,6 +152,12 @@ def test_trade_license_schema():
         expiry_date=date(2027, 11, 2),
     )
     assert data.emirate == "Sharjah"
+    assert data.license_type is None
+    assert (
+        TradeLicenseUpdate(license_type="professional").license_type == "professional"
+    )
+    with pytest.raises(ValidationError):
+        TradeLicenseUpdate(license_type="wizardry")
     with pytest.raises(ValidationError):
         TradeLicenseCreate(
             license_number="1",

@@ -24213,8 +24213,12 @@ export interface components {
              * @enum {string}
              */
             issuing_authority: "dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other";
+            /** Legal Form */
+            legal_form?: string | null;
             /** License Number */
             license_number: string;
+            /** License Type */
+            license_type?: ("commercial" | "professional" | "industrial" | "tourism" | "crafts" | "agricultural" | "e_trader" | "freelance" | "other") | null;
             /** Notes */
             notes?: string | null;
             /** Registration Number */
@@ -24257,8 +24261,12 @@ export interface components {
              * Format: uuid
              */
             legal_entity_id: string;
+            /** Legal Form */
+            legal_form?: string | null;
             /** License Number */
             license_number: string;
+            /** License Type */
+            license_type?: string | null;
             /** Notes */
             notes: string | null;
             /** Registration Number */
@@ -24279,8 +24287,12 @@ export interface components {
             issue_date?: string | null;
             /** Issuing Authority */
             issuing_authority?: ("dubai_det" | "dmcc" | "jafza" | "dafz" | "dso" | "difc" | "dda" | "dubai_south" | "ifza" | "meydan" | "dhcc" | "dwtc" | "dubai_commercity" | "dubai_maritime" | "abu_dhabi_ded" | "adgm" | "kezad" | "twofour54" | "masdar" | "adafz" | "sharjah_sedd" | "saif_zone" | "hamriyah" | "shams" | "spc" | "srtip" | "sharjah_healthcare" | "ajman_ded" | "ajman_free_zone" | "ajman_media_city" | "uaq_ded" | "uaq_ftz" | "rak_ded" | "rakez" | "fujairah_ded" | "fujairah_free_zone" | "creative_city" | "other") | null;
+            /** Legal Form */
+            legal_form?: string | null;
             /** License Number */
             license_number?: string | null;
+            /** License Type */
+            license_type?: ("commercial" | "professional" | "industrial" | "tourism" | "crafts" | "agricultural" | "e_trader" | "freelance" | "other") | null;
             /** Notes */
             notes?: string | null;
             /** Registration Number */

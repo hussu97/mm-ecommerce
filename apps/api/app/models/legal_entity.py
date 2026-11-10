@@ -32,6 +32,22 @@ EMIRATES: tuple[str, ...] = (
 )
 
 
+#: The kind of activity a UAE trade licence permits, as the licensing
+#: authorities classify them. Stored as the code; the label is for display.
+#: Migration `324_legal_entity_documents` spells out the same codes in its CHECK.
+TRADE_LICENSE_TYPES: dict[str, str] = {
+    "commercial": "Commercial",
+    "professional": "Professional",
+    "industrial": "Industrial",
+    "tourism": "Tourism",
+    "crafts": "Crafts",
+    "agricultural": "Agricultural",
+    "e_trader": "e-Trader",
+    "freelance": "Freelance",
+    "other": "Other",
+}
+
+
 def _in_list(
     column: str, values: tuple[str, ...] | list[str], name: str
 ) -> CheckConstraint:
@@ -165,6 +181,11 @@ class LegalEntityTradeLicense(Base, UUIDMixin, TimestampMixin):
             "ck_legal_entity_trade_licenses_authority",
         ),
         _in_list("emirate", EMIRATES, "ck_legal_entity_trade_licenses_emirate"),
+        _in_list(
+            "license_type",
+            list(TRADE_LICENSE_TYPES),
+            "ck_legal_entity_trade_licenses_type",
+        ),
         CheckConstraint(
             "issue_date IS NULL OR issue_date <= expiry_date",
             name="ck_legal_entity_trade_licenses_dates",
@@ -182,6 +203,11 @@ class LegalEntityTradeLicense(Base, UUIDMixin, TimestampMixin):
     registration_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     #: A key of ``TRADE_LICENSE_AUTHORITIES`` (the same list suppliers use).
     issuing_authority: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: A key of ``TRADE_LICENSE_TYPES`` — commercial, professional, industrial…
+    license_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: The legal form printed on the licence ("Limited Liability Company -
+    #: Single Owner (LLC - SO)", "Services Agency", "Sole Establishment"…).
+    legal_form: Mapped[str | None] = mapped_column(String(120), nullable=True)
     emirate: Mapped[str] = mapped_column(String(20), nullable=False)
     issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)

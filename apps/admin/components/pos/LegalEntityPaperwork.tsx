@@ -35,6 +35,25 @@ export const EMIRATES: Emirate[] = [
   'Fujairah',
 ];
 const EMIRATE_OPTIONS = EMIRATES.map((e) => ({ value: e, label: e }));
+
+type TradeLicenseType = NonNullable<TradeLicenseWrite['license_type']>;
+/** Labels for the API's licence-type codes; a `Record` over the generated
+ *  union, so a code added server-side fails the typecheck until labelled. */
+export const TRADE_LICENSE_TYPE_LABELS: Record<TradeLicenseType, string> = {
+  commercial: 'Commercial',
+  professional: 'Professional',
+  industrial: 'Industrial',
+  tourism: 'Tourism',
+  crafts: 'Crafts',
+  agricultural: 'Agricultural',
+  e_trader: 'e-Trader',
+  freelance: 'Freelance',
+  other: 'Other',
+};
+const LICENSE_TYPE_OPTIONS = (Object.keys(TRADE_LICENSE_TYPE_LABELS) as TradeLicenseType[]).map((value) => ({
+  value,
+  label: TRADE_LICENSE_TYPE_LABELS[value],
+}));
 const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
 /** Days before expiry a licence starts showing as due for renewal. */
 export const RENEWAL_WARNING_DAYS = 60;
@@ -345,6 +364,8 @@ interface LicenseDraft {
   registration_number: string;
   issuing_authority: string;
   emirate: string;
+  license_type: string;
+  legal_form: string;
   issue_date: string;
   expiry_date: string;
   notes: string;
@@ -359,6 +380,8 @@ function licenseDraft(row?: TradeLicense, seed?: TradeLicense): LicenseDraft {
     registration_number: from?.registration_number ?? '',
     issuing_authority: from?.issuing_authority ?? '',
     emirate: from?.emirate ?? '',
+    license_type: from?.license_type ?? '',
+    legal_form: from?.legal_form ?? '',
     issue_date: row?.issue_date ?? seed?.issue_date ?? '',
     expiry_date: row?.expiry_date ?? '',
     notes: row?.notes ?? '',
@@ -422,6 +445,19 @@ function LicenseForm({
           }}
         />
         <Select label="Emirate" value={d.emirate} placeholder="Choose…" options={EMIRATE_OPTIONS} onChange={set('emirate')} />
+        <Select
+          label="Licence type"
+          value={d.license_type}
+          placeholder="—"
+          options={LICENSE_TYPE_OPTIONS}
+          onChange={set('license_type')}
+        />
+        <Input
+          label="Legal form"
+          value={d.legal_form}
+          onChange={set('legal_form')}
+          placeholder="e.g. LLC - Single Owner, Sole Establishment"
+        />
         <Input label="Issue date (as printed)" type="date" value={d.issue_date} onChange={set('issue_date')} />
         <Input label="Expiry date" type="date" value={d.expiry_date} onChange={set('expiry_date')} />
         <Input label="Notes" value={d.notes} onChange={set('notes')} className="sm:col-span-2" />
@@ -453,6 +489,8 @@ function toWrite(d: LicenseDraft): TradeLicenseWrite {
     registration_number: d.registration_number.trim() || null,
     issuing_authority: d.issuing_authority as TradeLicenseWrite['issuing_authority'],
     emirate: d.emirate as Emirate,
+    license_type: (d.license_type || null) as TradeLicenseType | null,
+    legal_form: d.legal_form.trim() || null,
     issue_date: d.issue_date || null,
     expiry_date: d.expiry_date,
     notes: d.notes.trim() || null,
@@ -612,7 +650,14 @@ function LicenseHistory({ entity, onChanged }: { entity: LegalEntity; onChanged:
                   </div>
                   <div className="text-gray-700">
                     {authorityLabel(row.issuing_authority)} · {row.emirate}
+                    {row.license_type && (
+                      <>
+                        {' · '}
+                        {TRADE_LICENSE_TYPE_LABELS[row.license_type as TradeLicenseType] ?? row.license_type} licence
+                      </>
+                    )}
                   </div>
+                  {row.legal_form && <div className="text-xs text-gray-500">{row.legal_form}</div>}
                   <div className="text-gray-600">
                     Issued {formatDate(row.issue_date)} · Expires{' '}
                     {row.is_current ? <ExpiryBadge expiry={row.expiry_date} /> : formatDate(row.expiry_date)}

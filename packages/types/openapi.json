@@ -41947,11 +41947,45 @@
             "title": "Issuing Authority",
             "type": "string"
           },
+          "legal_form": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Form"
+          },
           "license_number": {
             "maxLength": 100,
             "minLength": 1,
             "title": "License Number",
             "type": "string"
+          },
+          "license_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commercial",
+                  "professional",
+                  "industrial",
+                  "tourism",
+                  "crafts",
+                  "agricultural",
+                  "e_trader",
+                  "freelance",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License Type"
           },
           "notes": {
             "anyOf": [
@@ -42049,9 +42083,31 @@
             "title": "Legal Entity Id",
             "type": "string"
           },
+          "legal_form": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Form"
+          },
           "license_number": {
             "title": "License Number",
             "type": "string"
+          },
+          "license_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License Type"
           },
           "notes": {
             "anyOf": [
@@ -42196,6 +42252,18 @@
             ],
             "title": "Issuing Authority"
           },
+          "legal_form": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Form"
+          },
           "license_number": {
             "anyOf": [
               {
@@ -42208,6 +42276,28 @@
               }
             ],
             "title": "License Number"
+          },
+          "license_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commercial",
+                  "professional",
+                  "industrial",
+                  "tourism",
+                  "crafts",
+                  "agricultural",
+                  "e_trader",
+                  "freelance",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License Type"
           },
           "notes": {
             "anyOf": [

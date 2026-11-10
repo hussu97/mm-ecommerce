@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
-from app.models.legal_entity import EMIRATES
+from app.models.legal_entity import EMIRATES, TRADE_LICENSE_TYPES
 from app.schemas.inventory import TradeLicenseAuthorityLiteral
 
 from ._base import ORMModel
@@ -16,6 +16,8 @@ from ._base import ORMModel
 #: The seven emirates, derived from the model so the OpenAPI enum and the DB
 #: CHECK cannot disagree.
 EmirateLiteral = Literal[EMIRATES]  # type: ignore[valid-type]
+#: Commercial / professional / industrial …, derived from the model's list.
+TradeLicenseTypeLiteral = Literal[tuple(TRADE_LICENSE_TYPES)]  # type: ignore[valid-type]
 
 _TIN = r"^[0-9]{10}$"
 #: `0235:` + the 10-digit TIN for a UAE registrant; any other scheme:value pair
@@ -133,6 +135,8 @@ class TradeLicenseCreate(_TradeLicenseDates):
     registration_number: str | None = Field(None, max_length=100)
     issuing_authority: TradeLicenseAuthorityLiteral  # type: ignore[valid-type]
     emirate: EmirateLiteral  # type: ignore[valid-type]
+    license_type: TradeLicenseTypeLiteral | None = None  # type: ignore[valid-type]
+    legal_form: str | None = Field(None, max_length=120)
     issue_date: date | None = None
     expiry_date: date
     notes: str | None = Field(None, max_length=2000)
@@ -143,6 +147,8 @@ class TradeLicenseUpdate(_TradeLicenseDates):
     registration_number: str | None = Field(None, max_length=100)
     issuing_authority: TradeLicenseAuthorityLiteral | None = None  # type: ignore[valid-type]
     emirate: EmirateLiteral | None = None  # type: ignore[valid-type]
+    license_type: TradeLicenseTypeLiteral | None = None  # type: ignore[valid-type]
+    legal_form: str | None = Field(None, max_length=120)
     issue_date: date | None = None
     expiry_date: date | None = None
     notes: str | None = Field(None, max_length=2000)
@@ -155,6 +161,8 @@ class TradeLicenseResponse(ORMModel):
     registration_number: str | None
     issuing_authority: str
     emirate: str
+    license_type: str | None = None
+    legal_form: str | None = None
     issue_date: date | None
     expiry_date: date
     notes: str | None

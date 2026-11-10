@@ -95,6 +95,18 @@ _AUTHORITIES = (
     "other",
 )
 
+_LICENSE_TYPES = (
+    "commercial",
+    "professional",
+    "industrial",
+    "tourism",
+    "crafts",
+    "agricultural",
+    "e_trader",
+    "freelance",
+    "other",
+)
+
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
     allowed = ", ".join(f"'{v}'" for v in values)
@@ -102,7 +114,10 @@ def _in_list(column: str, values: tuple[str, ...]) -> str:
 
 
 #: (reference, license_number, registration_number, authority, emirate,
-#:  issue_date, expiry_date, document key) — as printed on the licence.
+#:  issue_date, expiry_date, document key, licence type, legal form) — as
+#:  printed on the licence. Fatema's is a Sharjah "Trading License" (commercial)
+#:  whose legal status is "Services Agency"; Najm's a Dubai "Commercial License"
+#:  for a single-owner LLC.
 _LICENSES = (
     (
         "fatema",
@@ -113,6 +128,8 @@ _LICENSES = (
         "2020-11-02",
         "2027-11-02",
         "legal-entities/fatema/trade-licenses/2027-11-02.pdf",
+        "commercial",
+        "Services Agency",
     ),
     (
         "najm",
@@ -123,6 +140,8 @@ _LICENSES = (
         "2022-07-19",
         "2027-07-18",
         "legal-entities/najm/trade-licenses/2027-07-18.pdf",
+        "commercial",
+        "Limited Liability Company - Single Owner (LLC - SO)",
     ),
 )
 
@@ -167,6 +186,8 @@ def upgrade() -> None:
         sa.Column("license_number", sa.String(100), nullable=False),
         sa.Column("registration_number", sa.String(100), nullable=True),
         sa.Column("issuing_authority", sa.String(40), nullable=False),
+        sa.Column("license_type", sa.String(30), nullable=True),
+        sa.Column("legal_form", sa.String(120), nullable=True),
         sa.Column("emirate", sa.String(20), nullable=False),
         sa.Column("issue_date", sa.Date(), nullable=True),
         sa.Column("expiry_date", sa.Date(), nullable=False),
@@ -197,6 +218,10 @@ def upgrade() -> None:
             name="ck_legal_entity_trade_licenses_emirate",
         ),
         sa.CheckConstraint(
+            _in_list("license_type", _LICENSE_TYPES),
+            name="ck_legal_entity_trade_licenses_type",
+        ),
+        sa.CheckConstraint(
             "issue_date IS NULL OR issue_date <= expiry_date",
             name="ck_legal_entity_trade_licenses_dates",
         ),
@@ -212,16 +237,29 @@ def _seed() -> None:
     # Literal SQL (fixed values, no user input) rather than bind parameters:
     # the deploy runs migrations under asyncpg, which cannot infer the type of
     # a bare parameter compared against NULL.
-    for ref, number, reg, authority, emirate, issued, expires, key in _LICENSES:
+    for (
+        ref,
+        number,
+        reg,
+        authority,
+        emirate,
+        issued,
+        expires,
+        key,
+        kind,
+        form,
+    ) in _LICENSES:
         op.execute(
             f"""
             INSERT INTO {_TABLE} (
                 legal_entity_id, license_number, registration_number,
                 issuing_authority, emirate, issue_date, expiry_date,
-                document_object_key, document_content_type
+                document_object_key, document_content_type, license_type,
+                legal_form
             )
             SELECT le.id, '{number}', '{reg}', '{authority}', '{emirate}',
-                   DATE '{issued}', DATE '{expires}', '{key}', 'application/pdf'
+                   DATE '{issued}', DATE '{expires}', '{key}', 'application/pdf',
+                   '{kind}', '{form}'
               FROM legal_entities le
              WHERE le.reference = '{ref}'
                AND NOT EXISTS (
