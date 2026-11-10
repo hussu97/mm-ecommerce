@@ -18,6 +18,14 @@
 // (e.g. Security manages the viewer's OWN passkeys). Each slug is verified
 // against the route that backs the screen; `nav.test.ts` fails if one drifts
 // from the Python `ALL_PERMISSIONS`.
+/**
+ * The `requires` of a screen only a super-admin may open — staff identity
+ * documents. It is the stamp the API's `require_superadmin()` carries, which is
+ * not a grantable slug (no role can hold it), so `canAccessNav` and
+ * `holdsPermission` admit exactly `is_superadmin` with no special case.
+ */
+export const SUPERADMIN_ONLY = 'superadmin';
+
 export type NavEntry = {
   href: string;
   label: string;
@@ -67,6 +75,11 @@ export const NAV: Array<NavEntry | NavSection> = [
   // Delivery zones and which kitchen bakes each one — fulfilment config that
   // sits with the branches it routes to.
   { href: '/delivery-zones', label: 'Delivery',       icon: 'local_shipping', requires: 'delivery.manage' },
+
+  // Employees' passports, visas, labour cards and health cards — super-admin
+  // only, like the expiring-paperwork popup that links here.
+  { section: 'People' },
+  { href: '/employees',     label: 'Employees',       icon: 'assignment_ind',        requires: SUPERADMIN_ONLY },
 
   // All reporting in one place. Live Baskets is now a tab of Analytics (the
   // same funnel one step earlier), not its own drawer item; "Counter Reports"

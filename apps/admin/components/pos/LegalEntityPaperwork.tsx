@@ -11,6 +11,8 @@ import type {
   TradeLicenseWrite,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
+import { extractText } from '@/lib/ocr/extract';
+import { parseTradeLicense } from '@/lib/ocr/parse';
 import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 
@@ -405,8 +407,40 @@ function LicenseForm({
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reading, setReading] = useState<string | null>(null);
   const set = (k: keyof LicenseDraft) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setD((prev) => ({ ...prev, [k]: e.target.value }));
+
+  /** Read the picked licence in the browser (PDF text or OCR, free) and fill
+   *  what it clearly states; the rest of the form is left as it was. */
+  async function pickFile(picked: File | null) {
+    setFile(picked);
+    if (!picked) return;
+    try {
+      setReading('Reading the licence…');
+      const { text } = await extractText(picked, {
+        onProgress: (stage, f) => setReading(f !== undefined ? `${stage} ${Math.round(f * 100)}%` : stage),
+      });
+      const read = parseTradeLicense(text);
+      const known = authorities.some((a) => a.code === read.issuing_authority);
+      setD((prev) => ({
+        ...prev,
+        license_number: read.license_number ?? prev.license_number,
+        registration_number: read.registration_number ?? prev.registration_number,
+        issuing_authority: known && read.issuing_authority ? read.issuing_authority : prev.issuing_authority,
+        emirate: (known && read.emirate) || prev.emirate,
+        issue_date: read.issue_date ?? prev.issue_date,
+        expiry_date: read.expiry_date ?? prev.expiry_date,
+      }));
+      setReading(
+        read.expiry_date
+          ? 'Filled from the licence — check each field before saving.'
+          : 'Could not find the dates on this licence — enter them by hand.',
+      );
+    } catch {
+      setReading('Could not read this file — enter the details by hand.');
+    }
+  }
 
   async function submit() {
     if (!d.license_number.trim() || !d.issuing_authority || !d.emirate || !d.expiry_date) {
@@ -465,9 +499,10 @@ function LicenseForm({
           <span className="mb-1 block font-medium uppercase tracking-wider text-gray-600">Licence document</span>
           <label className="inline-block cursor-pointer whitespace-nowrap rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
             {file ? 'Change file' : 'Choose file'}
-            <input type="file" accept={ACCEPT} className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept={ACCEPT} className="hidden" onChange={(e) => void pickFile(e.target.files?.[0] ?? null)} />
           </label>
-          <span className="ml-2 text-gray-500">{file ? file.name : 'optional'}</span>
+          <span className="ml-2 text-gray-500">{file ? file.name : 'optional — fills the form'}</span>
+          {reading && <p className="mt-1 text-primary">{reading}</p>}
         </div>
       </div>
       {error && <p className="mt-2 text-sm text-red-600 font-body">{error}</p>}

@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import { loginPathFor } from '@/lib/auth-redirect';
 import { activeNavHref, canAccessNav, holdsPermission, NAV, requiredPermissionFor } from '@/lib/nav';
 import { DensityToggle } from '@/components/ui/DensityToggle';
+import { ExpiringDocumentsProvider, useExpiringDocuments } from '@/components/people/ExpiringDocuments';
 import { cn } from '@/lib/utils';
 
 interface SidebarContentProps {
@@ -19,6 +20,9 @@ interface SidebarContentProps {
 
 function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: SidebarContentProps) {
   const currentHref = activeNavHref(pathname);
+  // Employee paperwork lapsing within the warning window, counted on the
+  // Employees entry (empty for anyone but a super-admin).
+  const expiring = useExpiringDocuments().items.filter((i) => i.owner_kind === 'employee').length;
   // Show only the screens this user's API access would actually serve, and drop
   // a section heading once all its entries are gone (F-ADM-7).
   const allowed = NAV.filter((e) => 'section' in e || canAccessNav(e, user));
@@ -70,7 +74,12 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
                   : 'text-gray-600 hover:bg-gray-50 hover:text-primary border-r-2 border-transparent',
               )}
             >
-              <span className="material-icons text-[18px] shrink-0">{icon}</span>
+              <span className="relative material-icons text-[18px] shrink-0">
+                {icon}
+                {collapsed && href === '/employees' && expiring > 0 && (
+                  <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500" />
+                )}
+              </span>
               {/* `min-w-0` + `truncate`: "Purchase Orders" and "Import /
                   Export" are wider than the 208px rail once the icon and the
                   uppercase tracking are paid for, and without these the whole
@@ -78,6 +87,14 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
               {!collapsed && (
                 <span className="min-w-0 truncate text-xs font-body uppercase tracking-widest">
                   {label}
+                </span>
+              )}
+              {!collapsed && href === '/employees' && expiring > 0 && (
+                <span
+                  className="ml-auto min-w-[18px] rounded-full bg-red-500 px-1.5 text-center text-[10px] font-body leading-[18px] text-white"
+                  title={`${expiring} document(s) expiring within 15 days`}
+                >
+                  {expiring}
                 </span>
               )}
             </Link>
@@ -160,6 +177,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const canView = holdsPermission(requiredPermissionFor(pathname), user);
 
   return (
+    <ExpiringDocumentsProvider enabled={Boolean(user.is_superadmin)}>
     <div className="flex min-h-screen">
       {/* Desktop Sidebar */}
       <aside
@@ -245,5 +263,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </main>
       </div>
     </div>
+    </ExpiringDocumentsProvider>
   );
 }

@@ -18,6 +18,7 @@ import {
   canAccessNav,
   holdsPermission,
   requiredPermissionFor,
+  SUPERADMIN_ONLY,
   type NavEntry,
 } from './nav';
 
@@ -49,7 +50,7 @@ describe('sidebar nav permissions', () => {
     const slugs = serverSlugs();
     expect(slugs.size).toBeGreaterThan(20); // the parser found the catalogue
     const unknown = entries
-      .filter((e) => e.requires !== null && !slugs.has(e.requires))
+      .filter((e) => e.requires !== null && e.requires !== SUPERADMIN_ONLY && !slugs.has(e.requires))
       .map((e) => `${e.href} → ${e.requires}`);
     expect(unknown, 'these `requires` are not real permission slugs').toEqual([]);
   });
@@ -59,6 +60,18 @@ describe('sidebar nav permissions', () => {
     const unknown = Object.entries(SUBROUTE_REQUIRES)
       .flatMap(([path, req]) => req.filter((s) => !slugs.has(s)).map((s) => `${path} → ${s}`));
     expect(unknown, 'these SUBROUTE_REQUIRES are not real permission slugs').toEqual([]);
+  });
+
+  it('opens a super-admin-only screen to a super-admin and nobody else', () => {
+    const employees = entries.find((e) => e.href === '/employees')!;
+    expect(employees.requires).toBe(SUPERADMIN_ONLY);
+    expect(serverSlugs().has(SUPERADMIN_ONLY), 'must not be a grantable slug').toBe(false);
+    const everySlug = [...serverSlugs()];
+    expect(canAccessNav(employees, { permissions: everySlug })).toBe(false);
+    expect(canAccessNav(employees, { is_superadmin: true, permissions: [] })).toBe(true);
+    const needed = requiredPermissionFor('/employees/abc');
+    expect(holdsPermission(needed, { permissions: everySlug })).toBe(false);
+    expect(holdsPermission(needed, { is_superadmin: true, permissions: [] })).toBe(true);
   });
 
   it('gates entries by the viewer, and a super-admin sees everything', () => {
