@@ -23,6 +23,7 @@ from app.models.employee import (
     Employee,
     EmployeeDocument,
 )
+from app.models.user import User
 from app.schemas.employee import (
     EmployeeDocumentResponse,
     EmployeeDocumentSummary,
@@ -116,22 +117,41 @@ async def get_employee(db: AsyncSession, employee_id: uuid.UUID) -> Employee:
     return employee
 
 
+async def _check_user(
+    db: AsyncSession, user_id: uuid.UUID | None, *, employee_id: uuid.UUID | None
+) -> None:
+    """The linked account must exist and not already belong to another employee."""
+    if user_id is None:
+        return
+    if await db.get(User, user_id) is None:
+        raise BadRequestError("That account does not exist")
+    stmt = select(Employee.full_name).where(Employee.user_id == user_id)
+    if employee_id is not None:
+        stmt = stmt.where(Employee.id != employee_id)
+    other = (await db.execute(stmt)).scalar_one_or_none()
+    if other is not None:
+        raise ConflictError(f"That account is already linked to {other}")
+
+
 async def create_employee(db: AsyncSession, data: dict) -> Employee:
+    await _check_user(db, data.get("user_id"), employee_id=None)
     employee = Employee(**data)
     db.add(employee)
     await db.flush()
-    await db.refresh(employee, ["documents"])
+    await db.refresh(employee, ["documents", "user"])
     return employee
 
 
 async def update_employee(db: AsyncSession, employee: Employee, data: dict) -> Employee:
+    if "user_id" in data:
+        await _check_user(db, data["user_id"], employee_id=employee.id)
     for field, value in data.items():
         # `None` for a required column means "not sent" in a partial update.
         if value is None and field in {"full_name", "status"}:
             continue
         setattr(employee, field, value)
     await db.flush()
-    await db.refresh(employee)
+    await db.refresh(employee, ["user"])
     return employee
 
 

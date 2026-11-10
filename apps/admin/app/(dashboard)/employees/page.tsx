@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { employeesApi, type EmployeeListItem } from '@/lib/people-api';
-import { branchesApi, legalEntitiesApi } from '@/lib/pos-api';
-import type { Branch, LegalEntity } from '@/lib/pos-types';
+import { branchesApi, legalEntitiesApi, staffApi } from '@/lib/pos-api';
+import type { Branch, LegalEntity, Staff } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Select } from '@/components/ui';
 import { ListPage } from '@/components/ui/ListPage';
@@ -25,6 +25,7 @@ export default function EmployeesPage() {
   const [rows, setRows] = useState<EmployeeListItem[]>([]);
   const [entities, setEntities] = useState<LegalEntity[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [accounts, setAccounts] = useState<Staff[]>([]);
   const [status, setStatus] = useState<StatusFilter>('active');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -51,6 +52,7 @@ export default function EmployeesPage() {
   useEffect(() => {
     legalEntitiesApi.list().then(setEntities).catch(() => {});
     branchesApi.list().then(setBranches).catch(() => {});
+    staffApi.list().then(setAccounts).catch(() => {});
   }, []);
 
   const entityName = (id: string | null | undefined) =>
@@ -113,6 +115,7 @@ export default function EmployeesPage() {
         <EmployeeForm
           entities={entities}
           branches={branches}
+          accounts={accounts}
           onClose={() => setCreating(false)}
           onSaved={(saved) => router.push(`/employees/${saved.id}`)}
         />

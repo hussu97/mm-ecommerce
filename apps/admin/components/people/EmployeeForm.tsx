@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { employeesApi, type Employee, type EmployeeCreate } from '@/lib/people-api';
-import type { Branch, LegalEntity } from '@/lib/pos-types';
+import type { Branch, LegalEntity, Staff } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { Modal } from '@/components/pos/ResourcePage';
@@ -21,6 +21,7 @@ type Draft = {
   phone: string;
   legal_entity_id: string;
   branch_id: string;
+  user_id: string;
   joined_on: string;
   left_on: string;
   status: 'active' | 'left';
@@ -39,6 +40,7 @@ function draftFrom(e: Employee | null): Draft {
     phone: e?.phone ?? '',
     legal_entity_id: e?.legal_entity_id ?? '',
     branch_id: e?.branch_id ?? '',
+    user_id: e?.user_id ?? '',
     joined_on: e?.joined_on ?? '',
     left_on: e?.left_on ?? '',
     status: (e?.status as Draft['status']) ?? 'active',
@@ -50,12 +52,15 @@ export function EmployeeForm({
   employee,
   entities,
   branches,
+  accounts,
   onClose,
   onSaved,
 }: {
   employee?: Employee | null;
   entities: LegalEntity[];
   branches: Branch[];
+  /** Staff accounts (till / console logins) an employee can be linked to. */
+  accounts: Staff[];
   onClose: () => void;
   onSaved: (saved: Employee) => void;
 }) {
@@ -86,6 +91,7 @@ export function EmployeeForm({
       phone: blank(draft.phone),
       legal_entity_id: draft.legal_entity_id || null,
       branch_id: draft.branch_id || null,
+      user_id: draft.user_id || null,
       joined_on: draft.joined_on || null,
       left_on: draft.left_on || null,
       status: draft.status,
@@ -156,6 +162,18 @@ export function EmployeeForm({
             onChange={(e) => set('branch_id', e.target.value)}
             placeholder="—"
             options={branches.map((b) => ({ value: b.id, label: b.name }))}
+          />
+          <Select
+            label="Till / console account"
+            value={draft.user_id}
+            onChange={(e) => set('user_id', e.target.value)}
+            placeholder="— none —"
+            options={accounts.map((a) => ({
+              value: a.id,
+              label: [a.display_name || a.email, a.staff_number, a.display_name ? a.email : null]
+                .filter(Boolean)
+                .join(' · '),
+            }))}
           />
           <Input label="Joined on" type="date" value={draft.joined_on} onChange={(e) => set('joined_on', e.target.value)} />
           {employee && (

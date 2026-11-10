@@ -15211,6 +15211,8 @@ export interface components {
              * @enum {string}
              */
             status: "active" | "left";
+            /** User Id */
+            user_id?: string | null;
         };
         /** EmployeeDocumentCreate */
         EmployeeDocumentCreate: {
@@ -15374,6 +15376,10 @@ export interface components {
             nationality: string | null;
             /** Status */
             status: string;
+            /** User Display Name */
+            user_display_name?: string | null;
+            /** User Id */
+            user_id?: string | null;
         };
         /** EmployeeResponse */
         EmployeeResponse: {
@@ -15427,6 +15433,12 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** User Display Name */
+            user_display_name?: string | null;
+            /** User Email */
+            user_email?: string | null;
+            /** User Id */
+            user_id?: string | null;
         };
         /** EmployeeUpdate */
         EmployeeUpdate: {
@@ -15458,6 +15470,8 @@ export interface components {
             phone?: string | null;
             /** Status */
             status?: ("active" | "left") | null;
+            /** User Id */
+            user_id?: string | null;
         };
         /**
          * EventCount

@@ -11,8 +11,8 @@ import {
   type EmployeeDocumentTypeSpec,
   type SignedDocumentUrl,
 } from '@/lib/people-api';
-import { branchesApi, legalEntitiesApi } from '@/lib/pos-api';
-import type { Branch, LegalEntity } from '@/lib/pos-types';
+import { branchesApi, legalEntitiesApi, staffApi } from '@/lib/pos-api';
+import type { Branch, LegalEntity, Staff } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, LoadError, Spinner } from '@/components/ui';
 import { Page } from '@/components/ui/Page';
@@ -67,6 +67,7 @@ export default function EmployeePage() {
   const [specs, setSpecs] = useState<EmployeeDocumentTypeSpec[]>([]);
   const [entities, setEntities] = useState<LegalEntity[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [accounts, setAccounts] = useState<Staff[]>([]);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState('');
   const [editingProfile, setEditingProfile] = useState(false);
@@ -95,6 +96,7 @@ export default function EmployeePage() {
     employeesApi.documentTypes().then(setSpecs).catch(() => {});
     legalEntitiesApi.list().then(setEntities).catch(() => {});
     branchesApi.list().then(setBranches).catch(() => {});
+    staffApi.list().then(setAccounts).catch(() => {});
   }, [load]);
 
   // `?add=visa` — arriving from the expiry popup.
@@ -252,6 +254,12 @@ export default function EmployeePage() {
             <Field label="Personal number">{employee.personal_number}</Field>
             <Field label="Sponsor">{entity?.legal_name}</Field>
             <Field label="Branch">{branch?.name}</Field>
+            <Field label="Till / console account">
+              {employee.user_display_name &&
+                [employee.user_display_name, employee.user_email !== employee.user_display_name ? employee.user_email : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+            </Field>
             <Field label="Phone">{employee.phone}</Field>
             <Field label="Joined">{employee.joined_on && formatDate(employee.joined_on)}</Field>
             {employee.status === 'left' && (
@@ -317,6 +325,7 @@ export default function EmployeePage() {
           employee={employee}
           entities={entities}
           branches={branches}
+          accounts={accounts}
           onClose={() => setEditingProfile(false)}
           onSaved={() => {
             setEditingProfile(false);

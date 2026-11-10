@@ -36,6 +36,8 @@ class _EmployeeFields(BaseModel):
     phone: str | None = Field(None, max_length=30)
     legal_entity_id: UUID | None = None
     branch_id: UUID | None = None
+    #: The person's console / till account (a staff user), if any.
+    user_id: UUID | None = None
     joined_on: date | None = None
     left_on: date | None = None
     notes: str | None = Field(None, max_length=4000)
@@ -68,6 +70,8 @@ class EmployeeListItem(_ORM):
     status: str
     legal_entity_id: UUID | None
     branch_id: UUID | None
+    user_id: UUID | None = None
+    user_display_name: str | None = None
     has_photo: bool
     #: The current cycle per type; a type with no document is absent.
     current_documents: dict[str, EmployeeDocumentSummary] = {}
@@ -103,6 +107,9 @@ class EmployeeResponse(_ORM):
     phone: str | None
     legal_entity_id: UUID | None
     branch_id: UUID | None
+    user_id: UUID | None = None
+    user_email: str | None = None
+    user_display_name: str | None = None
     joined_on: date | None
     left_on: date | None
     status: str

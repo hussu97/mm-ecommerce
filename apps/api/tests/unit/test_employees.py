@@ -273,3 +273,50 @@ async def test_versions_and_the_expiry_warning(monkeypatch):
                 await db.execute(delete(LegalEntity).where(LegalEntity.id == entity_id))
             await db.commit()
         await engine.dispose()
+
+
+@db_required
+async def test_an_account_links_to_one_employee_at_most():
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.exceptions import BadRequestError, ConflictError
+    from app.models import Employee
+    from app.models.user import User
+
+    engine = create_async_engine(DATABASE_URL)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    user_id = None
+    try:
+        async with Session() as db:
+            user = User(email=f"till-{tag}@example.com", is_active=True, is_staff=True)
+            db.add(user)
+            await db.flush()
+            user_id = user.id
+            adar = await employee_service.create_employee(
+                db, {"full_name": f"Adar {tag}", "user_id": user.id}
+            )
+            assert employee_service.to_response(adar).user_email == user.email
+            with pytest.raises(ConflictError, match=f"Adar {tag}"):
+                await employee_service.create_employee(
+                    db, {"full_name": f"Other {tag}", "user_id": user.id}
+                )
+            with pytest.raises(BadRequestError):
+                await employee_service.update_employee(
+                    db, adar, {"user_id": uuid.uuid4()}
+                )
+            # Re-saving the same link on the same employee is not a conflict.
+            await employee_service.update_employee(db, adar, {"user_id": user.id})
+            await employee_service.update_employee(db, adar, {"user_id": None})
+            assert employee_service.to_response(adar).user_email is None
+            await db.commit()
+    finally:
+        async with Session() as db:
+            await db.execute(
+                delete(Employee).where(Employee.full_name.like(f"% {tag}"))
+            )
+            if user_id:
+                await db.execute(delete(User).where(User.id == user_id))
+            await db.commit()
+        await engine.dispose()

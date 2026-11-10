@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -31,6 +31,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from .user import User
 
 #: Employment status. Mirrored by the CHECK in migration `325_employees`.
 EMPLOYEE_STATUSES: tuple[str, ...] = ("active", "left")
@@ -108,6 +111,7 @@ class Employee(Base, UUIDMixin, TimestampMixin):
         Index("ix_employees_status", "status"),
         Index("ix_employees_legal_entity", "legal_entity_id"),
         Index("ix_employees_branch", "branch_id"),
+        UniqueConstraint("user_id", name="uq_employees_user"),
     )
 
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -131,6 +135,14 @@ class Employee(Base, UUIDMixin, TimestampMixin):
         ForeignKey("branches.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: The person's console / till login, when they have one — one employee
+    #: per account. Nothing in auth reads it; it ties the HR record to the
+    #: account that rings up their sales.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     joined_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     left_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     #: `left` keeps the record and its history but drops it from expiry warnings.
@@ -142,6 +154,7 @@ class Employee(Base, UUIDMixin, TimestampMixin):
     photo_object_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     photo_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    user: Mapped[User | None] = relationship("User", lazy="selectin")
     documents: Mapped[list[EmployeeDocument]] = relationship(
         "EmployeeDocument",
         back_populates="employee",
@@ -153,6 +166,14 @@ class Employee(Base, UUIDMixin, TimestampMixin):
     @property
     def has_photo(self) -> bool:
         return bool(self.photo_object_key)
+
+    @property
+    def user_email(self) -> str | None:
+        return self.user.email if self.user else None
+
+    @property
+    def user_display_name(self) -> str | None:
+        return (self.user.display_name or self.user.email) if self.user else None
 
     def __repr__(self) -> str:
         return f"<Employee {self.full_name}>"
