@@ -72,6 +72,10 @@ dev = [
     # safe — each cleans up only its own prefix (`pytest-pricesort`,
     # `pytest-custom-`, and MenuGroup rows).
     "pytest-xdist>=3.6.0",
+    # A per-test ceiling (pytest.ini `timeout`). A test that hangs used to hold
+    # the pre-push hook — and a CI job, up to its 6-hour limit — with no output
+    # saying which test it was; now it fails with its stack.
+    "pytest-timeout>=2.3.0",
     # Shifts the clock for the weekly date-drift run (MM_TEST_SHIFT_DAYS, see
     # tests/conftest.py and .github/workflows/date-drift.yml).
     "time-machine>=2.16.0",
