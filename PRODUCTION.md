@@ -275,15 +275,15 @@ gcloud storage buckets update gs://melting-moments-cakes-backups \
 **No dedicated service account.** This step used to create `mm-backup-sa` and
 re-attach it to the VM — which requires stopping the instance. That was not done,
 and it is not necessary: the VM runs as the project's default compute service
-account (`136865397988-compute@developer.gserviceaccount.com`), which holds
-`roles/editor` and can therefore already write to the bucket. The upload was
-verified end-to-end after the bucket existed.
+account (`136865397988-compute@developer.gserviceaccount.com`). Since
+2026-11-11 that account no longer holds `roles/editor` (see "Service account
+access" below); on this bucket it has `roles/storage.objectUser` +
+`roles/storage.bucketViewer`, which `backup-db.sh` needs to upload, list and
+prune. Verified end-to-end after the change.
 
-Worth doing later, but deliberately *not* done during the audit because it needs
-an instance stop: give the VM a dedicated account with `roles/storage.objectCreator`
-on this bucket only. `objectCreator` can add backups but not delete them, so a
-compromise of the VM cannot erase the offsite copies — which `roles/editor`
-currently can.
+`objectUser` can still delete, because the script's rotation prunes old dumps
+from the VM. Making the offsite copies undeletable from the VM means moving the
+prune off the VM (lifecycle rule) and dropping to `roles/storage.objectCreator`.
 
 `BACKUP_GCS_BUCKET=melting-moments-cakes-backups` is already set in `.env`.
 
@@ -488,11 +488,27 @@ Two buckets are used:
 
 ### Service account access
 
-The API runs on the GCE VM under its default compute service account, which has
-`roles/editor` and the `devstorage.read_write` scope, plus
-`roles/iam.serviceAccountTokenCreator` on itself (needed so it can IAM-sign V4
-URLs for the private bucket). No key file is deployed — `storage.Client()` picks
-up the VM identity from the metadata server.
+The API runs on the GCE VM under its default compute service account. No key
+file is deployed — `storage.Client()` picks up the VM identity from the metadata
+server. The instance has the `cloud-platform` scope, so IAM alone decides what it
+can do, and since 2026-11-11 IAM is least-privilege — exactly the permissions
+the IAM recommender saw it use over 90 days:
+
+| Grant | Where | Why |
+|---|---|---|
+| `roles/logging.logWriter` | project | Docker's `gcplogs` driver |
+| `roles/serviceusage.serviceUsageConsumer` | project | client libraries bill API calls to the project |
+| `roles/storage.objectUser` + `roles/storage.bucketViewer` | each of `mm-product-images`, `melting-moments-data`, `melting-moments-cakes-backups` | uploads, deletes, backups and their pruning |
+| `roles/iam.serviceAccountTokenCreator` | on the service account itself | IAM-signs V4 URLs for the private bucket |
+
+It used to hold `roles/editor`, so a compromised VM could delete any bucket,
+every backup and the VM itself. If the VM ever needs a new Google API, grant
+that one role — do not restore Editor. Rollback, if something breaks:
+`gcloud projects add-iam-policy-binding melting-moments-cakes --member=serviceAccount:136865397988-compute@developer.gserviceaccount.com --role=roles/editor`.
+
+Cloud Storage Data Access audit logs (`ADMIN_READ`, `DATA_READ`, `DATA_WRITE`)
+are on for the project, so every read of an employee document or backup is
+attributable. Anonymous reads of the public image bucket are not logged.
 
 ### Summary of values for Step 13c
 

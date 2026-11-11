@@ -36,7 +36,7 @@ don't mention most of this.
 ## What the session can do
 
 - **VM:** a dedicated login user, from an SSH key in the VM's instance metadata (not project metadata), with sudo and docker. That means prod containers, Postgres (`mmsql` is read-write) and logs. It deliberately doesn't use OS Login: turning that on disables metadata keys, which the deploy key relies on.
-- **GCS:** a service account with `roles/storage.objectAdmin` on the app buckets and `roles/storage.objectViewer` on the backups bucket, both granted on the bucket. It also has `roles/iap.tunnelResourceAccessor` and `roles/compute.viewer` on the VM only (for IAP and the host key), and no other project roles.
+- **GCS:** a service account with read-only `roles/storage.objectViewer` on the app buckets and the backups bucket, granted on each bucket. It cannot write or delete (it had `objectAdmin` on the app buckets until 2026-11-11). It also has `roles/iap.tunnelResourceAccessor` and `roles/compute.viewer` on the VM only (for IAP and the host key), and no other project roles.
 
 ## One-time GCP setup
 
@@ -47,7 +47,7 @@ SA=<sa-name>@$P.iam.gserviceaccount.com
 # Service account, scoped per bucket
 gcloud iam service-accounts create <sa-name> --project=$P
 for b in <app-bucket-1> <app-bucket-2>; do
-  gcloud storage buckets add-iam-policy-binding gs://$b --member=serviceAccount:$SA --role=roles/storage.objectAdmin; done
+  gcloud storage buckets add-iam-policy-binding gs://$b --member=serviceAccount:$SA --role=roles/storage.objectViewer; done
 gcloud storage buckets add-iam-policy-binding gs://<backup-bucket> --member=serviceAccount:$SA --role=roles/storage.objectViewer
 gcloud storage buckets add-iam-policy-binding gs://<backup-bucket> --member=serviceAccount:$SA --role=roles/storage.legacyBucketReader
 

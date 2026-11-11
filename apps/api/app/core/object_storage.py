@@ -1,8 +1,9 @@
 """Google Cloud Storage helper, driven by Application Default Credentials.
 
 Production runs on a GCE VM whose default service account
-(`…-compute@developer.gserviceaccount.com`) has `roles/editor` and the
-`devstorage.read_write` scope, and the API container can reach the metadata
+(`…-compute@developer.gserviceaccount.com`) holds `roles/storage.objectUser` on
+each of our buckets (least privilege — see PRODUCTION.md "Service account
+access"), and the API container can reach the metadata
 server — so `google.auth.default()` / `storage.Client()` work in-container with
 no key file at all. That same ADC path also works on a maintainer's machine that
 has run `gcloud auth application-default login`.
