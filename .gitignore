@@ -110,3 +110,6 @@ apps/aggregator-bootstrap/uv.lock
 *.chrome-profile/
 *.chrome/
 
+
+# Tesseract language data a local OCR run caches next to the cwd.
+*.traineddata
