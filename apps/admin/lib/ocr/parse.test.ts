@@ -5,6 +5,7 @@ import { textFromPdfItems } from './extract';
 import {
   findDates,
   mrzCheckDigit,
+  mrzNames,
   parseLabourCard,
   parseMrz,
   parseOhc,
@@ -111,6 +112,7 @@ describe('passport MRZ', () => {
     expect(out.details.given_names).toBe('ANNA MARIA');
     expect(out.warnings).toEqual([
       'The expiry date failed its MRZ check — compare it with the scan.',
+      'The names in the machine-readable zone were hard to read — check them against the scan.',
     ]);
   });
 
@@ -155,7 +157,46 @@ describe('passport MRZ', () => {
   });
 });
 
+describe('passport names through a noisy MRZ', () => {
+  // The shape three Tesseract passes produced for a real Philippine passport
+  // (`SANTOS<<JUAN<<<…` on the page; identity values made up): the '<' filler
+  // read as K/L/C, so the '<<' separator never appears.
+  const line2 = 'P1234567A1PHL9003152M3312315<<<<<<K<KLK<K<KLKKK08';
+  const passes = [
+    `P<PHLSANTOS<K<KJUANC<LLLLLLLLLLLLLLLLLLLLLLLLKLK\n${line2}`,
+    `P<PHLSANTOS<K<JUANLLLLLLLLLLLLLLLLLLLLLLLLKKLKLKL\n${line2}`,
+    `P<PHLSANTOS<K<KJUANC<LLLLLLLLLLLLLLLLLLLLLLLLKLK\n${line2}`,
+  ].join('\n\n');
+
+  it('splits a look-alike separator and drops the look-alike filler', () => {
+    expect(mrzNames('SANTOS<K<JUANLLLLLLLLLLLLLLKKLKL')).toEqual({ surname: 'SANTOS', given: 'JUAN', noisy: true });
+    expect(mrzNames('ERIKSSON<<ANNA<MARIA<<<<<<<<<<')).toEqual({ surname: 'ERIKSSON', given: 'ANNA MARIA', noisy: false });
+    expect(mrzNames('MICHAEL<<<<<<<<<<<<<<<<<<<<<<<')).toEqual({ surname: 'MICHAEL', given: undefined, noisy: false });
+  });
+
+  it('takes the reading the passes agree on, minus stray edge letters', () => {
+    const out = parsePassport(passes);
+    expect(out.details.surname).toBe('SANTOS');
+    expect(out.details.given_names).toBe('JUAN');
+    expect(out.document_number).toBe('P1234567A');
+    expect(out.warnings).toContain(
+      'The names in the machine-readable zone were hard to read — check them against the scan.',
+    );
+  });
+
+  it('snaps to the name on file and fills the printed-only middle name', () => {
+    const page = `Apelyido/Surname\n\nSANTOS\n\nPangalan/ Given names\n\n5\n\nPanggitnang apelyido/Middle name\n\nPAS!\n\n${passes}`;
+    const out = parsePassport(page, { knownName: 'Juan Dela Santos' });
+    expect(out.details).toMatchObject({ surname: 'SANTOS', given_names: 'JUAN', middle_name: 'DELA' });
+    expect(out.person.full_name).toBe('JUAN DELA SANTOS');
+  });
+});
+
 describe('residence visa', () => {
+  it('keeps every part of a four-part file number', () => {
+    expect(parseVisa('File 301/2025/3/0035771\nExpiry Date 2027/08/13').document_number).toBe('301/2025/3/0035771');
+  });
+
   const out = parseVisa(
     [
       'RESIDENCE',

@@ -149,7 +149,7 @@ export function DocumentForm({
         onProgress: (stage, fraction) =>
           setReading(fraction !== undefined ? `${stage} ${Math.round(fraction * 100)}%` : stage),
       });
-      const fields = parseDocument(draft.doc_type, text);
+      const fields = parseDocument(draft.doc_type, text, { knownName: employee.full_name });
       setScan({ fields, source: source === 'pdf-text' ? 'the PDF’s text' : 'the scan (OCR)' });
       setDraft((d) => ({
         ...d,

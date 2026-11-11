@@ -56,6 +56,8 @@ EMPLOYEE_DOCUMENT_SPECS: dict[str, dict[str, Any]] = {
         "details": {
             "surname": "Surname",
             "given_names": "Given names",
+            #: Printed by some passports (the Philippines') and absent from the MRZ.
+            "middle_name": "Middle name",
             "nationality": "Nationality",
             "date_of_birth": "Date of birth",
             "sex": "Sex",

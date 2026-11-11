@@ -366,19 +366,97 @@ function mrzDate(yymmdd: string, kind: 'birth' | 'expiry'): string | undefined {
 /** The MRZ read best across the OCR passes: the first pair whose check
  *  digits all pass, else the one with the fewest failures. */
 export function parseMrz(text: string): DocumentFields | null {
-  const parsed = findMrzAll(text).map(parseMrzPair);
+  const pairs = findMrzAll(text);
+  const parsed = pairs.map(parseMrzPair);
   if (!parsed.length) return null;
-  return parsed.reduce((best, p) => (p.warnings.length < best.warnings.length ? p : best));
+  const best = parsed.reduce((b, p) => (p.warnings.length < b.warnings.length ? p : b));
+  // The numbers come from the pass whose check digits pass; the names (which
+  // have no check digit) from what the passes agree on.
+  const surname = consensus(parsed.map((p) => p.details.surname));
+  const given = consensus(parsed.map((p) => p.details.given_names));
+  setNames(best, surname, given);
+  if (pairs.some(([l1]) => mrzNames(l1.slice(5)).noisy)) {
+    best.warnings.push('The names in the machine-readable zone were hard to read — check them against the scan.');
+  }
+  return best;
+}
+
+function setNames(fields: DocumentFields, surname?: string, given?: string) {
+  if (surname) fields.details.surname = surname;
+  else delete fields.details.surname;
+  if (given) fields.details.given_names = given;
+  else delete fields.details.given_names;
+  fields.person.full_name = [given, surname].filter(Boolean).join(' ') || undefined;
+}
+
+/** Characters Tesseract returns for the '<' filler. */
+const FILLER_LOOKALIKES = 'KLC';
+const LOOKALIKE_ONLY = /^[KLC]+$/;
+
+/**
+ * Split a TD3 name field ("SURNAME<<GIVEN<NAMES<<<…") into surname and given
+ * names, undoing OCR's habit of reading the '<' filler as K, L or C — a
+ * Philippine passport came back as `TAPSIN<K<KADARC<LLLLLLL…` for
+ * `TAPSIN<<ADAR<<<<<<<…`. `noisy` says a repair was needed.
+ */
+export function mrzNames(field: string): { surname?: string; given?: string; noisy: boolean } {
+  let noisy = false;
+  let f = field;
+  // The trailing filler. When OCR has turned it into look-alike letters, a
+  // single look-alike glued to the last name ("ADARC<LLL") goes with it; a
+  // clean filler ("MICHAEL<<<<") leaves the name alone.
+  const tail = f.match(/[<KLC]*$/)?.[0] ?? '';
+  const filler = tail.includes('<') ? tail.slice(tail.indexOf('<')) : tail;
+  if (tail.length >= 3 && /[KLC]/.test(filler)) {
+    noisy = true;
+    f = f.slice(0, f.length - tail.length);
+  } else {
+    f = f.replace(/<+$/, '');
+  }
+  // Surname runs up to the first separator: an empty token ('<<') or a token
+  // that is only look-alikes ('<K<').
+  const tokens = f.split('<');
+  const surname: string[] = [];
+  const given: string[] = [];
+  // A field that opens with the separator has no surname (Indian passports
+  // can print the whole name as given names).
+  let inGiven = f.startsWith('<');
+  for (const token of tokens) {
+    if (!token || LOOKALIKE_ONLY.test(token)) {
+      if (token) noisy = true;
+      if (surname.length) inGiven = true;
+      continue;
+    }
+    (inGiven ? given : surname).push(token);
+  }
+  return {
+    surname: surname.join(' ') || undefined,
+    given: given.join(' ') || undefined,
+    noisy,
+  };
+}
+
+/** Across OCR passes, the name most of them read — but a reading that is
+ *  another one plus stray look-alike letters at its edges ("KADAR" vs
+ *  "ADAR") loses to the shorter one, whatever the count. */
+function consensus(values: Array<string | undefined>): string | undefined {
+  const seen = values.filter((v): v is string => Boolean(v));
+  if (!seen.length) return undefined;
+  const edge = new RegExp(`^[${FILLER_LOOKALIKES}]+|[${FILLER_LOOKALIKES}]+$`, 'g');
+  const stripsTo = (long: string, short: string) =>
+    long !== short && long.split(' ').map((w) => w.replace(edge, '')).join(' ') === short;
+  const kept = seen.filter((v) => !seen.some((other) => stripsTo(v, other)));
+  const counts = new Map<string, number>();
+  for (const v of kept) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)[0][0];
 }
 
 function parseMrzPair([l1, l2]: [string, string]): DocumentFields {
   const warnings: string[] = [];
 
-  // Names: "SURNAME<<GIVEN<NAMES"; a stray K/C among filler '<' is OCR noise.
-  const nameField = l1.slice(5).replace(/(?<=<<)[KC](?=<<)/g, '<');
-  const [surnameRaw, givenRaw = ''] = nameField.split('<<');
-  const surname = clean(surnameRaw.replace(/</g, ' '));
-  const given = clean(givenRaw.replace(/<+$/, '').replace(/</g, ' '));
+  const names = mrzNames(l1.slice(5));
+  const surname = names.surname;
+  const given = names.given;
 
   let number = l2.slice(0, 9);
   if (String(mrzCheckDigit(number)) !== digitsOnly(l2[9])) {
@@ -435,12 +513,83 @@ function empty(): DocumentFields {
   return { details: {}, person: {}, warnings: [] };
 }
 
-export function parsePassport(raw: string): DocumentFields {
+export type PassportHint = {
+  /** The employee's name as already on file — renewals are the common case,
+   *  and it settles letters OCR could not. */
+  knownName?: string | null;
+};
+
+/** Words of the name on file, for snapping an OCR'd name token onto. */
+function nameWords(name: string | null | undefined): string[] {
+  return (name ?? '')
+    .toUpperCase()
+    .split(/[^A-Z]+/)
+    .filter((w) => w.length >= 3);
+}
+
+/** "KADAR" → "ADAR" when the employee is called Adar: a token that is a name
+ *  word plus look-alike letters at its edges is that word. */
+function snapToKnown(value: string | undefined, words: string[]): string | undefined {
+  if (!value || !words.length) return value;
+  return value
+    .split(' ')
+    .map((token) => {
+      if (words.includes(token)) return token;
+      const hit = words.find(
+        (w) => token.includes(w) && token.replace(w, '').split('').every((c) => FILLER_LOOKALIKES.includes(c)),
+      );
+      return hit ?? token;
+    })
+    .join(' ');
+}
+
+const VIZ_NAME = /^[A-Z][A-Z' -]{1,40}$/;
+
+/** The value printed under a visual-zone label ("Surname" / "TAPSIN"), only
+ *  when it reads as a name — the hologram behind these fields often turns
+ *  them into noise. */
+function vizValue(text: string, label: RegExp): string | undefined {
+  const lines = text.split('\n').map((l) => l.trim());
+  for (let i = 0; i < lines.length; i++) {
+    if (!label.test(lines[i])) continue;
+    const next = lines.slice(i + 1).find((l) => l.length > 0);
+    if (next && VIZ_NAME.test(next)) return next.replace(/\s+/g, ' ');
+  }
+  return undefined;
+}
+
+export function parsePassport(raw: string, hint: PassportHint = {}): DocumentFields {
   const text = normalise(raw);
   const out = parseMrz(text) ?? {
     ...empty(),
     warnings: ['No machine-readable zone found — fill the fields from the scan.'],
   };
+
+  // Names: the MRZ consensus, checked against the printed fields and the name
+  // on file. A printed surname that the MRZ also contains settles it.
+  const words = nameWords(hint.knownName);
+  let surname = snapToKnown(out.details.surname, words);
+  let given = snapToKnown(out.details.given_names, words);
+  const vizSurname = vizValue(text, /\bSurname\b/i);
+  if (vizSurname && (!surname || surname.replace(/ /g, '').includes(vizSurname.replace(/ /g, '')))) {
+    surname = vizSurname;
+  }
+  const vizGiven = vizValue(text, /\bGiven\s*names?\b/i);
+  if (vizGiven && (!given || given.includes(vizGiven))) given = vizGiven;
+  setNames(out, surname, given);
+
+  // Some passports (the Philippines') print a middle name the MRZ leaves out.
+  if (/\bMiddle\s*name\b/i.test(text)) {
+    const printed = vizValue(text, /\bMiddle\s*name\b/i);
+    const taken = new Set([...(surname ?? '').split(' '), ...(given ?? '').split(' ')]);
+    const fromFile = words.filter((w) => !taken.has(w)).join(' ');
+    const middle = printed && (!words.length || words.includes(printed)) ? printed : fromFile || undefined;
+    if (middle) {
+      out.details.middle_name = middle;
+      out.person.full_name = [given, middle, surname].filter(Boolean).join(' ');
+    }
+  }
+
   if (!out.document_number) {
     out.document_number = first(text, /Passport\s*(?:No|Number)\.?\s*:?\s*([A-Z]{0,2}\d{6,9}[A-Z]?)/i);
   }
@@ -548,10 +697,12 @@ export function parseVisa(raw: string): DocumentFields {
   const text = normalise(raw);
   const out = empty();
   const file =
-    text.match(/\b([1-7]\d{2})\s*\/\s*(\d{4})\s*\/\s*(\d{1,9})\b/) ??
+    // 301/2025/7654321, or the four-part form 301/2025/3/0035771.
+    text.match(/\b([1-7]\d{2})\s*\/\s*(\d{4})\s*\/\s*(\d{1,9})(?:\s*\/\s*(\d{1,9}))?\b/) ??
     text.match(/File\s*(?:No|Number)\.?\s*:?\s*([\d/ ]{8,})/i);
   if (file) {
-    out.document_number = file.length >= 4 ? `${file[1]}/${file[2]}/${file[3]}` : clean(file[1]);
+    out.document_number =
+      file.length >= 4 ? [file[1], file[2], file[3], file[4]].filter(Boolean).join('/') : clean(file[1]);
     const emirate = VISA_EMIRATES[(out.document_number ?? '')[0]];
     if (emirate) {
       out.details.place_of_issue = emirate;
@@ -691,10 +842,14 @@ export function parseTradeLicense(raw: string): TradeLicenseFields {
   return out;
 }
 
-export function parseDocument(type: Exclude<OcrDocType, 'trade_license'>, text: string): DocumentFields {
+export function parseDocument(
+  type: Exclude<OcrDocType, 'trade_license'>,
+  text: string,
+  hint: PassportHint = {},
+): DocumentFields {
   switch (type) {
     case 'passport':
-      return parsePassport(text);
+      return parsePassport(text, hint);
     case 'visa':
       return parseVisa(text);
     case 'labour_card':

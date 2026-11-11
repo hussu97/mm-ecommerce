@@ -379,7 +379,7 @@ function DocumentRow({
         {showDetails &&
           details.map(([key, label]) => (
             <Field key={key} label={label}>
-              {doc.details[key]}
+              {/^\d{4}-\d{2}-\d{2}$/.test(doc.details[key]) ? formatDate(doc.details[key]) : doc.details[key]}
             </Field>
           ))}
       </div>
