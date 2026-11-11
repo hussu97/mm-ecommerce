@@ -14,6 +14,8 @@ import io
 
 from PIL import Image, ImageOps
 
+from app.core.exceptions import BadRequestError
+
 # Register HEIC/HEIF decoding into Pillow. An iPhone's default photo format is
 # HEIC; Safari transcodes it to JPEG when picked from the Photos library, but a
 # raw .heic uploaded from the Files app / iCloud Drive arrives undecodable to
@@ -26,12 +28,6 @@ try:
     register_heif_opener()
 except Exception:  # pragma: no cover - absence just means no HEIC decode
     pass
-
-# The declared upload types that are already browser-renderable as-is. optimize
-# only keeps the original bytes for these; anything else (HEIC) must come out as
-# the re-encoded JPEG/PNG even if that is larger, or a browser gets a file it
-# cannot show.
-_WEB_SAFE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 
 # Wide enough for a full-bleed banner on a 2x desktop, and comfortably above any
 # slot the storefront actually renders a product into.
@@ -66,11 +62,26 @@ def _has_real_transparency(im: Image.Image) -> bool:
 def optimize_image(data: bytes, content_type: str) -> tuple[bytes, str]:
     """Downscale and re-encode an upload. Returns ``(bytes, content_type)``.
 
-    Falls back to the original bytes whenever re-encoding would not help or the
-    file cannot be read as an image — the caller has already validated the
-    declared content type, and a failure here should not cost the admin an
-    upload.
+    Fails closed. Everything this feeds lands in a bucket somebody can read —
+    the public image bucket, or a customer's enquiry photo a member of staff
+    opens — so the stored bytes are *always* Pillow's re-encode, never the
+    upload itself:
+
+    * a file Pillow cannot decode is refused (400) rather than stored raw. The
+      declared content type is only the browser's say-so; this used to fall
+      back to the original bytes, which let anything at all be published
+      under an image extension;
+    * the re-encode is kept even when it comes out larger than the original.
+      It used to keep whichever was smaller, and the original of a phone photo
+      still carries its EXIF block — GPS coordinates of somebody's home
+      included. Pillow writes no EXIF/XMP/text chunks unless asked, so the
+      re-encode is the metadata strip.
+
+    The ``content_type`` argument is unused beyond the signature callers
+    already pass; the output type follows the pixels (PNG only where real
+    transparency needs keeping, JPEG otherwise).
     """
+    del content_type  # the output type is decided by the decoded image
     try:
         with Image.open(io.BytesIO(data)) as im:
             # A phone photo carries its rotation in EXIF. Apply it before the tag
@@ -82,8 +93,8 @@ def optimize_image(data: bytes, content_type: str) -> tuple[bytes, str]:
 
             buf = io.BytesIO()
             if has_alpha:
-                # Transparency has to survive; PNG is the only one of the three
-                # accepted types that keeps it without a format change.
+                # Transparency has to survive; PNG is the only one of the
+                # stored types that keeps it without a format change.
                 im.convert("RGBA").save(buf, "PNG", optimize=True)
                 out_type = "image/png"
             else:
@@ -95,19 +106,13 @@ def optimize_image(data: bytes, content_type: str) -> tuple[bytes, str]:
                     progressive=True,
                 )
                 out_type = "image/jpeg"
-    except Exception:
-        return data, content_type
+    except Exception as exc:
+        raise BadRequestError(
+            "That file could not be read as an image. Please upload a JPG, "
+            "PNG, WebP or HEIC photo."
+        ) from exc
 
-    optimized = buf.getvalue()
-
-    # An already-tuned asset can come out larger than it went in. Keep whichever
-    # is smaller, and keep the original's type when we keep the original — but
-    # only when that original is a browser-renderable type. A HEIC that happens
-    # to be smaller than its JPEG re-encode must still be stored as the JPEG.
-    if len(optimized) >= len(data) and content_type in _WEB_SAFE_TYPES:
-        return data, content_type
-
-    return optimized, out_type
+    return buf.getvalue(), out_type
 
 
 def extension_for(content_type: str) -> str:

@@ -9,8 +9,11 @@ the first visitor a thumbnail — a cold transform measured 3.1s to first byte.
 The catalogue was re-encoded in place. This covers the other half: that the
 next upload cannot put a 4000px original back, and that squeezing it does not
 quietly corrupt anything on the way — a rotated phone photo must not land
-sideways, a logo with transparency must not come out with a black background,
-and an image the encoder cannot improve must be stored exactly as received.
+sideways, a logo with transparency must not come out with a black background.
+
+And it fails closed: what is stored is always the re-encode — never the upload's
+own bytes, which may not be an image at all, or may carry a phone's EXIF block
+with the GPS fix of where the photo was taken.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import io
 import pytest
 from PIL import Image
 
+from app.core.exceptions import BadRequestError
 from app.core.images import MAX_DIMENSION, extension_for, optimize_image
 
 
@@ -137,21 +141,94 @@ def test_heic_is_never_kept_even_when_its_jpeg_reencode_is_larger():
     assert Image.open(io.BytesIO(out)).format == "JPEG"
 
 
-def test_a_file_the_encoder_cannot_improve_is_returned_untouched():
+def test_a_tiny_already_tuned_jpeg_is_still_re_encoded():
+    """Keeping the original when the re-encode is not smaller would keep its
+    metadata too, so the re-encode is stored even when it is larger."""
     raw = _jpeg((120, 120), quality=20)
     out, content_type = optimize_image(raw, "image/jpeg")
 
-    assert out is raw or len(out) < len(raw)
-    if out is raw:
-        assert content_type == "image/jpeg"
+    assert out is not raw
+    assert content_type == "image/jpeg"
+    assert Image.open(io.BytesIO(out)).format == "JPEG"
 
 
-def test_unreadable_bytes_do_not_cost_the_admin_the_upload():
-    raw = b"this is not an image"
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"this is not an image",
+        b"%PDF-1.7\n1 0 obj <<>> endobj",
+        b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+        b"",
+    ],
+)
+def test_bytes_pillow_cannot_decode_are_refused_not_stored(raw):
+    with pytest.raises(BadRequestError):
+        optimize_image(raw, "image/jpeg")
+
+
+def test_a_truncated_jpeg_is_refused():
+    raw = _jpeg((800, 600))[:200]
+    with pytest.raises(BadRequestError):
+        optimize_image(raw, "image/jpeg")
+
+
+def _gps_jpeg() -> bytes:
+    """A phone-style photo: EXIF with a GPS fix, a camera model and XMP."""
+    im = Image.new("RGB", (900, 600), (90, 120, 150))
+    exif = im.getexif()
+    exif[0x0110] = "iPhone 15 Pro"  # Model
+    gps = exif.get_ifd(0x8825)  # GPSInfo
+    gps[1] = "N"
+    gps[2] = (25.0, 12.0, 30.0)
+    gps[3] = "E"
+    gps[4] = (55.0, 16.0, 45.0)
+    buf = io.BytesIO()
+    im.save(
+        buf,
+        "JPEG",
+        exif=exif,
+        xmp=b"<x:xmpmeta xmlns:x='adobe:ns:meta/'>home</x:xmpmeta>",
+    )
+    return buf.getvalue()
+
+
+def test_exif_gps_is_stripped_from_a_phone_photo():
+    raw = _gps_jpeg()
+    # The fixture really carries what we are about to strip.
+    with Image.open(io.BytesIO(raw)) as src:
+        assert src.getexif().get_ifd(0x8825)
+    assert b"xmpmeta" in raw
+
     out, content_type = optimize_image(raw, "image/jpeg")
 
-    assert out == raw
     assert content_type == "image/jpeg"
+    with Image.open(io.BytesIO(out)) as im:
+        assert not im.getexif().get_ifd(0x8825)
+        assert 0x0110 not in im.getexif()
+        assert "exif" not in im.info
+        assert "xmp" not in im.info
+    assert b"iPhone" not in out
+    assert b"xmpmeta" not in out
+
+
+def test_metadata_is_stripped_from_a_transparent_png_too():
+    im = Image.new("RGBA", (300, 300), (200, 150, 120, 0))
+    exif = im.getexif()
+    exif[0x0110] = "iPhone 15 Pro"
+    from PIL.PngImagePlugin import PngInfo
+
+    text = PngInfo()
+    text.add_text("Comment", "123 Secret Street")
+    buf = io.BytesIO()
+    im.save(buf, "PNG", exif=exif, pnginfo=text)
+    raw = buf.getvalue()
+    assert b"iPhone" in raw and b"Secret Street" in raw
+
+    out, content_type = optimize_image(raw, "image/png")
+
+    assert content_type == "image/png"
+    assert b"iPhone" not in out
+    assert b"Secret Street" not in out
 
 
 @pytest.mark.parametrize(
