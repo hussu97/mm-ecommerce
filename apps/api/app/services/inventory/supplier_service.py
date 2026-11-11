@@ -30,7 +30,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import object_storage
+from app.core import file_sniff, object_storage
 from app.core.config import settings
 from app.core.exceptions import BadGatewayError, BadRequestError, NotFoundError
 from app.core.money import money as _money
@@ -289,9 +289,7 @@ async def set_supplier_items(
 #: ``<kind>_content_type`` column pair on ``Supplier``.
 DOCUMENT_KINDS = ("trn_certificate", "trade_license")
 
-_DOCUMENT_EXT = object_storage.PRIVATE_DOCUMENT_EXT
-
-DOCUMENT_MAX_BYTES = object_storage.PRIVATE_DOCUMENT_MAX_BYTES
+DOCUMENT_MAX_BYTES = file_sniff.MAX_BYTES
 
 _DOCUMENT_LABEL = {
     "trn_certificate": "VAT (TRN) certificate",
@@ -316,13 +314,8 @@ async def store_document(
     is deleted rather than left orphaned in the bucket.
     """
     label = _DOCUMENT_LABEL[kind]
-    ext = _DOCUMENT_EXT.get(content_type)
-    if ext is None:
-        raise BadRequestError(f"{label} must be a JPEG, PNG, WebP or PDF")
-    if not body:
-        raise BadRequestError(f"No {label.lower()} file was uploaded")
-    if len(body) > DOCUMENT_MAX_BYTES:
-        raise BadRequestError(f"{label} file is too large (max 10 MB)")
+    # The bytes decide the stored type, not the client's label (file_sniff).
+    content_type, ext = file_sniff.resolve(body, content_type, label)
     key = _document_key(supplier.id, kind, ext)
     previous_key = getattr(supplier, f"{kind}_object_key")
     try:

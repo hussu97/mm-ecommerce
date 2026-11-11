@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import logging
@@ -15,7 +16,7 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core import object_storage
+from app.core import file_sniff, object_storage
 from app.core import search as search_text
 from app.core.config import settings
 from app.core.deps import get_db
@@ -1319,7 +1320,9 @@ async def _serialise_po(
     payload.supplier_name = supplier.name if supplier else None
     payload.has_invoice = bool(purchase_order.invoice_object_key)
     if sign_invoice and purchase_order.invoice_object_key:
-        payload.invoice_url = object_storage.signed_url(
+        # IAM signBlob round-trip — blocking network I/O, so off the event loop.
+        payload.invoice_url = await asyncio.to_thread(
+            object_storage.signed_url,
             bucket=settings.GCS_INVOICE_BUCKET,
             key=purchase_order.invoice_object_key,
         )
@@ -2081,41 +2084,22 @@ def _invoice_object_key(po_id: uuid.UUID, branch_id: uuid.UUID, ext: str) -> str
     return f"purchase-orders/{branch_id}/{po_id}/invoice{ext}"
 
 
-_INVOICE_EXT = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "application/pdf": ".pdf",
-}
-
 #: Cap an invoice upload at 10 MB so a large body cannot exhaust worker memory.
-_INVOICE_MAX_BYTES = 10 * 1024 * 1024
+_INVOICE_MAX_BYTES = file_sniff.MAX_BYTES
 
 
-async def _store_invoice_from_request(
-    db: AsyncSession, purchase_order: PurchaseOrder, request: Request
+async def _put_invoice(
+    purchase_order: PurchaseOrder, body: bytes, content_type: str, ext: str
 ) -> None:
-    """Read the raw request body as a PO invoice, validate its type/size, store it
-    in the private finance bucket under a deterministic key and drop any previous
-    object. Shared by the admin and till upload endpoints."""
-    content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
-    ext = _INVOICE_EXT.get(content_type)
-    if ext is None:
-        raise BadRequestError("Invoice must be a JPEG, PNG, WebP or PDF")
-    # Reject an oversized upload before reading the body into memory.
-    declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > _INVOICE_MAX_BYTES:
-        raise BadRequestError("Invoice file is too large (max 10 MB)")
-    body = await request.body()
-    if not body:
-        raise BadRequestError("No invoice file was uploaded")
-    if len(body) > _INVOICE_MAX_BYTES:
-        raise BadRequestError("Invoice file is too large (max 10 MB)")
+    """Upload a validated invoice under its deterministic key, drop any previous
+    object, and point the PO at it. Both GCS calls are blocking network I/O and
+    run off the event loop; a failure propagates exactly as it always has."""
     key = _invoice_object_key(purchase_order.id, purchase_order.branch_id, ext)
     # A re-upload with a different extension writes a new key; delete the old
     # object so it does not orphan in the bucket.
     previous_key = purchase_order.invoice_object_key
-    object_storage.upload_object(
+    await asyncio.to_thread(
+        object_storage.upload_object,
         bucket=settings.GCS_INVOICE_BUCKET,
         key=key,
         body=body,
@@ -2123,11 +2107,43 @@ async def _store_invoice_from_request(
         cache_control="private, no-store",
     )
     if previous_key and previous_key != key:
-        object_storage.delete_object(
-            bucket=settings.GCS_INVOICE_BUCKET, key=previous_key
+        await asyncio.to_thread(
+            object_storage.delete_object,
+            bucket=settings.GCS_INVOICE_BUCKET,
+            key=previous_key,
         )
     purchase_order.invoice_object_key = key
     purchase_order.invoice_content_type = content_type
+
+
+def _decode_invoice_base64(invoice_image_base64: str) -> bytes:
+    try:
+        body = base64.b64decode(invoice_image_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise BadRequestError("Invoice image is not valid base64") from exc
+    if not body:
+        raise BadRequestError("Invoice image is empty")
+    return body
+
+
+async def _store_invoice_from_request(
+    db: AsyncSession, purchase_order: PurchaseOrder, request: Request
+) -> None:
+    """Read the raw request body as a PO invoice, validate its type/size, store it
+    in the private finance bucket under a deterministic key and drop any previous
+    object. Shared by the admin and till upload endpoints.
+
+    The stored type is what the bytes really are (``file_sniff``): a disguised
+    file is refused, a mislabelled genuine scan is stored under its true type."""
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
+    file_sniff.check_declared(content_type, "Invoice")
+    # Reject an oversized upload before reading the body into memory.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _INVOICE_MAX_BYTES:
+        raise BadRequestError("Invoice file is too large (max 10 MB)")
+    body = await request.body()
+    content_type, ext = file_sniff.resolve(body, content_type, "Invoice")
+    await _put_invoice(purchase_order, body, content_type, ext)
     await db.flush()
 
 
@@ -2140,32 +2156,10 @@ async def _store_invoice_from_base64(
     """As ``_store_invoice_from_request`` but from a base64 payload (the till's
     JSON client). Same validation, key and previous-object cleanup."""
     content_type = (invoice_content_type or "").strip()
-    ext = _INVOICE_EXT.get(content_type)
-    if ext is None:
-        raise BadRequestError("Invoice must be a JPEG, PNG, WebP or PDF")
-    try:
-        body = base64.b64decode(invoice_image_base64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise BadRequestError("Invoice image is not valid base64") from exc
-    if not body:
-        raise BadRequestError("Invoice image is empty")
-    if len(body) > _INVOICE_MAX_BYTES:
-        raise BadRequestError("Invoice file is too large (max 10 MB)")
-    key = _invoice_object_key(purchase_order.id, purchase_order.branch_id, ext)
-    previous_key = purchase_order.invoice_object_key
-    object_storage.upload_object(
-        bucket=settings.GCS_INVOICE_BUCKET,
-        key=key,
-        body=body,
-        content_type=content_type,
-        cache_control="private, no-store",
-    )
-    if previous_key and previous_key != key:
-        object_storage.delete_object(
-            bucket=settings.GCS_INVOICE_BUCKET, key=previous_key
-        )
-    purchase_order.invoice_object_key = key
-    purchase_order.invoice_content_type = content_type
+    file_sniff.check_declared(content_type, "Invoice")
+    body = _decode_invoice_base64(invoice_image_base64)
+    content_type, ext = file_sniff.resolve(body, content_type, "Invoice")
+    await _put_invoice(purchase_order, body, content_type, ext)
     await db.flush()
 
 
@@ -2574,23 +2568,20 @@ async def pos_create_purchase_order(
         )
 
     invoice_key: str | None = None
+    invoice_content_type: str | None = None
     if data.invoice_image_base64:
         content_type = (data.invoice_content_type or "").strip()
-        ext = _INVOICE_EXT.get(content_type)
-        if ext is None:
-            raise BadRequestError("Invoice must be a JPEG, PNG, WebP or PDF")
-        try:
-            body = base64.b64decode(data.invoice_image_base64, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise BadRequestError("Invoice image is not valid base64") from exc
-        if not body:
-            raise BadRequestError("Invoice image is empty")
+        file_sniff.check_declared(content_type, "Invoice")
+        body = _decode_invoice_base64(data.invoice_image_base64)
+        # Stored under the type the bytes really are, not the iPad's label.
+        invoice_content_type, ext = file_sniff.resolve(body, content_type, "Invoice")
         invoice_key = _invoice_object_key(uuid.uuid4(), data.branch_id, ext)
-        object_storage.upload_object(
+        await asyncio.to_thread(
+            object_storage.upload_object,
             bucket=settings.GCS_INVOICE_BUCKET,
             key=invoice_key,
             body=body,
-            content_type=content_type,
+            content_type=invoice_content_type,
             cache_control="private, no-store",
         )
 
@@ -2602,7 +2593,7 @@ async def pos_create_purchase_order(
         warehouse_id=data.warehouse_id,
         data=data,
         invoice_object_key=invoice_key,
-        invoice_content_type=data.invoice_content_type if invoice_key else None,
+        invoice_content_type=invoice_content_type,
     )
     reloaded = await _load_po(db, purchase_order.id)
     await _refresh_vat_ledger_for_po(db, reloaded)

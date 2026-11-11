@@ -66,6 +66,7 @@ VAT-inclusive (×1.05, `_fee_incl_vat`), and consumers take the VAT back out as
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -1734,8 +1735,11 @@ class NoonClient(BaseAggregatorClient):
                     # source is not yet pinned, and noon's anti-bot cookie has to
                     # be warm for the RMS host to answer over httpx at all. Until
                     # both are settled, the rendered CSV stays the archived doc.
-                    archive = self._archive_statement_csv(
-                        stmt_ref, raw_by_stmt.get(stmt_ref, [])
+                    # Renders + uploads to GCS (blocking) — off the event loop.
+                    archive = await asyncio.to_thread(
+                        self._archive_statement_csv,
+                        stmt_ref,
+                        raw_by_stmt.get(stmt_ref, []),
                     )
                     if archive is not None:
                         statements[idx] = replace(
