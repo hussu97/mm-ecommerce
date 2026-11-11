@@ -75,8 +75,12 @@ UPLOAD_OK=true
 _age_args=()
 # Word-split on purpose (commas turned into spaces): one recipient per word.
 # age recipients are `age1…`/`ssh-…` tokens with no glob characters.
+# `:-` because the script runs under `set -u` and the variable is optional:
+# unset (no secret configured) must mean "unencrypted + warning", not a crash
+# that aborts the pre-migration backup.
+_age_recipients="${BACKUP_AGE_RECIPIENT:-}"
 # shellcheck disable=SC2086
-for _r in ${BACKUP_AGE_RECIPIENT//,/ }; do
+for _r in ${_age_recipients//,/ }; do
   _age_args+=(-r "$_r")
 done
 if [ "${#_age_args[@]}" -gt 0 ]; then

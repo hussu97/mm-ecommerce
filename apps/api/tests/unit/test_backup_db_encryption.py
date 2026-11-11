@@ -31,7 +31,11 @@ RESTORE_DB = ROOT / "scripts" / "restore-db.sh"
 FAKE_DUMP = "-- fake pg_dump\nCREATE TABLE alembic_version (version_num text);\n"
 FAKE_RECIPIENT = "age1stubrecipientstubrecipientstubrecipientstubrecipientstub"
 
-pytestmark = pytest.mark.skipif(not shutil.which("bash"), reason="bash not available")
+#: The first `bash` on the real PATH, resolved once. The scripts run under a
+#: stubbed PATH, and on a Mac `/bin/bash` is 3.2, which ignores `set -u` on
+#: `${VAR//…}` — the bug that slipped past a local run and failed CI's bash 5.
+BASH = shutil.which("bash")
+pytestmark = pytest.mark.skipif(not BASH, reason="bash not available")
 
 
 def _write_exe(path: Path, body: str) -> None:
@@ -99,7 +103,7 @@ def _run(env: dict, recipient: str | None = None, keep: int = 5):
         "KEEP_BACKUPS": str(keep),
     }
     return subprocess.run(
-        ["bash", str(BACKUP_DB)],
+        [BASH, str(BACKUP_DB)],
         env=proc_env,
         capture_output=True,
         text=True,
@@ -207,7 +211,7 @@ def test_restore_refuses_an_encrypted_backup_without_an_identity(tmp_path):
     f = tmp_path / "mm_ecommerce_20260101_020000.sql.gz.age"
     f.write_bytes(b"x")
     result = subprocess.run(
-        ["bash", str(RESTORE_DB), str(f)],
+        [BASH, str(RESTORE_DB), str(f)],
         env={"PATH": "/usr/bin:/bin", "DEPLOY_DIR": str(tmp_path)},
         capture_output=True,
         text=True,
