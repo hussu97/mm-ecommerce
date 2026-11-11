@@ -42,6 +42,15 @@ from app.services.people import employee_service as svc
 router = APIRouter()
 
 
+def _signed(f: private_documents.SignedFile) -> SignedDocumentUrl:
+    return SignedDocumentUrl(
+        url=f.url,
+        download_url=f.download_url,
+        filename=f.filename,
+        content_type=f.content_type,
+    )
+
+
 async def _read_body(request: Request) -> tuple[bytes, str]:
     # Refuse an oversized upload before reading the body into memory.
     declared = request.headers.get("content-length")
@@ -194,7 +203,7 @@ async def get_photo(
     _: User = Depends(require_superadmin()),
 ):
     employee = await svc.get_employee(db, employee_id)
-    return SignedDocumentUrl(url=await svc.photo_url(employee))
+    return _signed(await svc.photo_file(employee))
 
 
 @router.delete("/{employee_id}/photo", response_model=EmployeeResponse)
@@ -324,7 +333,7 @@ async def get_document_file(
 ):
     employee = await svc.get_employee(db, employee_id)
     row = await svc.get_document(db, employee, document_id)
-    return SignedDocumentUrl(url=await svc.document_file_url(row))
+    return _signed(await svc.document_file(employee, row))
 
 
 @router.delete(

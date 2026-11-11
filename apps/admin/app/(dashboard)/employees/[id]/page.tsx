@@ -22,6 +22,7 @@ import { DocumentForm } from '@/components/people/DocumentForm';
 import { DocumentExpiry } from '@/components/people/DocumentExpiry';
 import { EmployeeForm } from '@/components/people/EmployeeForm';
 import { useExpiringDocuments } from '@/components/people/ExpiringDocuments';
+import { useFilePreview } from '@/components/ui/FilePreview';
 
 /**
  * One employee: profile, photo, and each document's full history — the cycle
@@ -31,20 +32,6 @@ import { useExpiringDocuments } from '@/components/people/ExpiringDocuments';
 
 function errorText(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
-}
-
-/** Open a signed URL in a new tab — opened synchronously so the popup blocker
- *  allows it, then pointed at the URL once the API returns it. */
-async function openSigned(get: () => Promise<SignedDocumentUrl>, onError: (m: string) => void) {
-  const tab = window.open('', '_blank');
-  try {
-    const { url } = await get();
-    if (tab) tab.location.href = url;
-    else window.location.href = url;
-  } catch (err) {
-    tab?.close();
-    onError(errorText(err, 'Could not open the document.'));
-  }
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -68,23 +55,24 @@ export default function EmployeePage() {
   const [entities, setEntities] = useState<LegalEntity[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [accounts, setAccounts] = useState<Staff[]>([]);
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<SignedDocumentUrl | null>(null);
   const [loadError, setLoadError] = useState('');
   const [editingProfile, setEditingProfile] = useState(false);
   const [form, setForm] = useState<{ type: EmployeeDocType; doc?: EmployeeDocument } | null>(null);
   const [busy, setBusy] = useState(false);
+  const { preview, node: previewNode } = useFilePreview();
 
   const load = useCallback(async () => {
     setLoadError('');
     try {
       const e = await employeesApi.get(id);
       setEmployee(e);
-      setPhotoUrl(null);
+      setPhoto(null);
       if (e.has_photo) {
         employeesApi
           .photoUrl(e.id)
-          .then((r) => setPhotoUrl(r.url))
-          .catch(() => setPhotoUrl(null));
+          .then(setPhoto)
+          .catch(() => setPhoto(null));
       }
     } catch (err) {
       setLoadError(errorText(err, 'Could not load the employee.'));
@@ -185,8 +173,8 @@ export default function EmployeePage() {
 
   const entity = entities.find((e) => e.id === employee.legal_entity_id);
   const branch = branches.find((b) => b.id === employee.branch_id);
-  const viewFile = (doc: EmployeeDocument) =>
-    void openSigned(() => employeesApi.documentFileUrl(employee.id, doc.id), toast.error);
+  const viewFile = (doc: EmployeeDocument, label: string) =>
+    preview(`${employee.full_name} — ${label}`, () => employeesApi.documentFileUrl(employee.id, doc.id));
 
   return (
     <Page>
@@ -222,10 +210,17 @@ export default function EmployeePage() {
         <section className="space-y-4 border border-gray-200 bg-white p-4 font-body">
           <div className="flex flex-col items-center gap-2">
             <div className="flex h-40 w-32 items-center justify-center overflow-hidden border border-gray-200 bg-gray-50">
-              {photoUrl ? (
-                // A short-lived signed URL from the private bucket.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={photoUrl} alt={employee.full_name} className="h-full w-full object-cover" />
+              {photo ? (
+                <button
+                  type="button"
+                  className="h-full w-full cursor-zoom-in"
+                  title="View photo"
+                  onClick={() => preview(`${employee.full_name} — Photo`, photo)}
+                >
+                  {/* A short-lived signed URL from the private bucket. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photo.url} alt={employee.full_name} className="h-full w-full object-cover" />
+                </button>
               ) : (
                 <span className="material-icons text-5xl text-gray-300">person</span>
               )}
@@ -287,7 +282,7 @@ export default function EmployeePage() {
                   <DocumentRow
                     doc={current}
                     spec={spec}
-                    onView={() => viewFile(current)}
+                    onView={() => viewFile(current, spec.label)}
                     onEdit={() => setForm({ type: spec.doc_type as EmployeeDocType, doc: current })}
                     onDelete={() => void removeDocument(current, spec.label)}
                     showDetails
@@ -306,7 +301,7 @@ export default function EmployeePage() {
                           key={doc.id}
                           doc={doc}
                           spec={spec}
-                          onView={() => viewFile(doc)}
+                          onView={() => viewFile(doc, spec.label)}
                           onEdit={() => setForm({ type: spec.doc_type as EmployeeDocType, doc })}
                           onDelete={() => void removeDocument(doc, spec.label)}
                         />
@@ -347,6 +342,7 @@ export default function EmployeePage() {
           }}
         />
       )}
+      {previewNode}
     </Page>
   );
 }

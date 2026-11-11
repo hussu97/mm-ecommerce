@@ -7,6 +7,7 @@ import type { LegalEntity } from '@/lib/pos-types';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { RowAction } from '@/components/ui/DataTable';
 import { ExpiryBadge, LegalEntityPaperwork } from '@/components/pos/LegalEntityPaperwork';
+import { useFilePreview } from '@/components/ui/FilePreview';
 
 /**
  * The trade licences orders are booked under. Melting Moments trades under two:
@@ -45,6 +46,7 @@ function withCcList(d: Record<string, unknown>): Record<string, unknown> {
 export default function LegalEntitiesTab() {
   const load = useCallback(() => legalEntitiesApi.list(), []);
   const [openId, setOpenId] = useState<string | null>(null);
+  const { preview, node: previewNode } = useFilePreview();
   return (
     <ResourcePage<LegalEntity>
       title="Legal entities"
@@ -54,6 +56,8 @@ export default function LegalEntitiesTab() {
       update={(id, d) => legalEntitiesApi.update(id, withCcList(d) as never)}
       remove={(id) => legalEntitiesApi.remove(id)}
       searchKeys={['legal_name', 'brand_name', 'reference']}
+      // The logo preview: a fixed overlay, so where it mounts does not matter.
+      belowTable={previewNode}
       defaults={{ vat_registered: true, invoice_title: 'Tax Invoice', is_active: true }}
       columns={[
         {
@@ -64,14 +68,24 @@ export default function LegalEntitiesTab() {
           render: (e) => (
             <span className="flex items-center gap-2">
               {e.logo_url ? (
-                <Image
-                  src={e.logo_url}
-                  alt=""
-                  width={20}
-                  height={20}
-                  className="rounded-sm object-contain"
-                  unoptimized
-                />
+                <button
+                  type="button"
+                  className="shrink-0 cursor-zoom-in"
+                  title="View logo"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    preview(`${e.brand_name} — Logo`, { url: e.logo_url! });
+                  }}
+                >
+                  <Image
+                    src={e.logo_url}
+                    alt=""
+                    width={20}
+                    height={20}
+                    className="rounded-sm object-contain"
+                    unoptimized
+                  />
+                </button>
               ) : null}
               <span className="font-medium">{e.brand_name}</span>
             </span>

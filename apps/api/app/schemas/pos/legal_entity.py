@@ -175,7 +175,11 @@ class TradeLicenseResponse(ORMModel):
 
 
 class LegalEntityDocumentUrl(BaseModel):
-    """A short-lived signed URL to one legal-entity document in the private bucket."""
+    """A legal-entity document in the private bucket, signed twice: `url` shows
+    it inline, `download_url` (Content-Disposition: attachment) saves it as
+    `filename`."""
 
     url: str
+    download_url: str
+    filename: str
     content_type: str | None = None

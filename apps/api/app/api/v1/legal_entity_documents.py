@@ -13,6 +13,7 @@ import uuid
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import private_documents
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError
 from app.core.permissions import require
@@ -29,6 +30,16 @@ from app.services import audit_service, crud_service
 from app.services.orders import legal_entity_documents as docs
 
 router = APIRouter()
+
+
+def _signed(f: private_documents.SignedFile) -> LegalEntityDocumentUrl:
+    return LegalEntityDocumentUrl(
+        url=f.url,
+        download_url=f.download_url,
+        filename=f.filename,
+        content_type=f.content_type,
+    )
+
 
 _MANAGE = "admin.settings.manage"
 
@@ -207,10 +218,7 @@ async def get_trade_license_document(
     """A short-lived signed URL to view or download this cycle's licence."""
     entity = await _entity(db, entity_id)
     row = await docs.get_license(db, entity, license_id)
-    return LegalEntityDocumentUrl(
-        url=await docs.license_document_url(row),
-        content_type=row.document_content_type,
-    )
+    return _signed(await docs.license_document(entity, row))
 
 
 @router.delete(
@@ -263,10 +271,7 @@ async def get_vat_certificate(
     _: User = Depends(require(_MANAGE)),
 ):
     entity = await _entity(db, entity_id)
-    return LegalEntityDocumentUrl(
-        url=await docs.vat_certificate_url(entity),
-        content_type=entity.vat_certificate_content_type,
-    )
+    return _signed(await docs.vat_certificate(entity))
 
 
 @router.delete("/{entity_id}/vat-certificate", response_model=LegalEntityResponse)

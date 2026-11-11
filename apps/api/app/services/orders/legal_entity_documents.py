@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import object_storage
+from app.core import private_documents as storage
 from app.core.config import settings
 from app.core.exceptions import (
     BadGatewayError,
@@ -183,10 +184,19 @@ async def remove_license_document(
     return row
 
 
-async def license_document_url(row: LegalEntityTradeLicense) -> str:
+async def license_document(
+    entity: LegalEntity, row: LegalEntityTradeLicense
+) -> storage.SignedFile:
     if not row.document_object_key:
         raise NotFoundError("This trade licence has no document")
-    return await _sign(row.document_object_key)
+    return await storage.sign_file(
+        row.document_object_key,
+        title=(
+            f"{entity.legal_name} - Trade licence {row.license_number}"
+            f" - expires {row.expiry_date.isoformat()}"
+        ),
+        content_type=row.document_content_type,
+    )
 
 
 # ─── VAT certificate ──────────────────────────────────────────────────────────
@@ -219,10 +229,14 @@ async def remove_vat_certificate(db: AsyncSession, entity: LegalEntity) -> Legal
     return entity
 
 
-async def vat_certificate_url(entity: LegalEntity) -> str:
+async def vat_certificate(entity: LegalEntity) -> storage.SignedFile:
     if not entity.vat_certificate_object_key:
         raise NotFoundError("This entity has no VAT certificate on file")
-    return await _sign(entity.vat_certificate_object_key)
+    return await storage.sign_file(
+        entity.vat_certificate_object_key,
+        title=f"{entity.legal_name} - VAT certificate",
+        content_type=entity.vat_certificate_content_type,
+    )
 
 
 # ─── Storage plumbing ─────────────────────────────────────────────────────────
@@ -252,16 +266,6 @@ async def _upload(key: str, body: bytes, content_type: str, label: str) -> None:
         )
     except Exception as exc:
         raise BadGatewayError(f"Failed to store the {label}") from exc
-
-
-async def _sign(key: str) -> str:
-    # Signing goes through the IAM signBlob API — network I/O, off the loop.
-    url = await asyncio.to_thread(
-        object_storage.signed_url, bucket=settings.GCS_INVOICE_BUCKET, key=key
-    )
-    if url is None:
-        raise BadGatewayError("Could not sign a download link for the document")
-    return url
 
 
 async def _delete_quietly(key: str) -> None:

@@ -5,7 +5,6 @@ import { legalEntitiesApi, inventoryApi } from '@/lib/pos-api';
 import type {
   Emirate,
   LegalEntity,
-  LegalEntityDocumentUrl,
   TradeLicense,
   TradeLicenseAuthorityOption,
   TradeLicenseWrite,
@@ -15,6 +14,9 @@ import { extractText } from '@/lib/ocr/extract';
 import { parseTradeLicense } from '@/lib/ocr/parse';
 import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
+import { useFilePreview, type PreviewSource } from '@/components/ui/FilePreview';
+
+type Preview = (title: string, source: PreviewSource) => void;
 
 /**
  * A legal entity's registration paperwork, opened under its row on the Legal
@@ -23,8 +25,8 @@ import { useConfirm, useToast } from '@/components/ui/feedback';
  * history — one row per issue→expiry cycle, each with its own scan. The cycle
  * that expires last is the current one, mirrored onto the entity's list row.
  *
- * Documents sit in the private finance bucket and open through a short-lived
- * signed link; nothing here is public.
+ * Documents sit in the private finance bucket and open in a preview pop-up
+ * through a short-lived signed link; nothing here is public.
  */
 
 export const EMIRATES: Emirate[] = [
@@ -103,20 +105,6 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
 
-/** Open a signed URL in a new tab. The tab opens synchronously so the popup
- *  blocker allows it, then follows the URL once the API returns it. */
-async function openSigned(fetchUrl: () => Promise<LegalEntityDocumentUrl>, onError: (m: string) => void) {
-  const tab = window.open('', '_blank');
-  try {
-    const res = await fetchUrl();
-    if (tab) tab.location.href = res.url;
-    else window.location.href = res.url;
-  } catch (err) {
-    tab?.close();
-    onError(errorText(err, 'Could not open the document.'));
-  }
-}
-
 function FileButton({
   label,
   onFile,
@@ -174,7 +162,7 @@ function vatDraft(e: LegalEntity): VatDraft {
   };
 }
 
-function VatSection({ entity, onSaved }: { entity: LegalEntity; onSaved: () => void }) {
+function VatSection({ entity, onSaved, preview }: { entity: LegalEntity; onSaved: () => void; preview: Preview }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
@@ -330,7 +318,9 @@ function VatSection({ entity, onSaved }: { entity: LegalEntity; onSaved: () => v
             <button
               type="button"
               className="text-primary hover:underline"
-              onClick={() => openSigned(() => legalEntitiesApi.vatCertificateUrl(entity.id), toast.error)}
+              onClick={() =>
+                preview(`${entity.legal_name} — VAT certificate`, () => legalEntitiesApi.vatCertificateUrl(entity.id))
+              }
             >
               View
             </button>
@@ -535,7 +525,15 @@ function toWrite(d: LicenseDraft): TradeLicenseWrite {
   };
 }
 
-function LicenseHistory({ entity, onChanged }: { entity: LegalEntity; onChanged: () => void }) {
+function LicenseHistory({
+  entity,
+  onChanged,
+  preview,
+}: {
+  entity: LegalEntity;
+  onChanged: () => void;
+  preview: Preview;
+}) {
   const toast = useToast();
   const confirm = useConfirm();
   const [rows, setRows] = useState<TradeLicense[] | null>(null);
@@ -709,7 +707,9 @@ function LicenseHistory({ entity, onChanged }: { entity: LegalEntity; onChanged:
                         type="button"
                         className="text-primary hover:underline"
                         onClick={() =>
-                          openSigned(() => legalEntitiesApi.tradeLicenseDocumentUrl(entity.id, row.id), toast.error)
+                          preview(`${entity.legal_name} — Trade licence ${row.license_number}`, () =>
+                            legalEntitiesApi.tradeLicenseDocumentUrl(entity.id, row.id),
+                          )
                         }
                       >
                         View document
@@ -738,10 +738,12 @@ function LicenseHistory({ entity, onChanged }: { entity: LegalEntity; onChanged:
 }
 
 export function LegalEntityPaperwork({ entity, onChanged }: { entity: LegalEntity; onChanged: () => void }) {
+  const { preview, node } = useFilePreview();
   return (
     <div className="grid gap-6 bg-gray-50 p-4">
-      <LicenseHistory entity={entity} onChanged={onChanged} />
-      <VatSection entity={entity} onSaved={onChanged} />
+      <LicenseHistory entity={entity} onChanged={onChanged} preview={preview} />
+      <VatSection entity={entity} onSaved={onChanged} preview={preview} />
+      {node}
     </div>
   );
 }
