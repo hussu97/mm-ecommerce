@@ -122,7 +122,10 @@ const nextConfig: NextConfig = {
               // Images are served from GCS (`storage.googleapis.com`, bucket
               // mm-product-images) and the media CDN. Cloudflare R2 was retired
               // — no product URL points at it — so its hosts are gone from here.
-              "img-src 'self' data: blob: https://storage.googleapis.com https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com https://*.clarity.ms https://c.bing.com",
+              // Scoped to the one bucket by path (P2-11): every other GCS
+              // bucket shares the hostname, so a bare host would allow any
+              // public object on Google Cloud Storage.
+              "img-src 'self' data: blob: https://storage.googleapis.com/mm-product-images/ https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com https://*.clarity.ms https://c.bing.com",
               // `uae.paymob.com` is the embedded Apple Pay SDK's API (intention
               // data, Apple's merchant validation, the pay call), and
               // `uae.checkout.paymob.com` the page it frames and prefetches. The
@@ -160,8 +163,15 @@ const nextConfig: NextConfig = {
     qualities: [75],
     remotePatterns: [
       {
+        // P2-11: the bucket, not the host. `storage.googleapis.com` serves
+        // every public GCS bucket in the world, so without a pathname
+        // `/_next/image` would fetch, resize and cache any of them on our bill
+        // and under our domain. Every stored image URL (products, categories,
+        // menu groups, CMS, couriers, legal-entity logos, enquiry photos) is in
+        // mm-product-images — the API's only public bucket (GCS_IMAGE_BUCKET).
         protocol: "https",
         hostname: "storage.googleapis.com",
+        pathname: "/mm-product-images/**",
       },
       {
         protocol: "https",

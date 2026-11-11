@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Restore PostgreSQL database from a backup file.
 # Usage: ./scripts/restore-db.sh <path-to-backup.sql.gz>
+#        AGE_IDENTITY=/dev/shm/mm-backup-identity.txt \
+#          ./scripts/restore-db.sh <path-to-backup.sql.gz.age>
+#
+# P1-5: backups taken with BACKUP_AGE_RECIPIENT set are age-encrypted
+# (`.sql.gz.age`). Decrypting needs the owner's offline identity (private key),
+# which never lives on the VM — pass a temporary copy via AGE_IDENTITY and
+# delete it afterwards (PRODUCTION.md Step 8a), or decrypt on a laptop first
+# and hand this script the resulting `.sql.gz`.
 #
 # F-OPS-8 rewrite. The old version only stopped `api` before dropping the
 # database — `pos-api`, both green slots (if a cutover happened to be
@@ -21,14 +29,43 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 
 if [ -z "$BACKUP_FILE" ]; then
   echo "Usage: $0 <path-to-backup.sql.gz>"
+  echo "       AGE_IDENTITY=<identity file> $0 <path-to-backup.sql.gz.age>"
   echo ""
   echo "Available backups:"
-  ls -lh "$DEPLOY_DIR/backups"/mm_ecommerce_*.sql.gz 2>/dev/null || echo "  (none found)"
+  ls -lh "$DEPLOY_DIR/backups"/mm_ecommerce_*.sql.gz "$DEPLOY_DIR/backups"/mm_ecommerce_*.sql.gz.age 2>/dev/null || echo "  (none found)"
   exit 1
 fi
 
 if [ ! -f "$BACKUP_FILE" ]; then
   echo "ERROR: Backup file not found: $BACKUP_FILE"
+  exit 1
+fi
+
+# The dump as plain SQL on stdout, whichever form it is stored in.
+case "$BACKUP_FILE" in
+  *.age)
+    : "${AGE_IDENTITY:?$BACKUP_FILE is age-encrypted — set AGE_IDENTITY to the backup identity (private key) file, see PRODUCTION.md Step 8a}"
+    if ! command -v age >/dev/null 2>&1; then
+      echo "ERROR: $BACKUP_FILE is age-encrypted but 'age' is not installed (sudo apt-get install -y age)."
+      exit 1
+    fi
+    if [ ! -r "$AGE_IDENTITY" ]; then
+      echo "ERROR: AGE_IDENTITY file not readable: $AGE_IDENTITY"
+      exit 1
+    fi
+    _dump_sql() { age -d -i "$AGE_IDENTITY" "$BACKUP_FILE" | gunzip -c; }
+    ;;
+  *)
+    _dump_sql() { gunzip -c "$BACKUP_FILE"; }
+    ;;
+esac
+
+# Read the whole dump once BEFORE anything is stopped or dropped. A wrong
+# identity, a truncated download or a corrupt gzip stream all fail here, while
+# the live database is still untouched, rather than after `DROP DATABASE`.
+echo "==> Checking the backup decrypts and decompresses cleanly..."
+if ! _dump_sql > /dev/null; then
+  echo "ERROR: could not read $BACKUP_FILE (wrong AGE_IDENTITY, or a corrupt/truncated file). Nothing was changed."
   exit 1
 fi
 
@@ -120,8 +157,14 @@ echo "==> Restoring from backup..."
 # pipeline's exit status psql's, not gunzip's, so a failure here stops the
 # script — deliberately, before the "restart everything" step: a database a
 # human needs to look at should stay down, not get restarted on top of.
-gunzip -c "$BACKUP_FILE" | \
-  _compose exec -T postgres \
+#
+# NOT through `_compose`: that wrapper redirects stdin from /dev/null (right
+# for every other call here), which inside a pipeline silently replaces the
+# dump with an empty stream — psql then "restores" nothing, exits 0, and the
+# alembic_version check below fails against an empty database that has
+# already been dropped.
+_dump_sql | \
+  docker compose -f "$COMPOSE_FILE" --profile green exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" "${POSTGRES_DB}"
 
 echo "==> Verifying the restore looks like a real mm_ecommerce database..."

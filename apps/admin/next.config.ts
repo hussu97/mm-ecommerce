@@ -53,8 +53,17 @@ const nextConfig: NextConfig = {
       {
         // Where the catalogue's images live: GCS bucket mm-product-images, and
         // where new admin uploads now go too. Cloudflare R2 was retired.
+        //
+        // P2-11: scoped to that bucket by path — the hostname alone matches
+        // every public GCS bucket, so `/_next/image` would proxy and resize any
+        // of them. Signed URLs into the private `melting-moments-data` bucket
+        // (invoices, employee photos/documents) are rendered with a plain
+        // <img>/<iframe>, never next/image, so they are unaffected; a new
+        // next/image over a signed URL would need `unoptimized` (a signed URL
+        // expires, so it must not be cached by the optimizer anyway).
         protocol: "https",
         hostname: "storage.googleapis.com",
+        pathname: "/mm-product-images/**",
       },
       {
         // The media CDN alias in front of the same bucket.
