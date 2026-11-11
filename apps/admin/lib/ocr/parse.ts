@@ -548,12 +548,18 @@ const VIZ_NAME = /^[A-Z][A-Z' -]{1,40}$/;
 /** The value printed under a visual-zone label ("Surname" / "TAPSIN"), only
  *  when it reads as a name — the hologram behind these fields often turns
  *  them into noise. */
-function vizValue(text: string, label: RegExp): string | undefined {
+function vizValue(text: string, label: RegExp, within = 1): string | undefined {
   const lines = text.split('\n').map((l) => l.trim());
   for (let i = 0; i < lines.length; i++) {
     if (!label.test(lines[i])) continue;
-    const next = lines.slice(i + 1).find((l) => l.length > 0);
-    if (next && VIZ_NAME.test(next)) return next.replace(/\s+/g, ' ');
+    // The first `within` non-empty lines under the label; a date or noise
+    // between label and value (OCR's sparse pass) is skipped over.
+    const next = lines
+      .slice(i + 1)
+      .filter((l) => l.length > 0)
+      .slice(0, within)
+      .find((l) => VIZ_NAME.test(l));
+    if (next) return next.replace(/\s+/g, ' ');
   }
   return undefined;
 }
@@ -600,12 +606,20 @@ export function parsePassport(raw: string, hint: PassportHint = {}): DocumentFie
     labelled && out.expiry_date && labelled < out.expiry_date && labelled !== out.person.date_of_birth
       ? labelled
       : guessIssue(dates, out);
-  const place = first(
-    text,
-    /(?:Place\s*of\s*Issue|Issuing\s*Authority|Authority)\s*[:/]?\s*([A-Z][A-Za-z ,.-]{2,40})(?:\n|$)/,
-  );
-  if (place) out.details.place_of_issue = place;
-  const pob = first(text, /Place\s*of\s*Birth\s*[:/]?\s*([A-Z][A-Za-z ,.-]{2,40})(?:\n|$)/);
+  // The printed issuing authority ("DFA PAGADIAN") beats the MRZ's country
+  // code. OCR mangles these small labels ("//ssuing cuthority"), hence the
+  // loose patterns; Philippine passports also give it away by shape.
+  const authority =
+    sameLineValue(text, /Place\s*of\s*Issue|Issuing\s*Authority/i, /[A-Z][A-Z ,.-]{2,40}/) ??
+    vizValue(text, /Place\s*of\s*Issue|[il]?ssuing\s*\S?uthority/i, 3) ??
+    first(text, /\b(DFA[ \t]+[A-Z]{3,}(?:[ \t][A-Z]{3,})?)\b/);
+  if (authority) {
+    out.details.place_of_issue = authority;
+    out.issuing_authority = authority;
+  }
+  const pob =
+    sameLineValue(text, /Place\s*of\s*Birth/i, /[A-Z][A-Z ,.-]{2,40}/) ??
+    vizValue(text, /Place\W+\w{0,3}\W*birth/i);
   if (pob) out.details.place_of_birth = pob;
   return out;
 }
@@ -709,44 +723,65 @@ export function parseVisa(raw: string): DocumentFields {
       out.issuing_authority = emirate;
     }
   }
-  const uid = first(text, /U\.?\s*I\.?\s*D\.?\s*(?:No|Number)?\.?\s*:?\s*(\d{6,12})/i);
+  // Older residence stickers print each value LEFT of its English label (the
+  // Arabic label is further right), and OCR garbles the small labels — so a
+  // value is taken from the label's own line, after or before it, and the
+  // fields with a fixed shape are found by shape when the label is unreadable.
+  const uid =
+    first(text, /U\.?\s*I\.?\s*D\.?\s*(?:No|Number)?\.?[ \t]*:?[ \t]*(\d{6,15})/i) ??
+    // The U.I.D. box carries the 15-digit identity number (784-YYYY-…).
+    first(text, /\b(784\d{12})\b/);
   if (uid) out.details.uid_number = uid;
-  const passport = first(text, /Passport\s*(?:No|Number)\.?\s*:?\s*([A-Z]{0,2}\d{6,9}[A-Z]?)/i);
+  const passport =
+    first(text, /Passport\s*(?:No|Number)\.?[ \t]*:?[ \t]*([A-Z]{0,2}\d{6,9}[A-Z]?)/i) ??
+    first(text, /\b([A-Z]{1,2}\d{7,8}[A-Z]?)\b/);
   if (passport) out.details.passport_number = passport;
-  const profession = first(text, /Profession\s*:?\s*([A-Za-z][A-Za-z /&-]{2,60}?)\s*(?:\n|$)/);
+  const profession = sameLineValue(text, /Profession/i, /[A-Z][A-Z /&-]{2,60}/);
   if (profession) {
     out.details.profession = titleCase(profession);
     out.person.job_title = titleCase(profession);
   }
-  const sponsor = first(
-    text,
-    /(?:Sponsor|Employer)(?:\s*Name)?\s*:?\s*([A-Z][A-Za-z0-9 &.,'()-]{2,80}?)\s*(?:\n|$)/,
-  );
+  const sponsor = sameLineValue(text, /(?:Sponsor|Employer)(?:\s*Name)?/i, /[A-Z][A-Z0-9 &.,'()-]{2,80}/);
   if (sponsor) {
     out.details.sponsor = sponsor;
     out.person.establishment = sponsor;
   }
-  const place = first(text, /Place\s*of\s*Issue\s*:?\s*([A-Za-z][A-Za-z ]{2,30}?)\s*(?:\n|$)/);
+  const place = sameLineValue(text, /Place\s*of\s*Issue/i, /[A-Z][A-Za-z ]{2,30}/);
   if (place) {
     out.details.place_of_issue = titleCase(place);
     out.issuing_authority = titleCase(place);
   }
-  const name = first(text, /(?:Full\s*)?Name\s*:?\s*([A-Z][A-Z .'-]{3,80}?)\s*(?:\n|$)/);
+  const name = sameLineValue(text, /(?:Full\s*)?Name/i, /[A-Z][A-Z .'-]{3,80}/);
   if (name) out.person.full_name = titleCase(name);
-  const nationality = first(text, /Nationality\s*:?\s*([A-Za-z][A-Za-z ]{2,40}?)\s*(?:\n|$)/);
+  const nationality = sameLineValue(text, /Nationality/i, /[A-Z][A-Za-z ]{2,40}/);
   if (nationality) out.person.nationality = titleCase(nationality);
   const dob = dateNear(text, /Date\s*of\s*Birth|D\.?O\.?B/i, 40);
   if (dob) out.person.date_of_birth = dob;
 
-  const { issue, expiry } = issueAndExpiry(
-    text,
-    /Issue\s*Date|Date\s*of\s*Issue|Issuing\s*Date/i,
-    /Expiry\s*Date|Date\s*of\s*Expiry|Expiration\s*Date|Valid\s*Until/i,
-    { exclude: [dob], window: 40 },
-  );
-  out.issue_date = issue;
-  out.expiry_date = expiry;
+  // A residence visa carries only its issue and expiry dates (and, on the
+  // newer e-visa, the birth date), and the labels sit wherever the layout
+  // puts them — the old sticker prints "Expiry Date" between the two dates.
+  // So the order decides: the earlier is the issue, the later the expiry.
+  const dates = findDates(text)
+    .filter((d) => d !== dob)
+    .sort();
+  out.expiry_date = dates[dates.length - 1];
+  out.issue_date = dates.length >= 2 ? dates[0] : undefined;
   return out;
+}
+
+/**
+ * The value printed beside a label on the label's own line — after it
+ * ("Profession : NONE") or before it ("NONE     Profession", the old residence
+ * sticker's layout). Never crosses a line: OCR's sparse pass separates labels
+ * from values, and reading "the next line" there picks up noise.
+ */
+function sameLineValue(text: string, label: RegExp, value: RegExp): string | undefined {
+  const after = new RegExp(`${label.source}[ \\t]*[:.]?[ \\t]*(${value.source})[ \\t]*(?:\\n|$)`, 'm');
+  // `normalise` has already folded runs of spaces to one, so the value is the
+  // capitalised run straight before the label.
+  const before = new RegExp(`(?:^|[ \\t])(${value.source}?)[ \\t]+${label.source}`, 'm');
+  return clean(text.match(after)?.[1] ?? text.match(before)?.[1]);
 }
 
 export type TradeLicenseFields = {

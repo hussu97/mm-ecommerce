@@ -184,6 +184,20 @@ describe('passport names through a noisy MRZ', () => {
     );
   });
 
+  it('reads the printed authority and place of birth under garbled labels', () => {
+    const page = [
+      'Lugar ng kapanganakan/Place Bi birth',
+      'MANILA',
+      'Maykapangyarihang nagkaloob//ssuing cuthority',
+      '08 0CT 20',
+      'DFA MANILA',
+      passes,
+    ].join('\n\n');
+    const out = parsePassport(page);
+    expect(out.issuing_authority).toBe('DFA MANILA');
+    expect(out.details).toMatchObject({ place_of_issue: 'DFA MANILA', place_of_birth: 'MANILA' });
+  });
+
   it('snaps to the name on file and fills the printed-only middle name', () => {
     const page = `Apelyido/Surname\n\nSANTOS\n\nPangalan/ Given names\n\n5\n\nPanggitnang apelyido/Middle name\n\nPAS!\n\n${passes}`;
     const out = parsePassport(page, { knownName: 'Juan Dela Santos' });
@@ -193,6 +207,34 @@ describe('passport names through a noisy MRZ', () => {
 });
 
 describe('residence visa', () => {
+  it('reads the old sticker: values left of their labels, labels garbled, expiry label between the dates', () => {
+    // The layout (pdf/OCR text) of a real Sharjah residence sticker; identity values made up.
+    const out = parseVisa(
+      [
+        '                784000000000001 1 sss-ll ai',
+        'SHAR dam aay               301/2025/3/0001234 + 44',
+        ':         ay        P1234567A . fol oh',
+        'NONE     Profession',
+        'JUAN DELA CRUZ',
+        '.     2027/08/13      ay      2025/08/14     fuohd Jigs',
+        'Profession',
+        'Sse a rns',
+        '2027/08/13',
+        'Expiry Date',
+        '2025/08/14',
+      ].join('\n'),
+    );
+    expect(out.document_number).toBe('301/2025/3/0001234');
+    expect(out.issue_date).toBe('2025-08-14');
+    expect(out.expiry_date).toBe('2027-08-13');
+    expect(out.details).toMatchObject({
+      uid_number: '784000000000001',
+      passport_number: 'P1234567A',
+      profession: 'None',
+      place_of_issue: 'Sharjah',
+    });
+  });
+
   it('keeps every part of a four-part file number', () => {
     expect(parseVisa('File 301/2025/3/0035771\nExpiry Date 2027/08/13').document_number).toBe('301/2025/3/0035771');
   });
