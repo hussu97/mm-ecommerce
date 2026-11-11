@@ -25,6 +25,7 @@ hub never served reports that way to this token.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import io
@@ -1722,8 +1723,10 @@ class DeliverooClient(BaseAggregatorClient):
         if pdf_bytes is None:
             pdf_bytes = await self._invoice_file(session, statement_id, "invoice_pdf")
         try:
+            # Blocking GCS upload — off the event loop.
             if pdf_bytes:
-                return store_statement_invoice(
+                return await asyncio.to_thread(
+                    store_statement_invoice,
                     channel=self.channel,
                     statement_id=statement_id,
                     filename=f"{statement_id}.pdf",
@@ -1736,7 +1739,8 @@ class DeliverooClient(BaseAggregatorClient):
                     ),
                 )
             if csv_bytes:
-                return store_statement_invoice(
+                return await asyncio.to_thread(
+                    store_statement_invoice,
                     channel=self.channel,
                     statement_id=statement_id,
                     filename=f"{statement_id}.csv",

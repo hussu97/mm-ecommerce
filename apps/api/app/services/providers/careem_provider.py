@@ -46,6 +46,7 @@ windows sampled at build time.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -1153,7 +1154,9 @@ class CareemClient(BaseAggregatorClient):
                 logger.exception("careem invoice %s download failed", statement_id)
             if pdf is not None:
                 body, filename = pdf
-                stored = store_statement_invoice(
+                # Blocking GCS upload — off the event loop.
+                stored = await asyncio.to_thread(
+                    store_statement_invoice,
                     channel=self.channel,
                     statement_id=statement_id,
                     filename=filename,

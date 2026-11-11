@@ -131,7 +131,7 @@ def _db():
 async def test_store_puts_document_in_private_bucket(storage):
     supplier = _supplier()
     await supplier_service.store_document(
-        _db(), supplier, "trade_license", b"%PDF", "application/pdf"
+        _db(), supplier, "trade_license", b"%PDF-1.7\n", "application/pdf"
     )
     (upload,) = storage.uploads
     assert upload["bucket"] == supplier_service.settings.GCS_INVOICE_BUCKET
@@ -147,7 +147,7 @@ async def test_reupload_with_new_extension_deletes_old_object(storage):
     old_key = f"suppliers/{supplier.id}/trn_certificate.pdf"
     supplier.trn_certificate_object_key = old_key
     await supplier_service.store_document(
-        _db(), supplier, "trn_certificate", b"\xff\xd8", "image/jpeg"
+        _db(), supplier, "trn_certificate", b"\xff\xd8\xff\xe0", "image/jpeg"
     )
     assert storage.deletes == [old_key]
     assert supplier.trn_certificate_object_key.endswith("trn_certificate.jpg")

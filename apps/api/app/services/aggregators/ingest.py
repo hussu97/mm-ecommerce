@@ -1060,7 +1060,10 @@ async def ingest_keeta_finance_payloads(payloads: list[dict]) -> tuple[int, int]
     payouts_written = 0
     for payload in payloads:
         try:
-            result = keeta_provider.provider.parse_finance(payload)
+            # Parsing archives the invoice to GCS (blocking) — off the event loop.
+            result = await asyncio.to_thread(
+                keeta_provider.provider.parse_finance, payload
+            )
         except Exception:  # noqa: BLE001 — one bad payload must not fail the batch
             logger.exception("keeta finance payload parse failed — skipped")
             continue
@@ -1110,7 +1113,10 @@ async def ingest_deliveroo_finance_payloads(
     lines_written = 0
     for payload in payloads:
         try:
-            statement = deliveroo_provider.provider.parse_pushed_finance(payload)
+            # Parsing archives the VAT PDF to GCS (blocking) — off the event loop.
+            statement = await asyncio.to_thread(
+                deliveroo_provider.provider.parse_pushed_finance, payload
+            )
         except Exception:  # noqa: BLE001 — one bad payload must not fail the batch
             logger.exception("deliveroo finance payload parse failed — skipped")
             continue

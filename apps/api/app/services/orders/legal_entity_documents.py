@@ -26,7 +26,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import object_storage
+from app.core import file_sniff, object_storage
 from app.core import private_documents as storage
 from app.core.config import settings
 from app.core.exceptions import (
@@ -39,8 +39,7 @@ from app.models.legal_entity import LegalEntity, LegalEntityTradeLicense
 
 logger = logging.getLogger(__name__)
 
-DOCUMENT_MAX_BYTES = object_storage.PRIVATE_DOCUMENT_MAX_BYTES
-_DOCUMENT_EXT = object_storage.PRIVATE_DOCUMENT_EXT
+DOCUMENT_MAX_BYTES = file_sniff.MAX_BYTES
 
 
 # ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -158,7 +157,7 @@ async def store_license_document(
     body: bytes,
     content_type: str,
 ) -> LegalEntityTradeLicense:
-    ext = _validate(body, content_type, "Trade licence")
+    content_type, ext = file_sniff.resolve(body, content_type, "Trade licence")
     key = trade_license_key(entity, row.expiry_date, ext)
     await _upload(key, body, content_type, "trade licence")
     previous = row.document_object_key
@@ -205,7 +204,7 @@ async def license_document(
 async def store_vat_certificate(
     db: AsyncSession, entity: LegalEntity, body: bytes, content_type: str
 ) -> LegalEntity:
-    ext = _validate(body, content_type, "VAT certificate")
+    content_type, ext = file_sniff.resolve(body, content_type, "VAT certificate")
     key = vat_certificate_key(entity, ext)
     await _upload(key, body, content_type, "VAT certificate")
     previous = entity.vat_certificate_object_key
@@ -240,17 +239,6 @@ async def vat_certificate(entity: LegalEntity) -> storage.SignedFile:
 
 
 # ─── Storage plumbing ─────────────────────────────────────────────────────────
-
-
-def _validate(body: bytes, content_type: str, label: str) -> str:
-    ext = _DOCUMENT_EXT.get(content_type)
-    if ext is None:
-        raise BadRequestError(f"{label} must be a JPEG, PNG, WebP or PDF")
-    if not body:
-        raise BadRequestError(f"No {label.lower()} file was uploaded")
-    if len(body) > DOCUMENT_MAX_BYTES:
-        raise BadRequestError(f"{label} file is too large (max 10 MB)")
-    return ext
 
 
 async def _upload(key: str, body: bytes, content_type: str, label: str) -> None:

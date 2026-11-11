@@ -168,7 +168,7 @@ async def delete_employee(db: AsyncSession, employee: Employee) -> None:
 async def store_photo(
     db: AsyncSession, employee: Employee, body: bytes, content_type: str
 ) -> Employee:
-    ext = storage.validate(
+    content_type, ext = storage.validate(
         body, content_type, "Photo", allowed=storage.IMAGE_EXTENSIONS
     )
     key = photo_key(employee, ext)
@@ -297,7 +297,7 @@ async def store_document_file(
     db: AsyncSession, row: EmployeeDocument, body: bytes, content_type: str
 ) -> EmployeeDocument:
     label = EMPLOYEE_DOCUMENT_SPECS[row.doc_type]["label"]
-    ext = storage.validate(body, content_type, label)
+    content_type, ext = storage.validate(body, content_type, label)
     key = document_key(row, ext)
     await storage.upload(key, body, content_type, label.lower())
     previous = row.file_object_key

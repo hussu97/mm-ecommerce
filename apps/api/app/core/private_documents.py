@@ -13,15 +13,15 @@ import logging
 import re
 from dataclasses import dataclass
 
-from app.core import object_storage
+from app.core import file_sniff, object_storage
 from app.core.config import settings
-from app.core.exceptions import BadGatewayError, BadRequestError
+from app.core.exceptions import BadGatewayError
 
 logger = logging.getLogger(__name__)
 
-MAX_BYTES = object_storage.PRIVATE_DOCUMENT_MAX_BYTES
-EXTENSIONS = object_storage.PRIVATE_DOCUMENT_EXT
-IMAGE_EXTENSIONS = {k: v for k, v in EXTENSIONS.items() if k.startswith("image/")}
+MAX_BYTES = file_sniff.MAX_BYTES
+EXTENSIONS = file_sniff.DOCUMENT_TYPES
+IMAGE_EXTENSIONS = file_sniff.IMAGE_TYPES
 
 
 def validate(
@@ -30,21 +30,11 @@ def validate(
     label: str,
     *,
     allowed: dict[str, str] = EXTENSIONS,
-) -> str:
-    """The object-key extension for *content_type*, or a 400 naming *label*."""
-    ext = allowed.get(content_type)
-    if ext is None:
-        kinds = (
-            "JPEG, PNG or WebP"
-            if allowed is IMAGE_EXTENSIONS
-            else "JPEG, PNG, WebP or PDF"
-        )
-        raise BadRequestError(f"{label} must be a {kinds}")
-    if not body:
-        raise BadRequestError(f"No {label.lower()} file was uploaded")
-    if len(body) > MAX_BYTES:
-        raise BadRequestError(f"{label} file is too large (max 10 MB)")
-    return ext
+) -> tuple[str, str]:
+    """The ``(content_type, extension)`` to store *body* under, or a 400 naming
+    *label*. The type is the one the bytes really are (``file_sniff``), so a
+    mislabelled genuine scan is stored truthfully and a disguised file refused."""
+    return file_sniff.resolve(body, content_type, label, allowed=allowed)
 
 
 async def upload(key: str, body: bytes, content_type: str, label: str) -> None:

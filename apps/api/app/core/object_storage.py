@@ -26,18 +26,6 @@ logger = logging.getLogger(__name__)
 
 _client = None
 
-#: What a private registration document (a licence, a certificate) may be — a
-#: scan or a PDF — and the extension its object key takes.
-PRIVATE_DOCUMENT_EXT: dict[str, str] = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "application/pdf": ".pdf",
-}
-
-#: Same ceiling as a purchase-order invoice: a scan or PDF, not an archive.
-PRIVATE_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
-
 
 def _get_client():
     """Lazily build and cache a module-level `storage.Client()`.

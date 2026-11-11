@@ -2628,8 +2628,13 @@ class TalabatClient(BaseAggregatorClient):
             parsed = self._parse_bundle_bytes(bundle_bytes)
             # Archive the downloaded zip (the VAT-claim source document) to R2 and
             # stamp the invoice fields onto every statement parsed out of it.
-            parsed = self._archive_bundle(
-                parsed, bundle_bytes, from_date=win_start, to_date=win_end
+            # The archive is a blocking GCS upload — off the event loop.
+            parsed = await asyncio.to_thread(
+                self._archive_bundle,
+                parsed,
+                bundle_bytes,
+                from_date=win_start,
+                to_date=win_end,
             )
             logger.info(
                 "%s bundle %s – %s: %d detailed statements",
@@ -2983,7 +2988,10 @@ class TalabatClient(BaseAggregatorClient):
                             )
                         )
             enriched = replace(stmt, lines=lines) if lines else stmt
-            out.append(self._archive_attachments(enriched, documents))
+            # Blocking GCS uploads — off the event loop.
+            out.append(
+                await asyncio.to_thread(self._archive_attachments, enriched, documents)
+            )
         return out
 
     @staticmethod

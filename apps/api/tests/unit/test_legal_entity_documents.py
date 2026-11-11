@@ -246,7 +246,7 @@ def _db():
 
 async def test_vat_certificate_goes_to_the_private_bucket(storage):
     entity = _entity(vat="legal-entities/fatema/vat-certificate.jpg")
-    await docs.store_vat_certificate(_db(), entity, b"%PDF", "application/pdf")
+    await docs.store_vat_certificate(_db(), entity, b"%PDF-1.7\n", "application/pdf")
     (upload,) = storage.uploads
     assert upload["bucket"] == docs.settings.GCS_INVOICE_BUCKET
     assert upload["key"] == "legal-entities/fatema/vat-certificate.pdf"
@@ -279,8 +279,12 @@ async def test_each_cycle_has_its_own_document_key(storage):
     entity = _entity()
     old = _license(entity, date(2026, 11, 2))
     new = _license(entity, date(2027, 11, 2))
-    await docs.store_license_document(_db(), entity, old, b"%PDF", "application/pdf")
-    await docs.store_license_document(_db(), entity, new, b"%PDF", "application/pdf")
+    await docs.store_license_document(
+        _db(), entity, old, b"%PDF-1.7\n", "application/pdf"
+    )
+    await docs.store_license_document(
+        _db(), entity, new, b"%PDF-1.7\n", "application/pdf"
+    )
     assert [u["key"] for u in storage.uploads] == [
         "legal-entities/fatema/trade-licenses/2026-11-02.pdf",
         "legal-entities/fatema/trade-licenses/2027-11-02.pdf",
