@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Backup PostgreSQL database, keeping the newest KEEP_BACKUPS local dumps.
 # Optionally uploads to GCP Cloud Storage (uses VM attached service account).
+# With BACKUP_AGE_RECIPIENT set, the dump is age-encrypted to that public key
+# (mm_ecommerce_*.sql.gz.age) before it is kept or uploaded — see below and
+# PRODUCTION.md Step 8a. Restore: age -d -i <identity> f.age | gunzip | psql.
 set -euo pipefail
 
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
@@ -50,6 +53,53 @@ docker compose -f "$COMPOSE_FILE" exec -T postgres \
 
 echo "    Backup size: $(du -sh "$BACKUP_FILE" | cut -f1)"
 
+# P1-5: encrypt the dump with `age` (https://age-encryption.org) to the PUBLIC
+# recipient(s) in BACKUP_AGE_RECIPIENT. The VM only ever holds the public key;
+# the matching identity (private key) is kept offline by the owner, so neither
+# the VM's disk, its snapshots nor the GCS bucket hold a readable dump once this
+# is switched on. Several recipients may be given, comma-separated with no
+# spaces (`.env` is sourced, so an unquoted space would cut the value short) —
+# e.g. a primary key and a break-glass spare.
+#
+# Every failure mode here degrades to TODAY'S behaviour for the local copy and
+# never fails the script — this runs as `timeout 600 backup-db.sh` before every
+# migration and a non-zero exit aborts the deploy, so encryption tooling must
+# never be the reason a migration goes unprotected. What it does refuse is the
+# upload: with a recipient configured, a plaintext dump never leaves the VM.
+#
+#   recipient unset             -> plaintext .sql.gz, uploaded as before, loud warning
+#   recipient set, age missing  -> plaintext kept LOCALLY, NOT uploaded, ::error::
+#   recipient set, age fails    -> plaintext kept LOCALLY, NOT uploaded, ::error::
+#   recipient set, age works    -> .sql.gz.age locally + offsite, plaintext deleted
+UPLOAD_OK=true
+_age_args=()
+# Word-split on purpose (commas turned into spaces): one recipient per word.
+# age recipients are `age1…`/`ssh-…` tokens with no glob characters.
+# shellcheck disable=SC2086
+for _r in ${BACKUP_AGE_RECIPIENT//,/ }; do
+  _age_args+=(-r "$_r")
+done
+if [ "${#_age_args[@]}" -gt 0 ]; then
+  if ! command -v age >/dev/null 2>&1; then
+    UPLOAD_OK=false
+    echo "::error::backup-db.sh: BACKUP_AGE_RECIPIENT is set but the 'age' binary is not installed, so $BACKUP_FILE is UNENCRYPTED. It is kept locally for the migration, but NOT uploaded offsite. Install it: sudo apt-get install -y age"
+  elif age "${_age_args[@]}" -o "$BACKUP_FILE.age.partial" "$BACKUP_FILE" \
+      && [ -s "$BACKUP_FILE.age.partial" ]; then
+    # Rename only once age has written the whole file, so a half-written
+    # ciphertext can never be mistaken for a backup by the prune or a restore.
+    mv -f -- "$BACKUP_FILE.age.partial" "$BACKUP_FILE.age"
+    rm -f -- "$BACKUP_FILE"
+    BACKUP_FILE="$BACKUP_FILE.age"
+    echo "    Encrypted with age: $(basename "$BACKUP_FILE") ($(du -sh "$BACKUP_FILE" | cut -f1)); plaintext removed."
+  else
+    UPLOAD_OK=false
+    rm -f -- "$BACKUP_FILE.age.partial"
+    echo "::error::backup-db.sh: age encryption of $BACKUP_FILE FAILED (is BACKUP_AGE_RECIPIENT a valid age1... public key?). The UNENCRYPTED dump is kept locally for the migration, but NOT uploaded offsite."
+  fi
+else
+  echo "::warning::backup-db.sh: BACKUP_AGE_RECIPIENT is not set — this backup is NOT encrypted, locally or in GCS. See PRODUCTION.md Step 8a."
+fi
+
 # Upload to GCS if configured (VM must have an attached service account with
 # Storage Object Creator role).
 #
@@ -87,7 +137,10 @@ do
 done
 export PATH
 
-if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
+if [ -n "${BACKUP_GCS_BUCKET:-}" ] && [ "$UPLOAD_OK" != true ]; then
+  echo "    Skipping the GCS upload and prune: this run's dump is unencrypted"
+  echo "    although BACKUP_AGE_RECIPIENT is set (see the ::error:: above)."
+elif [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
   GCS_TARGET="gs://${BACKUP_GCS_BUCKET}/backups/$(basename "$BACKUP_FILE")"
   echo "==> Uploading to GCS: $GCS_TARGET"
   # F-OPS-8: loud, not just logged. This stays non-fatal on purpose — the
@@ -129,7 +182,12 @@ if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
   # and the outer timeout guarantees the housekeeping can never eat the backup's
   # time budget even if the backlog is pathological or the network is slow.
   echo "==> Pruning GCS backups, keeping the newest ${KEEP_BACKUPS}..."
-  _gcs_glob="gs://${BACKUP_GCS_BUCKET}/backups/mm_ecommerce_*.sql.gz"
+  # Plain (.sql.gz) and age-encrypted (.sql.gz.age) dumps are ONE rotation:
+  # counted together against KEEP_BACKUPS, so switching encryption on neither
+  # keeps extra copies nor strands the old plaintext ones — they age out of the
+  # window like any other dump. The timestamp precedes the suffix, so a name
+  # sort is still chronological across both kinds.
+  _gcs_glob="gs://${BACKUP_GCS_BUCKET}/backups/mm_ecommerce_*"
   # `timeout` bounds the prune; where it is missing, run the command directly.
   if command -v timeout >/dev/null 2>&1; then
     _cap() { timeout 180 "$@"; }
@@ -137,10 +195,10 @@ if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
     _cap() { "$@"; }
   fi
   if command -v gcloud >/dev/null 2>&1; then
-    _gcs_ls() { gcloud storage ls "$_gcs_glob" 2>/dev/null; }
+    _gcs_ls() { gcloud storage ls "$_gcs_glob" 2>/dev/null | grep -E '\.sql\.gz(\.age)?$'; }
     _gcs_del() { _cap gcloud storage rm "$@" >/dev/null 2>&1; }
   elif command -v gsutil >/dev/null 2>&1; then
-    _gcs_ls() { gsutil ls "$_gcs_glob" 2>/dev/null; }
+    _gcs_ls() { gsutil ls "$_gcs_glob" 2>/dev/null | grep -E '\.sql\.gz(\.age)?$'; }
     _gcs_del() { _cap gsutil -m rm "$@" >/dev/null 2>&1; }
   else
     _gcs_ls() { :; }
@@ -175,7 +233,7 @@ echo "==> Pruning local backups, keeping the newest ${KEEP_BACKUPS}..."
 _backups=()
 while IFS= read -r _f; do
   [ -n "$_f" ] && _backups+=("$_f")
-done < <(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz 2>/dev/null || true)
+done < <(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz "$BACKUP_DIR"/mm_ecommerce_*.sql.gz.age 2>/dev/null || true)
 if [ "${#_backups[@]}" -gt "$KEEP_BACKUPS" ]; then
   for _old in "${_backups[@]:$KEEP_BACKUPS}"; do
     rm -f -- "$_old" && echo "    removed $(basename "$_old")"
@@ -194,6 +252,6 @@ echo "==> Backup complete."
 # `backup-db.sh || { echo "backup failed"; exit 1; }`, so a good backup aborted
 # the whole migration. This is diagnostics; its exit status must never fail the
 # backup.
-newest=$(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz 2>/dev/null | head -1 || true)
-count=$(find "$BACKUP_DIR" -name "mm_ecommerce_*.sql.gz" 2>/dev/null | wc -l | tr -d " " || true)
+newest=$(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz "$BACKUP_DIR"/mm_ecommerce_*.sql.gz.age 2>/dev/null | head -1 || true)
+count=$(find "$BACKUP_DIR" \( -name "mm_ecommerce_*.sql.gz" -o -name "mm_ecommerce_*.sql.gz.age" \) 2>/dev/null | wc -l | tr -d " " || true)
 echo "    ${count:-?} local backups; newest: ${newest:-none}"

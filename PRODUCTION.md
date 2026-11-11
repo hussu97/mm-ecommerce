@@ -289,6 +289,108 @@ currently can.
 
 ---
 
+## Step 8a: Backup Encryption (age)
+
+Every dump is a full copy of the customer database — names, phone numbers,
+addresses, order history. Until P1-5 those dumps sat as plain `pg_dump | gzip`
+files on the VM's disk (and therefore in every boot-disk snapshot) and in the
+backups bucket, readable by anything holding `roles/editor` on the project.
+
+`scripts/backup-db.sh` now encrypts each dump with [age](https://age-encryption.org)
+to a **public** key before it is kept or uploaded, producing
+`mm_ecommerce_<timestamp>.sql.gz.age`. Encryption is asymmetric on purpose: the VM
+only ever holds the public recipient, so it can write backups but cannot read
+them. Reading one needs the private **identity**, which never touches the VM,
+GitHub or GCP.
+
+### Generate the key pair (once, on the owner's own machine)
+
+```bash
+brew install age            # macOS; Debian/Ubuntu: sudo apt-get install -y age
+age-keygen -o mm-backup-identity.txt
+# prints:  Public key: age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs...
+```
+
+`mm-backup-identity.txt` is the **private key**. Custody rules:
+
+- Store it in the password manager (as a secure note — the whole file, including
+  the `# created:` and `# public key:` comment lines), and keep a second offline
+  copy (e.g. printed, or on an encrypted USB stick in a different place).
+  **Losing it makes every encrypted backup unrecoverable** — there is no reset.
+- Never put it on the VM's persistent disk, in the repo, in a GitHub secret, in
+  GCS, or in a Claude cloud session. Delete the local file once it is stored.
+- Optional but recommended: generate a second "break-glass" key pair held by a
+  different person/place and list both public keys (comma-separated, no spaces) in the
+  secret, so either identity can decrypt.
+
+### Switch it on
+
+1. `gh secret set BACKUP_AGE_RECIPIENT --repo hussu97/mm-ecommerce` and paste
+   only the `age1…` **public** key (several: comma-separated, no spaces — `.env`
+   is sourced by the backup script, so a space would cut the value short).
+2. Redeploy (any push to `main`, or re-run the latest **Deploy to Production**
+   run) — a secret does nothing until the deploy rewrites `.env` on the VM. That
+   deploy also installs the `age` package on the VM if it is missing (needs the
+   deploy user's passwordless sudo; otherwise run `sudo apt-get install -y age`
+   once by hand).
+3. Prove it, the way cron runs it (Step 9's `env -i` command), then:
+
+   ```bash
+   ls -l /opt/melting-moments-cakes/backups/        # newest is *.sql.gz.age
+   gcloud storage ls -l gs://melting-moments-cakes-backups/backups/
+   ```
+
+   and do one scratch restore with the identity (Step 9) — a backup nobody has
+   decrypted is a hypothesis.
+
+### How it fails
+
+The script never fails a deploy because of encryption — it runs as the
+pre-migration backup, and a non-zero exit there aborts the deploy.
+
+| State | Local copy | Offsite copy |
+|---|---|---|
+| `BACKUP_AGE_RECIPIENT` empty | plaintext `.sql.gz` (as before) | uploaded; `::warning::` printed |
+| set, `age` not installed | plaintext `.sql.gz` (protects the migration) | **not uploaded**; `::error::` |
+| set, `age` errors (bad key) | plaintext `.sql.gz` | **not uploaded**; `::error::` |
+| set, works | `.sql.gz.age` only; plaintext deleted | `.sql.gz.age` uploaded |
+
+Rotation is unchanged: plain and encrypted dumps are counted together against
+`KEEP_BACKUPS` (5), both locally and in GCS, so pre-encryption plaintext dumps age
+out within five runs of switching on. If a plaintext one must go sooner, delete it
+by hand.
+
+### Decrypting
+
+```bash
+age -d -i mm-backup-identity.txt mm_ecommerce_<ts>.sql.gz.age | gunzip | psql …
+```
+
+Preferred: decrypt on the owner's machine and stream the result, so the identity
+never leaves it:
+
+```bash
+gcloud storage cat gs://melting-moments-cakes-backups/backups/<file>.sql.gz.age \
+  | age -d -i ~/mm-backup-identity.txt \
+  | ssh <VM> 'cat > /tmp/restore.sql.gz && chmod 600 /tmp/restore.sql.gz'
+# …then restore from /tmp/restore.sql.gz (Step 9 / scripts/restore-db.sh) and delete it.
+```
+
+If the identity has to be on the VM, keep it in RAM-backed `/dev/shm`, use it,
+and remove it:
+
+```bash
+# from the owner's machine:
+scp ~/mm-backup-identity.txt <VM>:/dev/shm/mm-backup-identity.txt
+# on the VM:
+chmod 600 /dev/shm/mm-backup-identity.txt
+AGE_IDENTITY=/dev/shm/mm-backup-identity.txt \
+  bash scripts/restore-db.sh backups/mm_ecommerce_<ts>.sql.gz.age
+shred -u /dev/shm/mm-backup-identity.txt
+```
+
+---
+
 ## Step 8b: Boot-Disk Snapshot Schedule
 
 The database dump protects against a bad migration. It does not protect against
@@ -357,9 +459,15 @@ gcloud storage ls -l gs://melting-moments-cakes-backups/backups/
 A backup that has never been restored is a hypothesis. To test one:
 
 ```bash
-gcloud storage cp gs://melting-moments-cakes-backups/backups/<file>.sql.gz /tmp/t.sql.gz
+# Encrypted (.sql.gz.age, Step 8a): decrypt on the owner's machine and stream
+# the plaintext over, so the identity never reaches the VM:
+gcloud storage cat gs://melting-moments-cakes-backups/backups/<file>.sql.gz.age \
+  | age -d -i ~/mm-backup-identity.txt | ssh <VM> 'cat > /tmp/t.sql.gz'
+# Pre-encryption (.sql.gz): on the VM,
+#   gcloud storage cp gs://melting-moments-cakes-backups/backups/<file>.sql.gz /tmp/t.sql.gz
 docker exec melting-moments-cakes-postgres-1 psql -U mm_user -d postgres -c "CREATE DATABASE restore_test;"
 gunzip -c /tmp/t.sql.gz | docker exec -i melting-moments-cakes-postgres-1 psql -U mm_user -d restore_test -q
+rm -f /tmp/t.sql.gz
 # compare row counts against the live database, then:
 docker exec melting-moments-cakes-postgres-1 psql -U mm_user -d postgres -c "DROP DATABASE restore_test;"
 ```
@@ -372,7 +480,10 @@ only way to know a backup is actually restorable is to restore it. **On the
 first working day of every month**, whoever is on call:
 
 1. Picks the newest file under `gs://melting-moments-cakes-backups/backups/`.
-2. Runs the four commands above against `restore_test` — a scratch database
+   Once encryption is on this is a `.sql.gz.age`, and decrypting it is part of
+   the drill — it is the only regular proof that the offline identity still
+   exists and still matches `BACKUP_AGE_RECIPIENT`.
+2. Runs the commands above against `restore_test` — a scratch database
    alongside the live one, never `mm_ecommerce` itself. This is deliberately
    NOT `scripts/restore-db.sh`: that script (rewritten under F-OPS-8) drops
    and recreates `${POSTGRES_DB}` and stops every writer service first — the
@@ -1478,6 +1589,7 @@ distinguishes them.
 | Secret | Production value | Notes |
 |--------|-----------------|-------|
 | `BACKUP_GCS_BUCKET` | `melting-moments-cakes-backups` | GCS bucket created in Step 8 |
+| `BACKUP_AGE_RECIPIENT` | `age1…` (public key only) | Step 8a. Dumps are age-encrypted to it. **Never** the identity/private key. Several: comma-separated, no spaces. Read by `scripts/backup-db.sh` on the host, so it is in `.env` but deliberately not in any compose `environment:` block. Empty = unencrypted backups |
 | `GCP_PROJECT_ID` | `melting-moments-cakes` | Used by the `gcplogs` Docker driver to ship API logs to Cloud Logging. On GCE this is auto-detected — set it anyway so the `.env` write step is explicit. |
 | `SENTRY_DSN` | `https://...@sentry.io/...` | DSN from Sentry project `mm-backend`. Used by the ecommerce API container. Frontend DSNs are configured directly in Vercel. |
 | `SENTRY_ENVIRONMENT` | `production` | Tags every event, so a staging run does not read as a production incident |
@@ -1568,7 +1680,9 @@ out the only copies. The GCS prune is best-effort and never fails the backup;
 the local prune always runs. `deploy.yml` takes an extra one before every
 migration, and that run prunes too, so several deploys in a day still leave only
 the last 5 in each place. (A bucket lifecycle rule, if any, is now redundant with
-the script's own count-based prune — either bound is safe; the tighter wins.) Verify
+the script's own count-based prune — either bound is safe; the tighter wins.) With
+`BACKUP_AGE_RECIPIENT` set (Step 8a) every dump is `.sql.gz.age`, readable only with
+the owner's offline identity; plain and encrypted dumps share the one rotation. Verify
 offsite copies are still arriving with `gcloud storage ls -l
 gs://melting-moments-cakes-backups/backups/` — the local dumps existing proves
 nothing about the offsite ones, which is exactly how their absence went unnoticed

@@ -224,6 +224,10 @@ jobs:
           # pos.* was live and its log had gone quiet.
           POS_REQUIRE_POS_HOST=true
           BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}
+          # The age PUBLIC key backups are encrypted to. Read by
+          # scripts/backup-db.sh on the host (it sources this file), not by
+          # any container. Empty = unencrypted backups + a warning.
+          BACKUP_AGE_RECIPIENT=${{ secrets.BACKUP_AGE_RECIPIENT }}
           UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
           UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}

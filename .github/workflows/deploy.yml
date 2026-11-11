@@ -726,6 +726,10 @@ jobs:
           # pos.* was live and its log had gone quiet.
           POS_REQUIRE_POS_HOST=true
           BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}
+          # The age PUBLIC key backups are encrypted to. Read by
+          # scripts/backup-db.sh on the host (it sources this file), not by
+          # any container. Empty = unencrypted backups + a warning.
+          BACKUP_AGE_RECIPIENT=${{ secrets.BACKUP_AGE_RECIPIENT }}
           UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
           UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
@@ -816,6 +820,26 @@ jobs:
           # `get_current_head()` rollback.yml trusts, not `alembic heads` text),
           # and ANY doubt — either side empty, a branched history, the
           # comparison erroring — takes the backup. Skipping needs proof.
+          # P1-5: backup-db.sh encrypts with `age` once BACKUP_AGE_RECIPIENT is
+          # set, so make sure the binary exists before the backup below runs
+          # (Debian 12 ships it as the `age` package). Idempotent — a no-op
+          # once installed — and strictly best-effort: without it the backup
+          # still lands locally (unencrypted, not uploaded, ::error:: printed),
+          # so a missing tool or a busy apt lock must never fail the deploy.
+          if grep -Eq '^BACKUP_AGE_RECIPIENT=.+' .env && ! command -v age > /dev/null 2>&1; then
+            echo "Installing age for backup encryption..."
+            if sudo -n true < /dev/null 2>/dev/null; then
+              { timeout 120 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -q age < /dev/null \
+                || { timeout 120 sudo -n apt-get update -q < /dev/null \
+                     && timeout 120 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -q age < /dev/null; }; } \
+                > /tmp/age_install.log 2>&1 \
+                && echo "  installed: $(age --version 2>/dev/null)" \
+                || echo "::warning::could not install age (see /tmp/age_install.log on the VM) — backups will NOT be uploaded until it is installed"
+            else
+              echo "::warning::age is missing and $(whoami) has no passwordless sudo — install it by hand: sudo apt-get install -y age"
+            fi
+          fi
+
           DB_REV=$(docker compose -f docker-compose.prod.yml exec -T postgres \
             sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT version_num FROM alembic_version"' \
             < /dev/null 2>/dev/null | tr -d '\r\n ' || true)

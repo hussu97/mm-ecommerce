@@ -434,6 +434,11 @@ NOT_A_SETTING = {
     "POSTGRES_DB",
     # Read by the `gcplogs` Docker logging driver, not by Python.
     "GCP_PROJECT_ID",
+    # The age public key scripts/backup-db.sh encrypts dumps to. The script
+    # runs on the VM host (nightly cron + pre-migration step) and sources
+    # `.env` itself; no container needs it, so it is deliberately absent from
+    # every compose `environment:` block.
+    "BACKUP_AGE_RECIPIENT",
 }
 
 
