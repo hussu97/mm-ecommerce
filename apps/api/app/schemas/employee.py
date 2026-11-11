@@ -195,7 +195,13 @@ class EmployeeDocumentTypeSpec(BaseModel):
 
 
 class SignedDocumentUrl(BaseModel):
+    """A private file, signed twice: `url` shows it inline, `download_url`
+    (Content-Disposition: attachment) saves it as `filename`."""
+
     url: str
+    download_url: str
+    filename: str
+    content_type: str | None = None
 
 
 # ─── Expiring paperwork ──────────────────────────────────────────────────────

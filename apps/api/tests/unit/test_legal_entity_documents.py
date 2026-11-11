@@ -21,6 +21,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.v1 import legal_entity_documents as routes
+from app.core import object_storage, private_documents
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.inventory import TRADE_LICENSE_AUTHORITIES
 from app.models.legal_entity import (
@@ -200,14 +201,16 @@ class _Storage:
     def delete_object(self, *, bucket, key):
         self.deletes.append(key)
 
-    def signed_url(self, *, bucket, key, expires_seconds=3600):
-        return f"https://signed/{bucket}/{key}"
+    def signed_url(self, *, bucket, key, expires_seconds=3600, download_filename=None):
+        suffix = f"?download={download_filename}" if download_filename else ""
+        return f"https://signed/{bucket}/{key}{suffix}"
 
 
 @pytest.fixture
 def storage(monkeypatch):
     fake = _Storage()
     monkeypatch.setattr(docs, "object_storage", fake)
+    monkeypatch.setattr(private_documents, "object_storage", fake)
     return fake
 
 
@@ -215,6 +218,7 @@ def _entity(**kw):
     return SimpleNamespace(
         id=uuid.uuid4(),
         reference="fatema",
+        legal_name="Fatema Sweets L.L.C",
         vat_certificate_object_key=kw.get("vat"),
         vat_certificate_content_type=None,
         trade_license_number=None,
@@ -250,8 +254,11 @@ async def test_vat_certificate_goes_to_the_private_bucket(storage):
     assert entity.vat_certificate_object_key == upload["key"]
     # A re-upload with another extension does not orphan the old object.
     assert storage.deletes == ["legal-entities/fatema/vat-certificate.jpg"]
-    url = await docs.vat_certificate_url(entity)
-    assert url.endswith("legal-entities/fatema/vat-certificate.pdf")
+    signed = await docs.vat_certificate(entity)
+    assert signed.url.endswith("legal-entities/fatema/vat-certificate.pdf")
+    # A second link forces a download under a readable name.
+    assert signed.filename == "Fatema Sweets L.L.C - VAT certificate.pdf"
+    assert signed.download_url.endswith("?download=" + signed.filename)
 
 
 @pytest.mark.parametrize(
@@ -280,7 +287,7 @@ async def test_each_cycle_has_its_own_document_key(storage):
     ]
     assert storage.deletes == []
     with pytest.raises(NotFoundError):
-        await docs.license_document_url(_license(entity, date(2025, 1, 1)))
+        await docs.license_document(entity, _license(entity, date(2025, 1, 1)))
 
 
 async def test_sync_mirrors_the_cycle_expiring_last(monkeypatch):
@@ -328,3 +335,20 @@ async def test_deleting_a_cycle_deletes_its_document(storage, monkeypatch):
     )
     await docs.delete_license(_db(), entity, row)
     assert storage.deletes == ["legal-entities/fatema/trade-licenses/2027-11-02.pdf"]
+
+
+def test_download_name_is_safe_and_keeps_the_extension():
+    name = private_documents.download_name
+    assert (
+        name("Fatema: VAT / cert", "a/b.pdf", "application/pdf")
+        == "Fatema VAT cert.pdf"
+    )
+    # No content type on file (an older upload): the key's extension stands in.
+    assert name("Licence", "legal-entities/x/2026-11-02.jpg", None) == "Licence.jpg"
+    assert name("  ", "k", None) == "document"
+
+
+def test_attachment_disposition_survives_a_non_ascii_name():
+    value = object_storage._attachment('فاطمة "Sweets".pdf')
+    assert value.startswith('attachment; filename=" Sweets.pdf";')
+    assert "filename*=UTF-8''%D9%81" in value

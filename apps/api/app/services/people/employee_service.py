@@ -192,10 +192,14 @@ async def remove_photo(db: AsyncSession, employee: Employee) -> Employee:
     return employee
 
 
-async def photo_url(employee: Employee) -> str:
+async def photo_file(employee: Employee) -> storage.SignedFile:
     if not employee.photo_object_key:
         raise NotFoundError("This employee has no photo")
-    return await storage.sign(employee.photo_object_key)
+    return await storage.sign_file(
+        employee.photo_object_key,
+        title=f"{employee.full_name} - Photo",
+        content_type=employee.photo_content_type,
+    )
 
 
 # ─── Documents ────────────────────────────────────────────────────────────────
@@ -317,7 +321,14 @@ async def remove_document_file(
     return row
 
 
-async def document_file_url(row: EmployeeDocument) -> str:
+async def document_file(
+    employee: Employee, row: EmployeeDocument
+) -> storage.SignedFile:
     if not row.file_object_key:
         raise NotFoundError("This document has no file")
-    return await storage.sign(row.file_object_key)
+    label = EMPLOYEE_DOCUMENT_SPECS[row.doc_type]["label"]
+    return await storage.sign_file(
+        row.file_object_key,
+        title=f"{employee.full_name} - {label} - expires {row.expiry_date.isoformat()}",
+        content_type=row.file_content_type,
+    )

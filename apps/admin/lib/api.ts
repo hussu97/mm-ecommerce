@@ -1213,6 +1213,11 @@ export const uploadsApi = {
     return api.upload<UploadResponse>(`/uploads/image?folder=${folder}`, fd);
   },
   deleteImage: (key: string) => api.delete<void>(`/uploads/image?key=${encodeURIComponent(key)}`),
+  /** A signed link that saves a public image (a logo) as `<name>.<ext>`. */
+  imageDownloadLink: (url: string, name: string) =>
+    api.get<Schemas['ImageDownloadLink']>(
+      `/uploads/image/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`,
+    ),
 };
 
 // ─── Languages ─────────────────────────────────────────────────────────────

@@ -9579,6 +9579,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/uploads/image/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Image Download Link
+         * @description A short-lived link that downloads one public image (a logo) by name.
+         *
+         *     Any console user: the image is public already; only the download header is
+         *     new. The URL must be an object in our own image bucket.
+         */
+        get: operations["image_download_link_api_v1_uploads_image_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/admin/admin-users": {
         parameters: {
             query?: never;
@@ -16021,6 +16044,19 @@ export interface components {
             /** Revenue */
             revenue: number;
         };
+        /**
+         * ImageDownloadLink
+         * @description A signed link that saves a public image (`Content-Disposition:
+         *     attachment`) instead of showing it. The public bucket ignores that header
+         *     on an unsigned URL, and a browser ignores `<a download>` across origins, so
+         *     this is the only way the console can offer a Download button for a logo.
+         */
+        ImageDownloadLink: {
+            /** Download Url */
+            download_url: string;
+            /** Filename */
+            filename: string;
+        };
         /** ImportError */
         ImportError: {
             /** Message */
@@ -17249,11 +17285,17 @@ export interface components {
         };
         /**
          * LegalEntityDocumentUrl
-         * @description A short-lived signed URL to one legal-entity document in the private bucket.
+         * @description A legal-entity document in the private bucket, signed twice: `url` shows
+         *     it inline, `download_url` (Content-Disposition: attachment) saves it as
+         *     `filename`.
          */
         LegalEntityDocumentUrl: {
             /** Content Type */
             content_type?: string | null;
+            /** Download Url */
+            download_url: string;
+            /** Filename */
+            filename: string;
             /** Url */
             url: string;
         };
@@ -23564,8 +23606,18 @@ export interface components {
             /** Transaction Id */
             transaction_id: string | null;
         };
-        /** SignedDocumentUrl */
+        /**
+         * SignedDocumentUrl
+         * @description A private file, signed twice: `url` shows it inline, `download_url`
+         *     (Content-Disposition: attachment) saves it as `filename`.
+         */
         SignedDocumentUrl: {
+            /** Content Type */
+            content_type?: string | null;
+            /** Download Url */
+            download_url: string;
+            /** Filename */
+            filename: string;
             /** Url */
             url: string;
         };
@@ -44247,6 +44299,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    image_download_link_api_v1_uploads_image_download_get: {
+        parameters: {
+            query: {
+                /** @description The image's public URL */
+                url: string;
+                /** @description File name, sans extension */
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageDownloadLink"];
+                };
             };
             /** @description Validation Error */
             422: {

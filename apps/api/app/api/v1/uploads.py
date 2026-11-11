@@ -17,10 +17,13 @@ from pydantic import BaseModel
 
 from app.core import object_storage
 from app.core.config import settings
+from app.core.deps import get_current_staff_user
 from app.core.exceptions import BadGatewayError, BadRequestError
 from app.core.images import extension_for, optimize_image
 from app.core.permissions import require
+from app.core.private_documents import download_name
 from app.models.user import User
+from app.schemas.upload import ImageDownloadLink
 from app.services import image_warm_service
 
 router = APIRouter()
@@ -156,3 +159,47 @@ async def delete_image(
         )
     except Exception as e:
         raise BadGatewayError(f"Failed to delete image: {str(e)}")
+
+
+#: A key in the public image bucket worth signing: plain path segments, an image
+#: extension. Looser than `_OBJECT_KEY_RE` on purpose — hand-placed logos
+#: (`logos/melting-moments.png`) predate the uuid naming, and a link to read an
+#: object that is already public grants nothing a delete would.
+_PUBLIC_IMAGE_KEY_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*"
+    r"\.(?:jpg|jpeg|png|webp|gif)$",
+    re.IGNORECASE,
+)
+
+
+@router.get("/image/download", response_model=ImageDownloadLink)
+async def image_download_link(
+    url: str = Query(..., description="The image's public URL"),
+    name: str = Query("image", max_length=200, description="File name, sans extension"),
+    _staff: User = Depends(get_current_staff_user),
+):
+    """A short-lived link that downloads one public image (a logo) by name.
+
+    Any console user: the image is public already; only the download header is
+    new. The URL must be an object in our own image bucket.
+    """
+    parsed = urlparse(url)
+    prefix = f"/{settings.GCS_IMAGE_BUCKET}/"
+    key = parsed.path[len(prefix) :] if parsed.path.startswith(prefix) else ""
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "storage.googleapis.com"
+        or ".." in key
+        or not _PUBLIC_IMAGE_KEY_RE.fullmatch(key)
+    ):
+        raise BadRequestError("Not an image in the console's image bucket")
+    filename = download_name(name, key, None)
+    link = await asyncio.to_thread(
+        object_storage.signed_url,
+        bucket=settings.GCS_IMAGE_BUCKET,
+        key=key,
+        download_filename=filename,
+    )
+    if link is None:
+        raise BadGatewayError("Could not sign a download link for the image")
+    return ImageDownloadLink(download_url=link, filename=filename)

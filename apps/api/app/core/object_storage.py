@@ -97,8 +97,14 @@ def signed_url(
     bucket: str,
     key: str,
     expires_seconds: int = 3600,
+    download_filename: str | None = None,
 ) -> str | None:
     """A short-lived V4 signed GET URL, or None on any failure.
+
+    With *download_filename* the URL carries `response-content-disposition:
+    attachment`, so following it saves the file under that name instead of
+    showing it — the only way to force a download from another origin, where
+    the browser ignores `<a download>`.
 
     ADC on GCE has no private key, so we sign via IAM: take the creds + SA
     email from `google.auth.default()`, mint a fresh access token, and let
@@ -125,10 +131,22 @@ def signed_url(
             method="GET",
             service_account_email=email,
             access_token=creds.token,
+            response_disposition=(
+                _attachment(download_filename) if download_filename else None
+            ),
         )
     except Exception:
         logger.exception("failed to sign gs://%s/%s", bucket, key)
         return None
+
+
+def _attachment(filename: str) -> str:
+    """A Content-Disposition for *filename*: an ASCII fallback plus the
+    RFC 5987 UTF-8 form, so an Arabic or accented name survives."""
+    from urllib.parse import quote
+
+    ascii_name = filename.encode("ascii", "ignore").decode().replace('"', "") or "file"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
 
 def _metadata_service_account_email() -> str | None:

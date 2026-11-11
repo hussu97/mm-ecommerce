@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from dataclasses import dataclass
 
 from app.core import object_storage
 from app.core.config import settings
@@ -59,13 +61,45 @@ async def upload(key: str, body: bytes, content_type: str, label: str) -> None:
         raise BadGatewayError(f"Failed to store the {label}") from exc
 
 
-async def sign(key: str) -> str:
-    url = await asyncio.to_thread(
-        object_storage.signed_url, bucket=settings.GCS_INVOICE_BUCKET, key=key
+@dataclass(frozen=True)
+class SignedFile:
+    """One private document, signed twice: `url` shows it in the page (an
+    `<img>` or `<iframe>`), `download_url` saves it as `filename`."""
+
+    url: str
+    download_url: str
+    filename: str
+    content_type: str | None
+
+
+def download_name(title: str, key: str, content_type: str | None) -> str:
+    """`title` made safe for a file name, with the object's extension."""
+    ext = EXTENSIONS.get(content_type or "") or (
+        "." + key.rsplit(".", 1)[1] if "." in key.rsplit("/", 1)[-1] else ""
     )
-    if url is None:
+    stem = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", " ", title)
+    stem = re.sub(r"\s+", " ", stem).strip(" .") or "document"
+    return f"{stem}{ext}"
+
+
+async def sign_file(key: str, *, title: str, content_type: str | None) -> SignedFile:
+    """Sign *key* for viewing and for download (two IAM signBlob calls, run
+    together)."""
+    filename = download_name(title, key, content_type)
+    view, download = await asyncio.gather(
+        asyncio.to_thread(
+            object_storage.signed_url, bucket=settings.GCS_INVOICE_BUCKET, key=key
+        ),
+        asyncio.to_thread(
+            object_storage.signed_url,
+            bucket=settings.GCS_INVOICE_BUCKET,
+            key=key,
+            download_filename=filename,
+        ),
+    )
+    if view is None or download is None:
         raise BadGatewayError("Could not sign a download link for the document")
-    return url
+    return SignedFile(view, download, filename, content_type)
 
 
 async def delete_quietly(key: str) -> None:

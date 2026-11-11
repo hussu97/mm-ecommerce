@@ -17336,6 +17336,25 @@
         "title": "HeatmapCell",
         "type": "object"
       },
+      "ImageDownloadLink": {
+        "description": "A signed link that saves a public image (`Content-Disposition:\nattachment`) instead of showing it. The public bucket ignores that header\non an unsigned URL, and a browser ignores `<a download>` across origins, so\nthis is the only way the console can offer a Download button for a logo.",
+        "properties": {
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "download_url",
+          "filename"
+        ],
+        "title": "ImageDownloadLink",
+        "type": "object"
+      },
       "ImportError": {
         "properties": {
           "message": {
@@ -21025,7 +21044,7 @@
         "type": "object"
       },
       "LegalEntityDocumentUrl": {
-        "description": "A short-lived signed URL to one legal-entity document in the private bucket.",
+        "description": "A legal-entity document in the private bucket, signed twice: `url` shows\nit inline, `download_url` (Content-Disposition: attachment) saves it as\n`filename`.",
         "properties": {
           "content_type": {
             "anyOf": [
@@ -21038,13 +21057,23 @@
             ],
             "title": "Content Type"
           },
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
           "url": {
             "title": "Url",
             "type": "string"
           }
         },
         "required": [
-          "url"
+          "url",
+          "download_url",
+          "filename"
         ],
         "title": "LegalEntityDocumentUrl",
         "type": "object"
@@ -39548,14 +39577,36 @@
         "type": "object"
       },
       "SignedDocumentUrl": {
+        "description": "A private file, signed twice: `url` shows it inline, `download_url`\n(Content-Disposition: attachment) saves it as `filename`.",
         "properties": {
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
           "url": {
             "title": "Url",
             "type": "string"
           }
         },
         "required": [
-          "url"
+          "url",
+          "download_url",
+          "filename"
         ],
         "title": "SignedDocumentUrl",
         "type": "object"
@@ -79530,6 +79581,69 @@
           }
         ],
         "summary": "Upload Image",
+        "tags": [
+          "Uploads"
+        ]
+      }
+    },
+    "/api/v1/uploads/image/download": {
+      "get": {
+        "description": "A short-lived link that downloads one public image (a logo) by name.\n\nAny console user: the image is public already; only the download header is\nnew. The URL must be an object in our own image bucket.",
+        "operationId": "image_download_link_api_v1_uploads_image_download_get",
+        "parameters": [
+          {
+            "description": "The image's public URL",
+            "in": "query",
+            "name": "url",
+            "required": true,
+            "schema": {
+              "description": "The image's public URL",
+              "title": "Url",
+              "type": "string"
+            }
+          },
+          {
+            "description": "File name, sans extension",
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "default": "image",
+              "description": "File name, sans extension",
+              "maxLength": 200,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageDownloadLink"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Image Download Link",
         "tags": [
           "Uploads"
         ]

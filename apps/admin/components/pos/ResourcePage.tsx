@@ -11,6 +11,7 @@ import {
   type SortState,
 } from '@/components/ui/DataTable';
 import { ListPage } from '@/components/ui/ListPage';
+import { useFilePreview } from '@/components/ui/FilePreview';
 import { cn } from '@/lib/utils';
 
 /**
@@ -554,6 +555,7 @@ function ImageField({
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const { preview, node: previewNode } = useFilePreview();
   const url = value === undefined || value === null ? '' : String(value);
 
   const upload = async (file: File | undefined) => {
@@ -577,12 +579,19 @@ function ImageField({
       </span>
       <div className="flex items-center gap-3">
         {url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={url}
-            alt=""
-            className="h-12 w-12 rounded border border-gray-200 object-contain bg-white"
-          />
+          <button
+            type="button"
+            className="cursor-zoom-in"
+            title={`View ${field.label.toLowerCase()}`}
+            onClick={() => preview(field.label, { url })}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={url}
+              alt=""
+              className="h-12 w-12 rounded border border-gray-200 object-contain bg-white"
+            />
+          </button>
         ) : (
           <div className="h-12 w-12 rounded border border-dashed border-gray-300" />
         )}
@@ -611,6 +620,7 @@ function ImageField({
       {field.helper && (
         <p className="mt-1 text-[11px] font-body text-gray-400">{field.helper}</p>
       )}
+      {previewNode}
     </div>
   );
 }
