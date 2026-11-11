@@ -40,8 +40,11 @@ class CustomOrderEnquiry(Base, UUIDMixin, TimestampMixin):
     #: long before they know its weight.
     approx_kg: Mapped[Any | None] = mapped_column(Numeric(6, 2), nullable=True)
 
-    #: Inspiration photos they uploaded (public GCS URLs), at most four. The
-    #: single most useful thing an enquiry carries.
+    #: Inspiration photos they uploaded, at most four. The single most useful
+    #: thing an enquiry carries. Private-bucket object keys
+    #: (`enquiries/<id>/<uuid>.<ext>`); rows from before photos went private hold
+    #: public URLs, read as `enquiries/legacy/<name>` — see
+    #: `custom_order_enquiry_service`. Never rendered as-is: admin reads sign them.
     reference_image_urls: Mapped[Any] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default="{}"
     )

@@ -11858,6 +11858,7 @@
           },
           "reference_image_urls": {
             "items": {
+              "maxLength": 2048,
               "type": "string"
             },
             "maxItems": 4,
@@ -15849,6 +15850,31 @@
           }
         },
         "title": "EmployeeUpdate",
+        "type": "object"
+      },
+      "EnquiryImageUploadResponse": {
+        "description": "One uploaded inspiration photo, not yet attached to an enquiry.\n\n`key` is what the form sends back in `reference_image_urls`. `url` is a\nshort-lived signed link (None if one could not be minted) \u2014 the storefront\npreviews from the local file, so it must not depend on it.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "EnquiryImageUploadResponse",
         "type": "object"
       },
       "EventCount": {
@@ -47100,6 +47126,55 @@
         ]
       }
     },
+    "/api/v1/admin/custom-orders/enquiries/{enquiry_id}": {
+      "get": {
+        "description": "One enquiry, for converting it into a custom order.",
+        "operationId": "get_enquiry_api_v1_admin_custom_orders_enquiries__enquiry_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enquiry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Enquiry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderEnquiryAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Enquiry",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
     "/api/v1/admin/custom-orders/items": {
       "get": {
         "description": "What a recipe may use, with the kitchen's stock of each.",
@@ -55561,7 +55636,7 @@
     },
     "/api/v1/custom-orders/enquiry/image": {
       "post": {
-        "description": "Upload one inspiration photo for a custom-order enquiry, returning its URL.\n\nPublic because the person filling in the enquiry form has no account \u2014 the\nadmin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot\nbe reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is\nsingle-use, and one enquiry uploads up to four photos before it submits, so a\ntoken spent on the first upload would fail the rest. The human check lives on\n`/enquiry` \u2014 the request that actually stores a lead and sends mail. This\nendpoint only puts a re-encoded, downscaled, size- and type-capped image in\nthe bucket, and a rate limit bounds the rest.",
+        "description": "Upload one inspiration photo for a custom-order enquiry, returning its key.\n\nPublic because the person filling in the enquiry form has no account \u2014 the\nadmin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot\nbe reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is\nsingle-use, and one enquiry uploads up to four photos before it submits, so a\ntoken spent on the first upload would fail the rest. The human check lives on\n`/enquiry` \u2014 the request that actually stores a lead and sends mail.\n\nThe photo is private: it goes to the private bucket under\n`enquiries/pending/` (see `custom_order_enquiry_service`), never the public\nimage bucket. Only re-encoded pixels are stored (no EXIF/GPS, nothing\nPillow cannot decode). The form sends the returned `key` with the enquiry;\n`url` is a short-lived signed link for clients that still preview from it.",
         "operationId": "upload_enquiry_image_api_v1_custom_orders_enquiry_image_post",
         "requestBody": {
           "content": {
@@ -55577,7 +55652,9 @@
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/EnquiryImageUploadResponse"
+                }
               }
             },
             "description": "Successful Response"

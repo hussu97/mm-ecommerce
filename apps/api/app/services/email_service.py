@@ -294,6 +294,10 @@ def _admin_order_url(order_number: str) -> str:
     return f"{settings.ADMIN_URL.rstrip('/')}/orders/{order_number}"
 
 
+def _admin_enquiries_url() -> str:
+    return f"{settings.ADMIN_URL.rstrip('/')}/enquiries"
+
+
 def _admin_report_url(report_id: str) -> str:
     return f"{settings.ADMIN_URL.rstrip('/')}/inventory/reports/{report_id}"
 
@@ -1217,10 +1221,12 @@ async def send_inventory_report_submitted(
 async def send_custom_order_enquiry(*, enquiry: Any) -> None:
     """Tell the shop a customer sent a custom-order enquiry from the storefront.
 
-    Always English — it reaches the one person who quotes custom cakes. It links
-    to nothing (there is no order and no admin page for a lead); it simply carries
-    everything the customer typed, their photos, and the time it arrived, so the
-    reply can happen straight from the inbox.
+    Always English — it reaches the one person who quotes custom cakes. It
+    carries everything the customer typed and the time it arrived, so the reply
+    can happen straight from the inbox. The photos are private (signed links,
+    minted per admin request), so the email only says how many there are and
+    links to the admin Enquiries page where they can be seen — a link in a
+    mailbox would either expire or be a permanent public URL to them.
     """
     name = (enquiry.customer_name or "").strip() or "—"
     subject = f"New custom-order enquiry — {name} | Melting Moments"
@@ -1247,7 +1253,8 @@ async def send_custom_order_enquiry(*, enquiry: Any) -> None:
                 description=enquiry.description,
                 approx_kg=approx_kg,
                 delivery_by=delivery_by,
-                image_urls=list(enquiry.reference_image_urls or []),
+                photo_count=len(enquiry.reference_image_urls or []),
+                enquiries_url=_admin_enquiries_url(),
                 submitted_at=submitted_str,
             )
             result = await _send_async(recipient, subject, html)

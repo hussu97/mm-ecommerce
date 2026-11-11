@@ -17,10 +17,9 @@ from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import object_storage
-from app.core.config import settings
+from app.core import private_documents
 from app.core.deps import get_db
-from app.core.exceptions import BadGatewayError, BadRequestError
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.images import extension_for, optimize_image
 from app.core.limiter import limiter
 from app.core.permissions import require
@@ -28,14 +27,15 @@ from app.models.custom_order_enquiry import CustomOrderEnquiry
 from app.models.user import User
 from app.schemas.custom_order_enquiry import (
     MAX_REFERENCE_IMAGES,
+    CustomOrderEnquiryAdminResponse,
     CustomOrderEnquiryCreate,
     CustomOrderEnquiryResponse,
+    EnquiryImageUploadResponse,
     PaginatedCustomOrderEnquiries,
 )
 from app.services import (
     custom_order_enquiry_service,
     email_service,
-    image_warm_service,
     turnstile_service,
 )
 
@@ -128,6 +128,7 @@ async def submit_enquiry(
 
 @router.post(
     "/enquiry/image",
+    response_model=EnquiryImageUploadResponse,
     status_code=status.HTTP_201_CREATED,
 )
 @limiter.limit("20/minute")
@@ -136,16 +137,20 @@ async def upload_enquiry_image(
     file: UploadFile = File(...),
 ):
     """
-    Upload one inspiration photo for a custom-order enquiry, returning its URL.
+    Upload one inspiration photo for a custom-order enquiry, returning its key.
 
     Public because the person filling in the enquiry form has no account — the
     admin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot
     be reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is
     single-use, and one enquiry uploads up to four photos before it submits, so a
     token spent on the first upload would fail the rest. The human check lives on
-    `/enquiry` — the request that actually stores a lead and sends mail. This
-    endpoint only puts a re-encoded, downscaled, size- and type-capped image in
-    the bucket, and a rate limit bounds the rest.
+    `/enquiry` — the request that actually stores a lead and sends mail.
+
+    The photo is private: it goes to the private bucket under
+    `enquiries/pending/` (see `custom_order_enquiry_service`), never the public
+    image bucket. Only re-encoded pixels are stored (no EXIF/GPS, nothing
+    Pillow cannot decode). The form sends the returned `key` with the enquiry;
+    `url` is a short-lived signed link for clients that still preview from it.
     """
     content_type = file.content_type or ""
     if content_type not in _ENQUIRY_IMAGE_CONTENT_TYPES:
@@ -160,28 +165,21 @@ async def upload_enquiry_image(
         )
 
     # Pillow decode/resize/encode is CPU work — keep it off the event loop so one
-    # upload does not stall the worker for everyone else.
+    # upload does not stall the worker for everyone else. Raises 400 for a file
+    # that is not really an image.
     contents, content_type = await asyncio.to_thread(
         optimize_image, contents, content_type
     )
 
-    ext = extension_for(content_type)
-    key = f"enquiries/{uuid.uuid4()}{ext}"
-    try:
-        await asyncio.to_thread(
-            object_storage.upload_object,
-            bucket=settings.GCS_IMAGE_BUCKET,
-            key=key,
-            body=contents,
-            content_type=content_type,
-            cache_control="public, max-age=31536000",
-        )
-    except Exception as e:
-        raise BadGatewayError(f"Failed to upload image: {str(e)}")
+    # Unclaimed until a submit moves it; the private bucket's lifecycle rule
+    # deletes `enquiries/pending/` objects older than 2 days.
+    key = custom_order_enquiry_service.new_pending_key(extension_for(content_type))
+    await private_documents.upload(key, contents, content_type, "photo")
 
-    public_url = object_storage.public_url(settings.GCS_IMAGE_BUCKET, key)
-    image_warm_service.warm_in_background([public_url])
-    return {"url": public_url, "key": key}
+    url = await private_documents.sign_or_none(
+        key, expires_seconds=custom_order_enquiry_service.SIGNED_URL_SECONDS
+    )
+    return EnquiryImageUploadResponse(key=key, url=url)
 
 
 # ─── Admin: enquiries (the storefront leads) ───────────────────────────────────
@@ -219,6 +217,32 @@ async def list_enquiries(
         .all()
     )
     pages = (total + per_page - 1) // per_page if total else 0
+    items = await asyncio.gather(*(_admin_view(row) for row in rows))
     return PaginatedCustomOrderEnquiries(
-        items=rows, total=total, page=page, per_page=per_page, pages=pages
+        items=list(items), total=total, page=page, per_page=per_page, pages=pages
     )
+
+
+@admin_router.get(
+    "/enquiries/{enquiry_id}", response_model=CustomOrderEnquiryAdminResponse
+)
+async def get_enquiry(
+    enquiry_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("orders.custom.manage")),
+):
+    """One enquiry, for converting it into a custom order."""
+    enquiry = await db.get(CustomOrderEnquiry, enquiry_id)
+    if enquiry is None:
+        raise NotFoundError("Enquiry not found")
+    return await _admin_view(enquiry)
+
+
+async def _admin_view(enquiry: CustomOrderEnquiry) -> CustomOrderEnquiryAdminResponse:
+    """The admin shape, with the stored photo keys swapped for signed links
+    minted for this request."""
+    view = CustomOrderEnquiryAdminResponse.model_validate(enquiry)
+    view.reference_image_urls = await custom_order_enquiry_service.signed_photo_urls(
+        enquiry
+    )
+    return view

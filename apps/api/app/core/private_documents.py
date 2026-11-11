@@ -77,3 +77,36 @@ async def delete_quietly(key: str) -> None:
         )
     except Exception:
         logger.warning("could not delete private document %s", key, exc_info=True)
+
+
+async def sign_or_none(key: str, *, expires_seconds: int = 3600) -> str | None:
+    """`sign` for a list read: a link that could not be minted is left out (the
+    failure is already logged by `object_storage.signed_url`) rather than
+    failing every other row on the page."""
+    return await asyncio.to_thread(
+        object_storage.signed_url,
+        bucket=settings.GCS_INVOICE_BUCKET,
+        key=key,
+        expires_seconds=expires_seconds,
+    )
+
+
+async def exists(key: str) -> bool:
+    try:
+        return await asyncio.to_thread(
+            object_storage.object_exists, bucket=settings.GCS_INVOICE_BUCKET, key=key
+        )
+    except Exception as exc:
+        raise BadGatewayError("Could not reach document storage") from exc
+
+
+async def copy(src_key: str, dst_key: str, label: str) -> None:
+    try:
+        await asyncio.to_thread(
+            object_storage.copy_object,
+            bucket=settings.GCS_INVOICE_BUCKET,
+            src_key=src_key,
+            dst_key=dst_key,
+        )
+    except Exception as exc:
+        raise BadGatewayError(f"Failed to store the {label}") from exc

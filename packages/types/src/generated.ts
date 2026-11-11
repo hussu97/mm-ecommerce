@@ -122,6 +122,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/custom-orders/enquiries/{enquiry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Enquiry
+         * @description One enquiry, for converting it into a custom order.
+         */
+        get: operations["get_enquiry_api_v1_admin_custom_orders_enquiries__enquiry_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/custom-orders/items": {
         parameters: {
             query?: never;
@@ -2784,16 +2804,20 @@ export interface paths {
         put?: never;
         /**
          * Upload Enquiry Image
-         * @description Upload one inspiration photo for a custom-order enquiry, returning its URL.
+         * @description Upload one inspiration photo for a custom-order enquiry, returning its key.
          *
          *     Public because the person filling in the enquiry form has no account — the
          *     admin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot
          *     be reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is
          *     single-use, and one enquiry uploads up to four photos before it submits, so a
          *     token spent on the first upload would fail the rest. The human check lives on
-         *     `/enquiry` — the request that actually stores a lead and sends mail. This
-         *     endpoint only puts a re-encoded, downscaled, size- and type-capped image in
-         *     the bucket, and a rate limit bounds the rest.
+         *     `/enquiry` — the request that actually stores a lead and sends mail.
+         *
+         *     The photo is private: it goes to the private bucket under
+         *     `enquiries/pending/` (see `custom_order_enquiry_service`), never the public
+         *     image bucket. Only re-encoded pixels are stored (no EXIF/GPS, nothing
+         *     Pillow cannot decode). The form sends the returned `key` with the enquiry;
+         *     `url` is a short-lived signed link for clients that still preview from it.
          */
         post: operations["upload_enquiry_image_api_v1_custom_orders_enquiry_image_post"];
         delete?: never;
@@ -15474,6 +15498,20 @@ export interface components {
             user_id?: string | null;
         };
         /**
+         * EnquiryImageUploadResponse
+         * @description One uploaded inspiration photo, not yet attached to an enquiry.
+         *
+         *     `key` is what the form sends back in `reference_image_urls`. `url` is a
+         *     short-lived signed link (None if one could not be minted) — the storefront
+         *     previews from the local file, so it must not depend on it.
+         */
+        EnquiryImageUploadResponse: {
+            /** Key */
+            key: string;
+            /** Url */
+            url?: string | null;
+        };
+        /**
          * EventCount
          * @description One custom event from `apps/web/lib/analytics.ts`, and how often it fired.
          */
@@ -26227,6 +26265,37 @@ export interface operations {
             };
         };
     };
+    get_enquiry_api_v1_admin_custom_orders_enquiries__enquiry_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                enquiry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderEnquiryAdminResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     recipe_items_api_v1_admin_custom_orders_items_get: {
         parameters: {
             query?: never;
@@ -31014,7 +31083,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EnquiryImageUploadResponse"];
                 };
             };
             /** @description Validation Error */

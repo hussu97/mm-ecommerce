@@ -76,6 +76,9 @@ async def cleanup(maker):
 async def test_enquiry_stores_lead_and_emails_without_creating_an_order(
     client, maker, monkeypatch
 ):
+    import uuid
+
+    from app.core import object_storage
     from app.models.custom_order_enquiry import CustomOrderEnquiry
     from app.models.order import Order
     from app.services import email_service
@@ -86,6 +89,16 @@ async def test_enquiry_stores_lead_and_emails_without_creating_an_order(
         sent.append(enquiry)
 
     monkeypatch.setattr(email_service, "send_custom_order_enquiry", _spy)
+    # The photos are pending uploads in the private bucket; fake the bucket.
+    pending = [f"enquiries/pending/{uuid.uuid4()}.jpg" for _ in range(2)]
+    copies: list[tuple[str, str]] = []
+    monkeypatch.setattr(object_storage, "object_exists", lambda **kw: True)
+    monkeypatch.setattr(
+        object_storage,
+        "copy_object",
+        lambda *, bucket, src_key, dst_key: copies.append((src_key, dst_key)),
+    )
+    monkeypatch.setattr(object_storage, "delete_object", lambda **kw: None)
 
     async with maker() as db:
         orders_before = int(
@@ -100,10 +113,7 @@ async def test_enquiry_stores_lead_and_emails_without_creating_an_order(
             "customer_phone": "0501234567",
             "description": "Three-tier pistachio, sage & gold, for a nikkah",
             "approx_kg": 4.5,
-            "reference_image_urls": [
-                "https://storage.googleapis.com/mm-product-images/cater/wedding-1.jpg",
-                "https://storage.googleapis.com/mm-product-images/cater/wedding-2.jpg",
-            ],
+            "reference_image_urls": pending,
             "delivery_by": due,
         },
     )
@@ -121,7 +131,11 @@ async def test_enquiry_stores_lead_and_emails_without_creating_an_order(
             )
         ).scalar_one()
         assert row.customer_phone == "+971501234567"
-        assert len(row.reference_image_urls) == 2
+        # Stored as keys under the enquiry, moved out of `pending/`.
+        assert row.reference_image_urls == [
+            f"enquiries/{row.id}/{k.rsplit('/', 1)[1]}" for k in pending
+        ]
+        assert [src for src, _ in copies] == pending
         assert str(row.delivery_by) == due
 
         # No order was created — this is a lead, not an order.
@@ -154,3 +168,23 @@ async def test_enquiry_rejects_more_than_four_images(client, monkeypatch):
     )
     # Caught by the schema's max_length on the list → 422.
     assert res.status_code == 422, res.text
+
+
+async def test_enquiry_refuses_a_photo_url_that_is_not_our_upload(client, monkeypatch):
+    from app.services import email_service
+
+    async def _spy(*, enquiry):
+        raise AssertionError("no email for a refused enquiry")
+
+    monkeypatch.setattr(email_service, "send_custom_order_enquiry", _spy)
+
+    res = await client.post(
+        "/api/v1/custom-orders/enquiry",
+        json={
+            "customer_name": f"{MARKER}phish",
+            "customer_phone": "+971501234567",
+            "description": "See my photo",
+            "reference_image_urls": ["https://evil.example/login.jpg"],
+        },
+    )
+    assert res.status_code == 400, res.text

@@ -110,6 +110,20 @@ export default function EnquiriesPage() {
 }
 
 function EnquiryDetail({ enquiry, onClose }: { enquiry: CustomOrderEnquiry; onClose: () => void }) {
+  // Photos are private: the API hands out signed links that expire within the
+  // hour, so the ones from the list read may be stale by the time a row is
+  // opened. Re-read this enquiry for fresh links; keep the list's meanwhile.
+  const [photos, setPhotos] = useState(enquiry.reference_image_urls);
+  useEffect(() => {
+    if (enquiry.reference_image_urls.length === 0) return;
+    let live = true;
+    customOrderEnquiriesApi
+      .get(enquiry.id)
+      .then(fresh => { if (live) setPhotos(fresh.reference_image_urls); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [enquiry]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -154,13 +168,13 @@ function EnquiryDetail({ enquiry, onClose }: { enquiry: CustomOrderEnquiry; onCl
             <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">Request</p>
             <p className="whitespace-pre-wrap text-gray-800">{enquiry.description}</p>
           </div>
-          {enquiry.reference_image_urls.length > 0 && (
+          {photos.length > 0 && (
             <div>
               <p className="text-xs uppercase tracking-wider text-gray-500 mb-2">
-                Inspiration photos ({enquiry.reference_image_urls.length})
+                Inspiration photos ({photos.length})
               </p>
               <div className="flex flex-wrap gap-2">
-                {enquiry.reference_image_urls.map((url, i) => (
+                {photos.map((url, i) => (
                   <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="block h-24 w-24 overflow-hidden rounded border border-gray-200">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={url} alt={`Inspiration ${i + 1}`} className="h-full w-full object-cover" />

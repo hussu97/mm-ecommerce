@@ -2,7 +2,7 @@ import type {
   AdminLoginOptions, AdminPasskey, AdminUserSummary,
   AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, DashboardToday, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
-  PaginatedCustomOrderEnquiries, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
+  CustomOrderEnquiry, PaginatedCustomOrderEnquiries, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
   PromoCode, Promotion, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics, OrderRefundResponse,
@@ -855,6 +855,9 @@ export const customOrderEnquiriesApi = {
     api.get<PaginatedCustomOrderEnquiries>(
       `/admin/custom-orders/enquiries${buildQs(params)}`,
     ),
+  /** One enquiry, its photos as short-lived signed links minted for this read. */
+  get: (id: string) =>
+    api.get<CustomOrderEnquiry>(`/admin/custom-orders/enquiries/${encodeURIComponent(id)}`),
 };
 
 // ─── Custom orders (bespoke cakes, `source = 'custom'`) ─────────────────────────

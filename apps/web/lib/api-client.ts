@@ -650,8 +650,8 @@ export const deliveryApi = {
  *
  * `submit` stores the request and emails the shop; it does not create an order
  * or hold a slot on the custom-cake calendar (the API is explicit about this).
- * `uploadImage` puts one inspiration photo in the bucket and returns its URL —
- * the form collects up to four and passes them to `submit`. The image endpoint
+ * `uploadImage` puts one inspiration photo in the private bucket and returns
+ * its key — the form collects up to four and passes them to `submit`. The image endpoint
  * is not Turnstile-guarded (a token is single-use and a form uploads several
  * photos); the human check rides on `submit`, the request that actually writes.
  */

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -18,7 +19,12 @@ class CustomOrderEnquiryCreate(BaseModel):
     customer_phone: str = Field(min_length=3, max_length=30)
     description: str = Field(min_length=1, max_length=5000)
     approx_kg: Decimal | None = Field(default=None, gt=0, le=1000)
-    reference_image_urls: list[str] = Field(
+    #: The photos, as the `key` each upload to `/enquiry/image` returned
+    #: (``enquiries/pending/<uuid>.<ext>``). Named for what it held before photos
+    #: went private; still takes that upload's signed `url` so a storefront
+    #: deployed ahead of or behind the API keeps working. Anything that is not
+    #: one of our own pending uploads is a 400 (`custom_order_enquiry_service`).
+    reference_image_urls: list[Annotated[str, Field(max_length=2048)]] = Field(
         default_factory=list, max_length=MAX_REFERENCE_IMAGES
     )
     delivery_by: date | None = None
@@ -30,6 +36,18 @@ class CustomOrderEnquiryCreate(BaseModel):
     @classmethod
     def _strip(cls, v: str) -> str:
         return v.strip()
+
+
+class EnquiryImageUploadResponse(BaseModel):
+    """One uploaded inspiration photo, not yet attached to an enquiry.
+
+    `key` is what the form sends back in `reference_image_urls`. `url` is a
+    short-lived signed link (None if one could not be minted) — the storefront
+    previews from the local file, so it must not depend on it.
+    """
+
+    key: str
+    url: str | None = None
 
 
 class CustomOrderEnquiryResponse(BaseModel):
@@ -51,6 +69,8 @@ class CustomOrderEnquiryAdminResponse(BaseModel):
     customer_phone: str
     description: str
     approx_kg: Decimal | None
+    #: Short-lived signed links to the photos, minted for this request and never
+    #: stored. A photo that could not be signed is left out.
     reference_image_urls: list[str]
     delivery_by: date | None
     created_at: datetime
