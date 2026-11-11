@@ -89,18 +89,13 @@ export default function NewCustomOrderPage() {
       .catch(err => setItemsError((err as Error).message));
   }, []);
 
-  // Converting an enquiry: there is no by-id read, and enquiries are a handful
-  // of rows, so the list is read whole and the one wanted picked out.
+  // Converting an enquiry: read just that one (its photos come back as
+  // short-lived signed links, minted for this read).
   useEffect(() => {
     if (!enquiryId) return;
     customOrderEnquiriesApi
-      .list({ page: 1, per_page: 2000 })
-      .then(res => {
-        const found = res.items.find(e => e.id === enquiryId) ?? null;
-        if (!found) {
-          setEnquiryMissing(true);
-          return;
-        }
+      .get(enquiryId)
+      .then(found => {
         setEnquiry(found);
         setContact(c => ({ ...c, name: found.customer_name, phone: found.customer_phone }));
         const extra = found.approx_kg != null ? `\n\nApprox. size: ${found.approx_kg} kg` : '';
@@ -180,6 +175,16 @@ export default function NewCustomOrderPage() {
               Converting the enquiry from <strong>{enquiry.customer_name}</strong>, received{' '}
               {formatDate(enquiry.created_at)}. Its details are filled in below — check the date and
               add the price. An enquiry has no email, so add one for the invoice.
+              {enquiry.reference_image_urls.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {enquiry.reference_image_urls.map((url, i) => (
+                    <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="block h-16 w-16 overflow-hidden rounded border border-blue-200 bg-white">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt={`Inspiration ${i + 1}`} className="h-full w-full object-cover" />
+                    </a>
+                  ))}
+                </div>
+              )}
             </>
           ) : (
             'That enquiry could not be found, so nothing was prefilled.'

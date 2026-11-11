@@ -1,10 +1,11 @@
 {#
   A customer sent a custom-order enquiry from the "We cater to" section.
 
-  This is a lead, not an order — nothing is booked and there is no admin page to
-  link to. It carries everything the customer typed, their inspiration photos and
-  the time it arrived, so it can be answered straight from the inbox. Always
-  English: it reaches the one person who quotes custom cakes.
+  This is a lead, not an order — nothing is booked. It carries everything the
+  customer typed and the time it arrived, so it can be answered straight from the
+  inbox. The inspiration photos are private: the email only counts them and links
+  to the admin Enquiries page, never to the images themselves. Always English: it
+  reaches the one person who quotes custom cakes.
 #}
 {% extends "base.html" %}
 {% import "_parts.html" as parts with context %}
@@ -66,15 +67,12 @@
       </td></tr>
     </table>
 
-    {% if image_urls %}
+    {% if photo_count %}
     <p class="kv-label" style="margin: 22px 0 6px;">Inspiration photos</p>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-      {% for url in image_urls %}
-      <tr><td style="padding: 4px 0;">
-        <a href="{{ url }}" style="color: #8a5a64; word-break: break-all;">Photo {{ loop.index }}</a>
-      </td></tr>
-      {% endfor %}
-    </table>
+    <p style="margin: 0;">
+      {{ photo_count }} photo{% if photo_count != 1 %}s{% endif %} attached &mdash;
+      <a href="{{ enquiries_url }}" style="color: #8a5a64;">view them in the admin console</a>.
+    </p>
     {% endif %}
 
     <p style="margin-top: 22px;">

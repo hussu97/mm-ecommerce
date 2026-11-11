@@ -897,6 +897,8 @@ export interface CustomOrderEnquiryResponse {
 }
 
 export interface EnquiryImageUploadResponse {
-  url: string;
+  /** `enquiries/pending/<uuid>.<ext>` — what the form sends back on submit. */
   key: string;
+  /** A short-lived signed link, or null. Never the preview source. */
+  url: string | null;
 }

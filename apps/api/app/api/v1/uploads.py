@@ -51,6 +51,25 @@ _OBJECT_KEY_RE = re.compile(
 )
 
 
+#: Every folder the admin console uploads into, and nothing else. `folder` used
+#: to be free text, so a `catalogue.manage` token could write any prefix in the
+#: public bucket — including `enquiries/`, where it would have sat beside
+#: customer photos. Each entry names its caller; add one here in the same
+#: change that adds a new upload site.
+ALLOWED_FOLDERS = frozenset(
+    {
+        "products",  # components/products/ProductForm.tsx
+        "categories",  # app/(dashboard)/categories/page.tsx
+        "menu-groups",  # app/(dashboard)/menu-groups/page.tsx
+        "logos",  # pos-config/legal-entities (ResourcePage image field default)
+        "banners",  # components/content/home/fields.tsx ImageField default
+        "tiles",  # components/content/HomeEditor.tsx
+        "photos",  # components/content/HomeEditor.tsx
+        "cater",  # components/content/HomeEditor.tsx (the cater gallery)
+    }
+)
+
+
 class UploadResponse(BaseModel):
     url: str
     key: str
@@ -67,6 +86,12 @@ async def upload_image(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Upload an image to Google Cloud Storage (admin only). Returns public URL."""
+    if folder not in ALLOWED_FOLDERS:
+        raise BadRequestError(
+            f"Unknown upload folder '{folder}'. Allowed: "
+            + ", ".join(sorted(ALLOWED_FOLDERS))
+        )
+
     # Validate content type
     content_type = file.content_type or ""
     if content_type not in ALLOWED_CONTENT_TYPES:
@@ -85,6 +110,8 @@ async def upload_image(
     # photo is several thousand pixels wide and the storefront never renders one
     # above ~960; storing the original just makes every cold image transform
     # slower for the first visitor who lands on that product.
+    # Always the re-encode (metadata stripped), and a file Pillow cannot read is
+    # a 400, never stored raw — see `optimize_image`.
     # Pillow's decode/resize/encode is pure CPU work — run it off the event
     # loop so one admin's batch upload doesn't stall every other request this
     # single uvicorn worker is serving.

@@ -67,6 +67,24 @@ def upload_object(
     blob.upload_from_string(body, content_type=content_type)
 
 
+def object_exists(*, bucket: str, key: str) -> bool:
+    """Whether `gs://{bucket}/{key}` exists. Raises on a storage failure, so a
+    caller cannot mistake an outage for "the customer sent a key we never
+    minted"."""
+    return bool(_get_client().bucket(bucket).blob(key).exists())
+
+
+def copy_object(*, bucket: str, src_key: str, dst_key: str) -> None:
+    """Server-side copy within one bucket; the copy keeps the source's content
+    type and cache-control. Raises on failure (a missing source included).
+
+    There is no rename in GCS: a "move" is this followed by `delete_object` on
+    the source, which the caller sequences so a half-done move can be undone.
+    """
+    gcs_bucket = _get_client().bucket(bucket)
+    gcs_bucket.copy_blob(gcs_bucket.blob(src_key), gcs_bucket, dst_key)
+
+
 def delete_object(*, bucket: str, key: str) -> None:
     """Delete an object, treating a missing object as success."""
     try:

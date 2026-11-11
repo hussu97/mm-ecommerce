@@ -120,20 +120,24 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
     setLoading(true);
     setApiError('');
     try {
-      // Upload photos first, collecting their URLs. The upload endpoint is not
-      // Turnstile-gated (a token is single-use, and there may be several photos);
-      // the human check is spent on the submit below.
-      const urls: string[] = [];
+      // Upload photos first, collecting a reference to each. The upload endpoint
+      // is not Turnstile-gated (a token is single-use, and there may be several
+      // photos); the human check is spent on the submit below. The photos are
+      // private, so the preview stays the local object URL — never the upload's
+      // response. Send the private `key` the API now mints; an API not yet
+      // redeployed returns a public-bucket key it cannot resolve, and for that
+      // one the URL is still the thing to send.
+      const refs: string[] = [];
       for (const { file } of images) {
         const res = await enquiryApi.uploadImage(file);
-        urls.push(res.url);
+        refs.push(res.key.startsWith('enquiries/pending/') ? res.key : (res.url ?? res.key));
       }
       await enquiryApi.submit({
         customer_name: name.trim(),
         customer_phone: phone,
         description: description.trim(),
         approx_kg: approxKg ? Number(approxKg) : null,
-        reference_image_urls: urls,
+        reference_image_urls: refs,
         delivery_by: deliveryBy || null,
         turnstile_token: turnstileToken || undefined,
       });
