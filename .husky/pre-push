@@ -1,48 +1,151 @@
 #!/usr/bin/env sh
 #
 # Mirrors the gates the "Deploy to Production" workflow runs before it will
-# deploy, so a lint / format / type / shared-types-drift failure is caught here
-# instead of after a full CI round trip (and after the commit is already on
-# main). `set -e` so the FIRST failing check aborts the push — without it the
-# script printed failures but still exited 0 on the trailing echo, so a broken
-# push sailed through and only the deploy caught it.
-set -e
+# deploy, so a lint / format / type / shared-types-drift / test failure is
+# caught here instead of after a full CI round trip (and after the commit is
+# already on main). Any failing check fails the push.
+#
+# Fast because it does only what the push needs, and does it at once:
+#
+# - Scoped to what changed. The refs git hands this hook on stdin say what is
+#   being pushed and what the remote already has; only the apps those commits
+#   touch are checked. A web-only push no longer waits on 5,400 API tests, and
+#   an API-only push no longer type-checks two Next apps. Anything the scope
+#   cannot be worked out for (a new branch with no merge base, a ref deletion)
+#   falls back to checking everything.
+# - The three lanes (web, admin, api) run in parallel, and pytest runs on every
+#   core (`-n auto`). Each test process gets its own clone of the test database
+#   (tests/conftest.py), which is what makes the parallel run safe.
+#
+# The API lane no longer skips itself when there is no venv — that is how a
+# push from a fresh worktree used to sail through with no backend checks at
+# all. It builds one from uv.lock instead.
+#
+# DB-gated tests run when TEST_DATABASE_URL is set (a migrated, otherwise idle
+# database — the hook brings it to head first) and are skipped otherwise; CI's
+# Test API job runs every one of them before anything deploys.
+#
+# MM_PREPUSH_ALL=1 checks everything regardless of what changed.
+set -eu
 
-echo "▶ pre-push: type-checking, linting and running frontend tests..."
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+ZERO=0000000000000000000000000000000000000000
 
-pnpm --filter web exec tsc --noEmit
-pnpm --filter admin exec tsc --noEmit
-# F-OPS-12: CI (deploy.yml's test-api job doesn't touch these; deploy-web/
-# deploy-admin lint as their own steps) is not the first place a lint error
-# should surface. Same rule as the backend's ruff check below.
-pnpm --filter web lint
-pnpm --filter admin lint
-pnpm --filter web test
-pnpm --filter admin test
+# ── What is being pushed ─────────────────────────────────────────────────────
+CHANGED="$(mktemp)"
+LOGS="$(mktemp -d)"
+trap 'rm -rf "$CHANGED" "$LOGS"' EXIT
 
-echo "▶ pre-push: linting and running backend tests..."
+ALL="${MM_PREPUSH_ALL:-0}"
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue # deleting a ref checks nothing
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # A new remote branch: compare with what main already has.
+    base="$(git merge-base "$local_sha" origin/main 2>/dev/null || true)"
+  elif git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    base="$remote_sha"
+  else
+    base="" # the remote moved to a commit we have not fetched
+  fi
+  if [ -z "$base" ]; then
+    ALL=1
+  else
+    git diff --name-only "$base" "$local_sha" >> "$CHANGED"
+  fi
+done
 
-VENV="$(pwd)/apps/api/.venv/bin"
-if [ -d "$VENV" ]; then
-  # Prepended, not appended: appending leaves the system python first on the
-  # PATH, and the hook then fails on a machine that has one without pytest —
-  # which reads as "the tests broke" rather than "the wrong python ran".
-  export PATH="$VENV:$PATH"
+touches() { # touches <grep -E pattern>
+  [ "$ALL" = "1" ] || grep -Eq "$1" "$CHANGED"
+}
+
+SHARED='^(packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|turbo\.json$|\.husky/)'
+RUN_WEB=0; RUN_ADMIN=0; RUN_API=0
+touches "^apps/web/|$SHARED" && RUN_WEB=1
+touches "^apps/admin/|$SHARED" && RUN_ADMIN=1
+# The API suite also reads the compose files, workflows, nginx config and
+# deploy scripts (env allow-list, cutover and hook guards), so it runs for
+# anything that is not purely one of the two front ends.
+if [ "$ALL" = "1" ] || grep -Evq '^apps/(web|admin)/' "$CHANGED"; then
+  RUN_API=1
+fi
+
+if [ "$RUN_WEB$RUN_ADMIN$RUN_API" = "000" ]; then
+  echo "✓ pre-push: nothing to check"
+  exit 0
+fi
+
+# ── Lanes ────────────────────────────────────────────────────────────────────
+web_lane() {
+  pnpm --filter web exec tsc --noEmit
+  pnpm --filter web lint
+  pnpm --filter web test
+}
+
+admin_lane() {
+  pnpm --filter admin exec tsc --noEmit
+  pnpm --filter admin lint
+  pnpm --filter admin test
+}
+
+api_lane() {
   cd apps/api
-  # F-OPS-12: ruff runs in CI's test-api job, but a push that fails it there
-  # still has to wait on a full CI round trip to find out — catch it locally
-  # first, the same way the frontend lint/type-check above already do.
+  if [ ! -x .venv/bin/python ]; then
+    command -v uv > /dev/null 2>&1 || {
+      echo "✗ apps/api/.venv is missing and uv is not installed to build it."
+      echo "  Install uv (https://docs.astral.sh/uv/) or create the venv by hand."
+      return 1
+    }
+    echo "  building apps/api/.venv from uv.lock (first push from this checkout)..."
+    uv sync --locked --extra dev --quiet
+  fi
+  # Prepended, not appended: appending leaves the system python first on the
+  # PATH, and the hook then fails on a machine that has one without pytest.
+  PATH="$(pwd)/.venv/bin:$PATH"
+  export PATH
   ruff check .
   ruff format --check .
-  # Shared-types freshness — the deploy's own gate (deploy.yml "Shared types
-  # freshness": `export_openapi --check`). A Pydantic schema change that was not
-  # re-exported fails the deploy here otherwise; the check needs Python only, no
-  # Node and no database, so it is cheap to run before the slow pytest below.
+  # Shared-types freshness — the deploy's own gate (`export_openapi --check`).
   python -m scripts.export_openapi --check
-  python -m pytest tests/ --tb=short -q
-  cd - > /dev/null
-else
-  echo "⚠ Python venv not found at apps/api/.venv — skipping backend lint/tests"
+  if [ -n "${TEST_DATABASE_URL:-}" ]; then
+    DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head > /dev/null
+  else
+    echo "  TEST_DATABASE_URL unset — DB-gated tests skip here (CI runs them)."
+  fi
+  python -m pytest tests/ --tb=short -q -n auto --dist loadfile -p no:cacheprovider
+}
+
+lanes=""
+start_lane() { # start_lane <name>
+  ( "$1_lane" ) > "$LOGS/$1.log" 2>&1 &
+  echo $! > "$LOGS/$1.pid"
+  lanes="$lanes $1"
+}
+
+echo "▶ pre-push: checking$( [ $RUN_WEB = 1 ] && printf ' web')$( [ $RUN_ADMIN = 1 ] && printf ' admin')$( [ $RUN_API = 1 ] && printf ' api') in parallel..."
+[ $RUN_WEB = 1 ] && start_lane web
+[ $RUN_ADMIN = 1 ] && start_lane admin
+[ $RUN_API = 1 ] && start_lane api
+
+failed=""
+for lane in $lanes; do
+  if wait "$(cat "$LOGS/$lane.pid")"; then
+    echo "  ✓ $lane"
+  else
+    failed="$failed $lane"
+    echo "  ✗ $lane"
+  fi
+done
+
+if [ -n "$failed" ]; then
+  for lane in $failed; do
+    echo
+    echo "──── $lane (last 60 lines) ────"
+    tail -n 60 "$LOGS/$lane.log"
+  done
+  echo
+  echo "✗ pre-push failed:$failed"
+  exit 1
 fi
 
 echo "✓ pre-push checks passed"

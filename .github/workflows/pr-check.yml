@@ -115,8 +115,7 @@ jobs:
         # force-dynamic), so there is no SEO or caching change.
         env:
           NEXT_PUBLIC_API_URL: https://api.meltingmomentscakes.com/api/v1
-        # Retried: the Google Fonts fetch inside the build flakes (see the script).
-        run: scripts/retry-build.sh pnpm --filter web build
+        run: pnpm --filter web build
 
   lint-admin:
     name: Lint, Test & Build (Admin)
@@ -159,8 +158,7 @@ jobs:
         run: pnpm --filter admin exec tsc --noEmit
 
       - name: Build
-        # Retried: the Google Fonts fetch inside the build flakes (see the script).
-        run: scripts/retry-build.sh pnpm --filter admin build
+        run: pnpm --filter admin build
 
   lint-python:
     name: Lint & Test (Python)
@@ -245,13 +243,13 @@ jobs:
           cd apps/api
           DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
 
-      # Serial on purpose — see the note in deploy.yml. xdist measured slower
-      # here (50s vs 47s): the cost is importing the app, and each worker pays
-      # it again. `-v` is gone; it printed 1280 lines nobody reads.
+      # Four workers, each on its own clone of the migrated test database —
+      # see the note on deploy.yml's Test API job. `-v` is gone; it printed a
+      # line per test nobody reads.
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ --tb=short --cov=app --cov-report=term-missing
+          pytest tests/ --tb=short -n 4 --dist loadfile --cov=app --cov-report=term-missing
 
       # The shared TypeScript types are generated from this app's OpenAPI
       # document. A schema change that skips regeneration ships as silent

@@ -1550,3 +1550,27 @@ later as an order whose lines summed to 0 against a 110 subtotal.
 **Rule:** a script that writes order lines takes the price from the channel's
 own line data, and its verification includes `sum(order_items.total_price) =
 orders.subtotal` for every order it touched, not only the stock it drew.
+
+### [2026-11-10] One slow test file was most of the CI minutes, and it was slow because of what other tests left behind
+- **What happened**: the deploy's pytest step had grown to 513s. Per-file timings
+  from the CI progress lines (delta between `[ n%]` markers) showed
+  `test_replenishment_forecast.py` alone at ~308s; run on an empty database it
+  took 6s. Its facts builder walks every active branch x produced good, and the
+  rest of the suite retires rather than deletes what it creates (144 branches, 52
+  goods after a full run). The developer's long-lived test DB had reached 190k
+  rows / 215 MB the same way.
+- **Rule**: before parallelising a slow suite, rank files by time on CI's own
+  log — a single outlier is cheaper to fix than any amount of sharding. Then ask
+  whether the outlier's cost depends on database contents it does not own; if so,
+  scope it to its own fixtures. A test whose runtime grows with unrelated tests is
+  also a test whose result can.
+- **Superseded**: the 2026-08-08 "xdist is slower in CI" finding held for a
+  1,280-test suite dominated by import cost. At ~5,400 tests execution dominates;
+  `-n 4` cut a full local run from 136s to 45s. Re-measure when the suite's shape
+  changes — a past measurement is a fact about that suite.
+- **Isolation that made parallel safe** (`tests/conftest.py`): each run/worker
+  clones `TEST_DATABASE_URL` (a migrated template) into `<db>_<worker>`, and app
+  engine pools are reset after every test — a pooled asyncpg connection from the
+  previous test's event loop was the intermittent "attached to a different loop"
+  / MissingGreenlet / DBAPIError. Hunt order-dependence with `pytest-randomly`
+  seeds plus `pytest-timeout` (to turn a hang into a stack trace).

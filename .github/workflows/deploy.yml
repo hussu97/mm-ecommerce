@@ -76,14 +76,80 @@ jobs:
 
   # ── Test & deploy ────────────────────────────────────────────────────────────
   #
-  # Web/admin keep lint and test as steps on the same runner as the Vercel
-  # build. Splitting those gated the deploy serially and paid ~65s to boot a
-  # second machine that then installed pnpm again. API is different: pytest
-  # and docker build are 90s+60s of independent work, so they are sibling
+  # Web/admin lint, test and type-check run in their own jobs (verify-web,
+  # verify-admin) from the first second of the run, beside the API tests. They
+  # used to be steps in the deploy jobs, which put ~50s of checks on the
+  # critical path *after* deploy-gcp — a deploy job cannot start before the
+  # cutover, but nothing stops its checks from having finished by then. (A
+  # split that ran them serially before the deploy paid ~65s for a second
+  # machine; run alongside the API tests, that machine costs no wall clock.)
+  # API: pytest and docker build are independent work, so they are sibling
   # jobs and the VM deploy waits for both.
 
+  verify-web:
+    name: Lint, Test & Type-check Web
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-26.04
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm --filter web lint
+
+      - name: Test
+        run: pnpm --filter web test
+
+      - name: Type-check
+        run: pnpm --filter web exec tsc --noEmit
+
+  verify-admin:
+    name: Lint, Test & Type-check Admin
+    needs: changes
+    if: needs.changes.outputs.admin == 'true'
+    runs-on: ubuntu-26.04
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm --filter admin lint
+
+      - name: Test
+        run: pnpm --filter admin test
+
+      - name: Type-check
+        run: pnpm --filter admin exec tsc --noEmit
+
   deploy-web:
-    name: Test & Deploy Web to Vercel
+    name: Deploy Web to Vercel
     # F-OPS-12: web imports @mm/types, generated from the API's OpenAPI
     # document — shipping it against an API whose own tests are red is
     # exactly the contract-drift class this pipeline exists to catch.
@@ -107,10 +173,11 @@ jobs:
     # web when an API change failed to deploy: `deploy-gcp` is skipped when the
     # api didn't change (run web) and must have succeeded when it did (block web
     # on a failed or skipped-because-upstream-red cutover — the F-OPS-12 guard).
-    needs: [changes, test-api, deploy-gcp]
+    needs: [changes, verify-web, test-api, deploy-gcp]
     if: >
       always() &&
       needs.changes.outputs.web == 'true' &&
+      needs.verify-web.result == 'success' &&
       (needs.test-api.result == 'success' || needs.test-api.result == 'skipped') &&
       (needs.changes.outputs.api == 'false' || needs.deploy-gcp.result == 'success')
     runs-on: ubuntu-26.04
@@ -143,21 +210,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm --filter web lint
-
-      - name: Test
-        run: pnpm --filter web test
-
-      - name: Type-check
-        run: pnpm --filter web exec tsc --noEmit
-
+      # Lint, test and type-check ran in verify-web, which this job needs.
       - name: Pull Vercel environment
         run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build
-        # Retried: the Google Fonts fetch inside the build flakes (see the script).
-        run: scripts/retry-build.sh npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy
         # `--archive=tgz` uploads one tarball instead of one request per file.
@@ -188,12 +246,13 @@ jobs:
           exit 1
 
   deploy-admin:
-    name: Test & Deploy Admin to Vercel
+    name: Deploy Admin to Vercel
     # F-OPS-12 — see the same note on deploy-web above.
-    needs: [changes, test-api]
+    needs: [changes, verify-admin, test-api]
     if: >
       always() &&
       needs.changes.outputs.admin == 'true' &&
+      needs.verify-admin.result == 'success' &&
       (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
     runs-on: ubuntu-26.04
     environment: production
@@ -225,21 +284,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm --filter admin lint
-
-      - name: Test
-        run: pnpm --filter admin test
-
-      - name: Type-check
-        run: pnpm --filter admin exec tsc --noEmit
-
+      # Lint, test and type-check ran in verify-admin, which this job needs.
       - name: Pull Vercel environment
         run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build
-        # Retried: the Google Fonts fetch inside the build flakes (see the script).
-        run: scripts/retry-build.sh npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy
         # `--archive=tgz` uploads one tarball instead of one request per file.
@@ -364,19 +414,21 @@ jobs:
           cd apps/api
           DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
 
-      # Deliberately serial. `-n auto --dist loadfile` was tried here and
-      # measured 50s against 47s for the serial run — slightly *worse*. The
-      # suite is ~1280 fast tests whose CI cost is importing the app, not
-      # running them, and every xdist worker pays that import separately. It
-      # does help on a developer machine with more cores (9.6s -> 5.6s), which
-      # is why the dependency is still there.
+      # Four workers, one per runner core. This was serial on purpose in
+      # 2026-08, when the suite was ~1280 tests whose cost was importing the app
+      # (xdist measured 50s vs 47s). It is ~5,400 tests now and the step had
+      # grown to 513s, so execution, not import, is what the seconds are made
+      # of. Each worker runs against its own clone of the migrated `mm_test`
+      # (tests/conftest.py), so they cannot see each other's rows.
+      # `--dist loadfile` keeps a module's tests on one worker, because several
+      # share module-level state.
       #
       # Coverage stays on pr-check.yml. `--cov` on every deploy added ~20–30s
       # for a report nobody reads off the production pipeline.
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ --tb=short
+          pytest tests/ --tb=short -n 4 --dist loadfile
 
       # F-OPS-12: pr-check.yml already gates this on a PR, but a push that
       # skipped review (or a PR whose branch drifted after its last check
@@ -753,9 +805,30 @@ jobs:
           # difference between a mistake being an inconvenience and being
           # unrecoverable. A failure here stops the deploy: migrating without
           # one is the situation this exists to prevent.
-          echo "Backing up the database before migrating..."
-          timeout 600 bash scripts/backup-db.sh < /dev/null \
-            || { echo "ERROR: Pre-migration backup failed — refusing to migrate"; exit 1; }
+          #
+          # Only when there IS something to migrate, though. Most deploys carry
+          # no migration, and for those the dump was 25s of a ~95s step that
+          # protected against nothing — and, worse, it rotated real backups
+          # out: backup-db.sh keeps the newest 5, so a day of 6+ deploys pushed
+          # the nightly 02:00 cron dump (PRODUCTION.md Step 9) out of the window
+          # and left five near-identical mid-day copies. The DB's revision is
+          # compared with the head baked into the image just pulled (the same
+          # `get_current_head()` rollback.yml trusts, not `alembic heads` text),
+          # and ANY doubt — either side empty, a branched history, the
+          # comparison erroring — takes the backup. Skipping needs proof.
+          DB_REV=$(docker compose -f docker-compose.prod.yml exec -T postgres \
+            sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT version_num FROM alembic_version"' \
+            < /dev/null 2>/dev/null | tr -d '\r\n ' || true)
+          IMAGE_HEAD=$(docker compose -f docker-compose.prod.yml run --rm --no-deps -T api \
+            python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; print(ScriptDirectory.from_config(Config('alembic.ini')).get_current_head())" \
+            < /dev/null 2>/dev/null | tr -d '\r\n ' || true)
+          if [ -n "$DB_REV" ] && [ "$DB_REV" = "$IMAGE_HEAD" ]; then
+            echo "Database already at $IMAGE_HEAD — no migration, skipping the pre-migration backup (nightly backup unaffected)."
+          else
+            echo "Backing up the database before migrating (${DB_REV:-unknown} -> ${IMAGE_HEAD:-unknown})..."
+            timeout 600 bash scripts/backup-db.sh < /dev/null \
+              || { echo "ERROR: Pre-migration backup failed — refusing to migrate"; exit 1; }
+          fi
 
           echo "Running database migrations..."
           # Use < /dev/null to prevent stdin hijacking

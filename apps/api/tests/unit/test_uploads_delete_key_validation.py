@@ -54,15 +54,21 @@ async def test_a_full_public_url_is_stripped_to_its_key_and_deleted(recorded_del
     assert recorded_deletes == [key]
 
 
+#: A fixed, well-formed v4 UUID. Not `uuid.uuid4()`: a parameter minted at
+#: import time is a different test id in every process, and pytest-xdist
+#: refuses to run a suite whose workers did not collect the same tests.
+_SOME_UUID = "3f2b8c1e-6a4d-4e9b-9c7a-1d2e3f4a5b6c"
+
+
 @pytest.mark.parametrize(
     "bad_key",
     [
         "config.json",  # not in the namespace at all
         "products/../secrets/key.jpg",  # path traversal
         "products/not-a-uuid.jpg",  # stem is not a UUID we minted
-        "products/" + str(uuid.uuid4()) + ".txt",  # extension we never store
-        "/products/" + str(uuid.uuid4()) + ".jpg",  # leading slash
-        str(uuid.uuid4()) + ".jpg",  # no folder segment
+        f"products/{_SOME_UUID}.txt",  # extension we never store
+        f"/products/{_SOME_UUID}.jpg",  # leading slash
+        f"{_SOME_UUID}.jpg",  # no folder segment
         "",  # empty
     ],
 )

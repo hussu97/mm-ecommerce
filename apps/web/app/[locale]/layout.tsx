@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
-import { Raleway, Jost, Tajawal, Cairo } from "next/font/google";
+import { raleway, jost, tajawal, cairo } from "../fonts";
 import Script from "next/script";
 import { notFound } from "next/navigation";
 
@@ -35,7 +35,8 @@ import type { Language } from "@/lib/types";
 const SUPPORTED_LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar").split(",");
 
 /**
- * Four families, none of them preloaded, and no 300 weight anywhere.
+ * Four families (self-hosted in `app/fonts`), none of them preloaded, and no
+ * 300 weight declared.
  *
  * `preload` was on by default, which meant `next/font` emitted a preload for
  * every family on every page — 132 KB across 7 files, of which roughly half was
@@ -55,38 +56,6 @@ const SUPPORTED_LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar")
  * `font-normal` (400) and one `font-bold` (700); `font-light` appears nowhere,
  * so those four faces were downloaded and never drawn with.
  */
-
-const raleway = Raleway({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-raleway",
-  display: "swap",
-  preload: false,
-});
-
-const jost = Jost({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-jost",
-  display: "swap",
-  preload: false,
-});
-
-const tajawal = Tajawal({
-  subsets: ["arabic"],
-  weight: ["400", "500", "700"],
-  variable: "--font-tajawal",
-  display: "swap",
-  preload: false,
-});
-
-const cairo = Cairo({
-  subsets: ["arabic"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-cairo",
-  display: "swap",
-  preload: false,
-});
 
 export const metadata: Metadata = {
   title: {
@@ -144,10 +113,12 @@ export default async function LocaleLayout({
 
   // All four regardless of script, and it costs nothing to do so: these class
   // names only define `--font-raleway` and friends, and nothing reads them.
-  // `globals.css` picks its faces by real family name ("Raleway", "Tajawal"),
-  // and Next 16 emits `@font-face` under exactly those names, so the mapping is
-  // redundant — which is also why dropping the Arabic pair here would not have
-  // stopped them loading. What stops that is `preload: false` above.
+  // `globals.css` picks its faces by family name ("Raleway", "Tajawal"), and
+  // `next/font/local` emits each `@font-face` under its export's name
+  // (`raleway`, `tajawal` — see app/fonts), which CSS matches case-insensitively,
+  // so the mapping is redundant — which is also why dropping the Arabic pair
+  // here would not have stopped them loading. What stops that is
+  // `preload: false` in app/fonts.
   const fontVariables = `${raleway.variable} ${jost.variable} ${tajawal.variable} ${cairo.variable}`;
 
   return (

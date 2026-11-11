@@ -32,6 +32,7 @@ async def test_a_custom_order_is_taken_packed_and_finished():
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+    from app.api.v1.business_settings import get_or_create_settings
     from app.models.business_settings import BusinessSettings
     from app.models.charge import Charge
     from app.models.inventory import (
@@ -80,7 +81,10 @@ async def test_a_custom_order_is_taken_packed_and_finished():
             category_id=category.id,
         )
         db.add(ganache)
-        settings = (await db.execute(select(BusinessSettings).limit(1))).scalar_one()
+        # The singleton is created lazily on first read, so a database fresh
+        # from migrations has none until something asks — this test used to
+        # pass only when an earlier test in the same database had asked.
+        settings = await get_or_create_settings(db)
         previous = (
             settings.custom_orders_branch_id,
             settings.custom_orders_product_id,
