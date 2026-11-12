@@ -4,14 +4,16 @@
  * Pure functions over a string, so they are unit-tested against real OCR /
  * PDF-text output (`parse.test.ts`). The text comes from `extract.ts`: a PDF's
  * own text layer when it has one (the municipality OHC, MOHRE and ICP
- * e-documents do), otherwise Tesseract run in the browser.
+ * e-documents do), otherwise Tesseract run in the browser. The passport and the
+ * Emirates ID also carry a machine-readable zone whose check digits say which
+ * OCR reading of a number or date to trust.
  *
  * Everything returned is a *suggestion* the super-admin reviews before saving —
  * OCR misreads, and a wrong expiry date is worse than an empty one, so a field
  * the text does not clearly support is left out rather than guessed.
  */
 
-export type OcrDocType = 'passport' | 'visa' | 'labour_card' | 'ohc' | 'trade_license';
+export type OcrDocType = 'passport' | 'visa' | 'emirates_id' | 'labour_card' | 'ohc' | 'trade_license';
 
 /** What a scan can tell us about the person it belongs to. */
 export type PersonFields = {
@@ -770,6 +772,225 @@ export function parseVisa(raw: string): DocumentFields {
   return out;
 }
 
+// ─── Emirates ID (front labels + ICAO 9303 TD1 MRZ on the back) ──────────────
+
+/** ICP — the issuer of every Emirates ID, whichever emirate prints it. */
+const EID_AUTHORITY = 'Federal Authority for Identity, Citizenship, Customs & Port Security';
+
+/** 784-YYYY-NNNNNNN-C, however OCR spaced or dashed it. */
+const EID_NUMBER = /\b784[\s.-]{0,2}(\d{4})[\s.-]{0,2}(\d{7})[\s.-]{0,2}(\d)\b/;
+
+function formatEid(digits: string): string {
+  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 14)}-${digits.slice(14)}`;
+}
+
+export type Td1 = {
+  /** The 9-digit card number (changes with every card). */
+  cardNumber: string;
+  cardOk: boolean;
+  /** The 15-digit identity number from the optional-data field, when present. */
+  idNumber?: string;
+  /** The composite check digit — which covers the identity number — passed. */
+  compositeOk: boolean;
+  birth?: string;
+  birthOk: boolean;
+  expiry?: string;
+  expiryOk: boolean;
+  sex?: 'M' | 'F';
+  nationality?: string;
+  surname?: string;
+  given?: string;
+  noisy: boolean;
+  failures: number;
+};
+
+/** Every TD1 line triple in the text — one per OCR pass that found it. The
+ *  UAE card opens `ILARE` (or `IDARE`); the names line may lose its trailing
+ *  filler to OCR, so it is not held to a length. */
+function findTd1All(text: string): Array<[string, string, string]> {
+  const lines = text
+    .split('\n')
+    .map(mrzLine)
+    .filter((l) => l.length > 0);
+  const triples: Array<[string, string, string]> = [];
+  for (let i = 0; i < lines.length - 2; i++) {
+    const start = lines[i].search(/[I1L][A-Z<]ARE\d/);
+    if (start < 0 || lines[i].length - start < 25) continue;
+    const l2 = lines[i + 1];
+    if (!/^\d{7}/.test(digitsOnly(l2.slice(0, 7)))) continue;
+    const l3 = lines[i + 2];
+    if (!/^[A-Z<]{5,}$/.test(l3) || !l3.includes('<')) continue;
+    const pad = (l: string) => l.padEnd(30, '<').slice(0, 30);
+    triples.push([pad(lines[i].slice(start)), pad(l2), pad(l3)]);
+  }
+  return triples;
+}
+
+function parseTd1Triple([l1, l2, l3]: [string, string, string]): Td1 {
+  const ok = (field: string, digit: string) => String(mrzCheckDigit(field)) === digitsOnly(digit);
+  const cardNumber = digitsOnly(l1.slice(5, 14));
+  const optional = digitsOnly(l1.slice(15, 30).replace(/[KLC]+$/, '')).replace(/<+$/, '');
+  const dob = digitsOnly(l2.slice(0, 6));
+  const expiry = digitsOnly(l2.slice(8, 14));
+  // Line 2's own optional field is filler on the UAE card; OCR reads that
+  // filler as K/L/C, which would sink the composite check for nothing.
+  const composite =
+    digitsOnly(l1.slice(5, 30)) + digitsOnly(l2.slice(0, 7)) + digitsOnly(l2.slice(8, 15)) + l2.slice(18, 29).replace(/[KLC]/g, '<');
+  const sex = l2[7];
+  const nationality = l2.slice(15, 18).replace(/[^A-Z]/g, '');
+  const names = mrzNames(l3);
+  const td1: Td1 = {
+    cardNumber,
+    cardOk: ok(cardNumber, l1[14]),
+    idNumber: /^784\d{12}$/.test(optional) ? optional : undefined,
+    compositeOk: ok(composite, l2[29]),
+    birth: mrzDate(dob, 'birth'),
+    birthOk: ok(dob, l2[6]),
+    expiry: mrzDate(expiry, 'expiry'),
+    expiryOk: ok(expiry, l2[14]),
+    sex: sex === 'M' || sex === 'F' ? sex : undefined,
+    nationality: nationality ? COUNTRY_CODES[nationality] ?? nationality : undefined,
+    surname: names.surname,
+    given: names.given,
+    noisy: names.noisy,
+    failures: 0,
+  };
+  td1.failures = [td1.cardOk, td1.compositeOk, td1.birthOk, td1.expiryOk].filter((v) => !v).length;
+  return td1;
+}
+
+/** The TD1 read best across the OCR passes (fewest failed check digits), with
+ *  the names — which have no check digit — taken from what the passes agree on. */
+export function parseTd1(text: string): Td1 | null {
+  const parsed = findTd1All(text).map(parseTd1Triple);
+  if (!parsed.length) return null;
+  const best = parsed.reduce((b, p) => (p.failures < b.failures ? p : b));
+  best.surname = consensus(parsed.map((p) => p.surname));
+  best.given = consensus(parsed.map((p) => p.given));
+  best.noisy = parsed.some((p) => p.noisy);
+  return best;
+}
+
+/** The value after a label on its own line ("Occupation: Baker"). The card's
+ *  Arabic labels are stripped first, so a value ending the English half of a
+ *  bilingual line still reaches the line end. */
+function afterLabel(latin: string, label: RegExp, value: RegExp): string | undefined {
+  // Case-sensitive on purpose: `i` would let PRINTED_NAME's capitals match
+  // lowercase OCR noise. The labels spell out the cases the cards print.
+  return first(latin, new RegExp(`${label.source}[ \\t]*[:.]?[ \\t]*(${value.source})[ \\t]*(?:\\n|$)`, 'm'));
+}
+
+/**
+ * The date printed straight after a label ("Expiry Date: 10/03/2028"), with
+ * nothing but a colon between. The card prints issue and expiry side by side
+ * on one line, where `dateNear`'s nearest-on-either-side rule hands the
+ * expiry label the issue date that ends one space before it; this reading
+ * comes first, and `dateNear` stays the fallback for looser layouts.
+ */
+function dateRightAfter(text: string, label: RegExp): string | undefined {
+  for (const m of text.matchAll(globalRe(label))) {
+    const rest = text.slice((m.index ?? 0) + m[0].length);
+    const lead = rest.match(/^[ \t]*[:.]?[ \t]*/)?.[0].length ?? 0;
+    const hit = dateHits(rest.slice(lead, lead + 24))[0];
+    if (hit && hit.start === 0) return hit.value;
+  }
+  return undefined;
+}
+
+const EID_ISSUE = /Issu(?:ing|e)\s*Date|Date\s*of\s*Issue/i;
+const EID_EXPIRY = /Expiry\s*Date|Date\s*of\s*Expiry|Expiration\s*Date/i;
+const EID_BIRTH = /Date\s*of\s*Birth|D\.?O\.?B/i;
+
+/** Two to six capitalised words — a printed name, not OCR's Latin noise. */
+const PRINTED_NAME = /[A-Z][A-Za-z'-]+(?:[ ][A-Z][A-Za-z'-]+){1,5}/;
+
+export function parseEmiratesId(raw: string): DocumentFields {
+  const text = normalise(raw);
+  const latin = text.replace(/[؀-ۿ]+/g, ' ').replace(/[ \t]+/g, ' ');
+  const out = empty();
+  out.issuing_authority = EID_AUTHORITY;
+  const mrz = parseTd1(text);
+
+  // Identity number: the MRZ's when its composite check covers it, else the
+  // one printed on the front, else the MRZ's unverified.
+  const printed = text.match(EID_NUMBER);
+  const printedId = printed ? `784-${printed[1]}-${printed[2]}-${printed[3]}` : undefined;
+  const mrzId = mrz?.idNumber ? formatEid(mrz.idNumber) : undefined;
+  out.document_number = (mrz?.compositeOk ? mrzId : undefined) ?? printedId ?? mrzId;
+  if (printedId && mrzId && printedId !== mrzId) {
+    out.warnings.push('The ID number on the front and in the machine-readable zone differ — check it against the card.');
+  }
+
+  const printedCard = first(latin, /Card\s*(?:No|Number)\.?[ \t]*:?[^\d\n]{0,30}(\d{9})\b/i);
+  const card = (mrz?.cardOk ? mrz.cardNumber : undefined) ?? printedCard ?? (mrz ? mrz.cardNumber : undefined);
+  if (card && /^\d{9}$/.test(card)) out.details.card_number = card;
+
+  // Dates: a check-digit-verified MRZ date beats a printed one, and a printed
+  // one beats an MRZ date whose check failed.
+  const printedDob = dateRightAfter(latin, EID_BIRTH) ?? dateNear(latin, EID_BIRTH, 40);
+  const dob = (mrz?.birthOk ? mrz.birth : undefined) ?? printedDob ?? mrz?.birth;
+  const labelled = issueAndExpiry(latin, EID_ISSUE, EID_EXPIRY, { exclude: [dob, printedDob, mrz?.birth] });
+  const printedExpiry = dateRightAfter(latin, EID_EXPIRY) ?? (labelled.guessed ? undefined : labelled.expiry);
+  const printedIssue = dateRightAfter(latin, EID_ISSUE) ?? labelled.issue;
+  out.expiry_date = (mrz?.expiryOk ? mrz.expiry : undefined) ?? printedExpiry ?? mrz?.expiry ?? labelled.expiry;
+  if (!out.expiry_date) out.warnings.push('No expiry date found — enter it from the card.');
+  else if (out.expiry_date === labelled.expiry && labelled.guessed && !mrz?.expiry) {
+    out.warnings.push('Expiry date guessed as the latest date on the card — check it.');
+  }
+  if (printedIssue && out.expiry_date && printedIssue < out.expiry_date) out.issue_date = printedIssue;
+
+  // Warn only where a value that failed its check digit is the one filled in.
+  // A failed MRZ field with a printed reading to fall back on is the check
+  // doing its job (Tesseract reading 9001158 as 0001158), not news.
+  if (mrz) {
+    const failed = [
+      !mrz.cardOk && !printedCard && card === mrz.cardNumber && 'card number',
+      // The composite covers every field, so it only casts doubt on the ID
+      // number when no other field's own check failed to explain it.
+      !mrz.compositeOk && mrz.cardOk && mrz.birthOk && mrz.expiryOk && !printedId && out.document_number === mrzId && 'ID number',
+      !mrz.birthOk && !printedDob && dob === mrz.birth && 'date of birth',
+      !mrz.expiryOk && !printedExpiry && out.expiry_date === mrz.expiry && 'expiry date',
+    ].filter(Boolean);
+    if (failed.length) {
+      out.warnings.push(`The ${failed.join(', ')} failed the machine-readable zone check — compare with the card.`);
+    }
+  }
+  if (!mrz) {
+    out.warnings.push('No machine-readable zone found — include the back of the card to check the numbers.');
+  }
+
+  const sex = (first(latin, /\b(?:Sex|Gender)[ \t]*:?[ \t]*([MF])\b/) as 'M' | 'F' | undefined) ?? mrz?.sex;
+  const nationality =
+    afterLabel(latin, /\b(?:Nationality|NATIONALITY)/, /[A-Z][A-Za-z ]{2,40}/) ?? mrz?.nationality ?? arabicNationality(text);
+  const printedName = afterLabel(latin, /\b(?:Name|NAME)/, PRINTED_NAME);
+  const mrzName = [mrz?.given, mrz?.surname].filter(Boolean).join(' ');
+  const name = printedName ? titleCase(printedName) : mrzName ? titleCase(mrzName) : undefined;
+  if (!printedName && mrzName && mrz?.noisy) {
+    out.warnings.push('The name in the machine-readable zone was hard to read — check it against the card.');
+  }
+  const occupation = afterLabel(latin, /\b(?:Occupation|OCCUPATION|Profession|PROFESSION)/, /[A-Z][A-Za-z /&-]{2,60}/);
+  const employer = afterLabel(latin, /\b(?:Employer|EMPLOYER)(?:\s*Name)?/, /[A-Z][A-Za-z0-9 &.,'()-]{2,80}/);
+  const place = afterLabel(latin, /\b(?:Issuing\s*Place|ISSUING\s*PLACE|Place\s*of\s*Issue)/, /[A-Z][A-Za-z ]{2,30}/);
+
+  if (name) out.details.name = name;
+  if (nationality) out.details.nationality = titleCase(nationality);
+  if (dob) out.details.date_of_birth = dob;
+  if (sex) out.details.sex = sex;
+  if (occupation) out.details.occupation = titleCase(occupation);
+  if (employer) out.details.employer = employer;
+  if (place) out.details.place_of_issue = titleCase(place);
+
+  out.person = {
+    full_name: name,
+    nationality: nationality ? titleCase(nationality) : undefined,
+    date_of_birth: dob,
+    gender: sex,
+    job_title: occupation ? titleCase(occupation) : undefined,
+    establishment: employer,
+  };
+  return out;
+}
+
 /**
  * The value printed beside a label on the label's own line — after it
  * ("Profession : NONE") or before it ("NONE     Profession", the old residence
@@ -887,6 +1108,8 @@ export function parseDocument(
       return parsePassport(text, hint);
     case 'visa':
       return parseVisa(text);
+    case 'emirates_id':
+      return parseEmiratesId(text);
     case 'labour_card':
       return parseLabourCard(text);
     case 'ohc':

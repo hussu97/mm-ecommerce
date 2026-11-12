@@ -78,6 +78,7 @@ export default function EmployeesPage() {
     { header: 'Job title', priority: 'meta', render: (row) => row.job_title ?? '—' },
     { header: 'Sponsor', priority: 'desktop', render: (row) => entityName(row.legal_entity_id) },
     docColumn('visa', 'Visa'),
+    docColumn('emirates_id', 'Emirates ID'),
     docColumn('labour_card', 'Labour card'),
     docColumn('ohc', 'Health card'),
     docColumn('passport', 'Passport'),
@@ -86,7 +87,7 @@ export default function EmployeesPage() {
   return (
     <ListPage
       title="Employees"
-      description="Passports, visas, labour cards and health cards — every renewal kept on file. Visible to super-admins only."
+      description="Passports, visas, Emirates IDs, labour cards and health cards — every renewal kept on file. Visible to super-admins only."
       search={{ value: search, onChange: setSearch, placeholder: 'Search name, number…' }}
       toolbar={
         <div className="w-full sm:w-36">

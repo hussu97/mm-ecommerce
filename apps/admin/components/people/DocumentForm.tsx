@@ -10,7 +10,7 @@ import {
   type EmployeeUpdate,
 } from '@/lib/people-api';
 import type { LegalEntity } from '@/lib/pos-types';
-import { extractText } from '@/lib/ocr/extract';
+import { combineImages, extractText } from '@/lib/ocr/extract';
 import { parseDocument, type DocumentFields, type PersonFields } from '@/lib/ocr/parse';
 import { ApiError } from '@/lib/api';
 import { Button, Input, Select, Textarea } from '@/components/ui';
@@ -23,9 +23,19 @@ import { Modal } from '@/components/pos/ResourcePage';
  * the form; the super-admin checks every field against the scan before saving.
  * A scan can also fill the employee's empty profile fields (name, nationality,
  * date of birth, personal number, sponsor), offered as a ticked checkbox.
+ *
+ * The Emirates ID is two-sided and the numbers worth checking (the MRZ) are on
+ * the back, so for it the picker takes either one PDF/photo showing both sides
+ * or two photos of the front and the back, which are combined into the one
+ * scan that is read and stored.
  */
 
 const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
+
+/** Document types with a machine-readable zone worth an extra OCR pass. */
+const MRZ_TYPES: ReadonlySet<EmployeeDocType> = new Set(['passport', 'emirates_id']);
+/** Two-sided cards: two photos are combined, a scanned PDF's page 2 is read. */
+const TWO_SIDED_TYPES: ReadonlySet<EmployeeDocType> = new Set(['emirates_id']);
 
 function errorText(err: unknown): string {
   return err instanceof ApiError ? err.message : 'network error';
@@ -137,15 +147,33 @@ export function DocumentForm({
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
-  async function onFile(picked: File | null) {
-    setFile(picked);
+  const twoSided = TWO_SIDED_TYPES.has(draft.doc_type);
+
+  async function onFiles(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    setFile(null);
     setScan(null);
     setError('');
+    if (files.length > 2 || (files.length === 2 && !twoSided)) {
+      setError(twoSided ? 'Pick one file, or two photos: the front and the back.' : 'Pick one file.');
+      return;
+    }
+    let picked: File | null = files[0] ?? null;
+    if (files.length === 2) {
+      try {
+        picked = await combineImages(files, `${draft.doc_type}-front-and-back.jpg`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not combine the two photos.');
+        return;
+      }
+    }
+    setFile(picked);
     if (!picked || editing) return;
     try {
       setReading('Reading the document…');
       const { text, source } = await extractText(picked, {
-        passport: draft.doc_type === 'passport',
+        mrz: MRZ_TYPES.has(draft.doc_type),
+        twoSided,
         onProgress: (stage, fraction) =>
           setReading(fraction !== undefined ? `${stage} ${Math.round(fraction * 100)}%` : stage),
       });
@@ -242,12 +270,18 @@ export function DocumentForm({
           <label className="block text-xs uppercase tracking-widest text-gray-500">
             {editing ? 'Replace the scan (optional)' : 'Scan or PDF — fills the form for you'}
           </label>
+          {twoSided && (
+            <p className="mt-1 text-xs text-gray-500">
+              Both sides: one PDF or photo showing the front and the back, or pick two photos together.
+            </p>
+          )}
           <input
             type="file"
             accept={ACCEPT}
+            multiple={twoSided}
             className="mt-2 block w-full text-xs"
             data-testid="document-file"
-            onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => void onFiles(e.target.files)}
           />
           {reading && <p className="mt-2 text-xs text-primary">{reading}</p>}
           {scan && (

@@ -7,8 +7,10 @@ import {
   mrzCheckDigit,
   mrzNames,
   parseLabourCard,
+  parseEmiratesId,
   parseMrz,
   parseOhc,
+  parseTd1,
   parsePassport,
   parseTradeLicense,
   parseVisa,
@@ -347,5 +349,146 @@ describe('trade licence', () => {
       emirate: 'Sharjah',
       legal_name: 'FATEMA CAKE SWEETS',
     });
+  });
+});
+
+// A made-up resident: ID 784-1990-1234567-1, card 123456789, born 15 Jan 1990,
+// card valid 11 Mar 2026 → 10 Mar 2028. The MRZ's check digits are real.
+const EID_MRZ = [
+  'ILARE1234567897784199012345671',
+  '9001158M2803102PHL<<<<<<<<<<<3',
+  'CRUZ<<JUAN<SANTOS<<<<<<<<<<<<<',
+].join('\n');
+
+const EID_FRONT = `United Arab Emirates الإمارات العربية المتحدة
+Resident Identity Card بطاقة هوية مقيم
+ID Number / رقم الهوية
+784-1990-1234567-1
+Name: Juan Santos Cruz الاسم
+Date of Birth: 15/01/1990 تاريخ الميلاد
+Nationality: Philippines الجنسية
+Issuing Date: 11/03/2026 تاريخ الإصدار
+Expiry Date: 10/03/2028 تاريخ الانتهاء
+Sex: M الجنس`;
+
+const EID_BACK = `Occupation: Baker المهنة
+Employer: Fatema Cake Sweets صاحب العمل
+Issuing Place: Dubai مكان الإصدار
+Card Number / رقم البطاقة 123456789
+${EID_MRZ}`;
+
+describe('Emirates ID', () => {
+  it('reads both sides, with the MRZ check digits agreeing', () => {
+    const out = parseEmiratesId(`${EID_FRONT}\n\n${EID_BACK}`);
+    expect(out.document_number).toBe('784-1990-1234567-1');
+    expect(out.issue_date).toBe('2026-03-11');
+    expect(out.expiry_date).toBe('2028-03-10');
+    expect(out.issuing_authority).toMatch(/Identity, Citizenship/);
+    expect(out.details).toEqual({
+      card_number: '123456789',
+      name: 'Juan Santos Cruz',
+      nationality: 'Philippines',
+      date_of_birth: '1990-01-15',
+      sex: 'M',
+      occupation: 'Baker',
+      employer: 'Fatema Cake Sweets',
+      place_of_issue: 'Dubai',
+    });
+    expect(out.person).toMatchObject({
+      full_name: 'Juan Santos Cruz',
+      nationality: 'Philippines',
+      date_of_birth: '1990-01-15',
+      gender: 'M',
+      job_title: 'Baker',
+      establishment: 'Fatema Cake Sweets',
+    });
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('keeps issue and expiry apart when the card prints them side by side', () => {
+    // Real Tesseract output of a rendered card: both dates on one line.
+    const out = parseEmiratesId(
+      'Date of Birth: 15/01/1990\nIssuing Date: 11/03/2026   Expiry Date: 10/03/2028\nSex: M',
+    );
+    expect(out.issue_date).toBe('2026-03-11');
+    expect(out.expiry_date).toBe('2028-03-10');
+    expect(out.details.date_of_birth).toBe('1990-01-15');
+  });
+
+  it('reads the front alone, and asks for the back', () => {
+    const out = parseEmiratesId(EID_FRONT);
+    expect(out.document_number).toBe('784-1990-1234567-1');
+    expect(out.expiry_date).toBe('2028-03-10');
+    expect(out.issue_date).toBe('2026-03-11');
+    expect(out.details.date_of_birth).toBe('1990-01-15');
+    expect(out.details.card_number).toBeUndefined();
+    expect(out.warnings.join(' ')).toMatch(/No machine-readable zone/);
+  });
+
+  it('decodes TD1 check digits, including the composite over the ID number', () => {
+    const td1 = parseTd1(EID_MRZ);
+    expect(td1).toMatchObject({
+      cardNumber: '123456789',
+      cardOk: true,
+      idNumber: '784199012345671',
+      compositeOk: true,
+      birth: '1990-01-15',
+      birthOk: true,
+      expiry: '2028-03-10',
+      expiryOk: true,
+      sex: 'M',
+      nationality: 'Philippines',
+      surname: 'CRUZ',
+      given: 'JUAN SANTOS',
+      failures: 0,
+    });
+    expect(mrzCheckDigit('123456789')).toBe(7);
+  });
+
+  it('takes the Tesseract pass whose check digits pass, and repairs the names', () => {
+    // Front reads as Latin noise; two passes over the back: the first misreads
+    // the expiry, both turn the name filler into K/L. Spaces and O-for-0 too.
+    const tesseract = `Ulnitcd Arab Emiratcs ioJl Kl
+ILARE 123456789 7 784199012345671
+9OO1158M2803192PHL<<<<<<<<<<<3
+CRUZ<<JUAN<SANTOS<KKLKKKKKKKKK
+
+ILARE1234567897784199012345671
+9001158M2803102PHL<<<<<<<<<<<3
+CRUZ<<JUAN<SANTOSKLLLLLLLLLLLL`;
+    const out = parseEmiratesId(tesseract);
+    expect(out.document_number).toBe('784-1990-1234567-1');
+    expect(out.expiry_date).toBe('2028-03-10');
+    expect(out.details.card_number).toBe('123456789');
+    expect(out.details.name).toBe('Juan Santos Cruz');
+    expect(out.details.date_of_birth).toBe('1990-01-15');
+    expect(out.details.nationality).toBe('Philippines');
+    expect(out.issue_date).toBeUndefined();
+    expect(out.warnings.join(' ')).toMatch(/name in the machine-readable zone was hard to read/);
+    expect(out.warnings.join(' ')).not.toMatch(/failed/);
+  });
+
+  it('falls back to the printed date when the MRZ one fails its check', () => {
+    // Real Tesseract misread of a rendered card: 9001158 → 0001158.
+    const misread = EID_MRZ.replace('9001158', '0001158');
+    const out = parseEmiratesId(`${EID_FRONT}\n${EID_BACK.replace(EID_MRZ, misread)}`);
+    expect(out.details.date_of_birth).toBe('1990-01-15');
+    expect(out.document_number).toBe('784-1990-1234567-1');
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('warns when an MRZ value that failed its check is all there is', () => {
+    // The back alone: the new card prints no expiry there, only the MRZ.
+    const out = parseEmiratesId(EID_BACK.replace('2803102', '2808102'));
+    expect(out.expiry_date).toBe('2028-08-10');
+    expect(out.warnings.join(' ')).toMatch(/The expiry date failed the machine-readable zone check/);
+    expect(out.warnings.join(' ')).not.toMatch(/ID number|card number/);
+  });
+
+  it('flags an ID number the front and the MRZ disagree on', () => {
+    const out = parseEmiratesId(`${EID_FRONT.replace('1234567-1', '1234561-1')}\n${EID_MRZ}`);
+    // The MRZ's composite check passes, so its number wins.
+    expect(out.document_number).toBe('784-1990-1234567-1');
+    expect(out.warnings.join(' ')).toMatch(/ID number on the front and in the machine-readable zone differ/);
   });
 });

@@ -10,7 +10,8 @@ import { formatDate } from '@/components/pos/LegalEntityPaperwork';
 
 /**
  * The super-admin's warning about paperwork that lapses within 15 days: each
- * active employee's current visa, labour card and Occupational Health Card, and
+ * active employee's current visa, Emirates ID, labour card and Occupational
+ * Health Card, and
  * each legal entity's current trade licence. Already-expired documents stay on
  * it until a renewal is entered.
  *
