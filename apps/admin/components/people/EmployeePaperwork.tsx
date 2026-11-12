@@ -144,6 +144,112 @@ function Fact({ label, children, wide = false }: { label: string; children: Reac
 
 const isIsoDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
 
+// ─── One employee's paperwork, summarised (the list page) ────────────────────
+
+/** Short names for the list's chips; anything unlisted uses its full label. */
+const SHORT_LABEL: Record<string, string> = {
+  passport: 'Passport',
+  visa: 'Visa',
+  emirates_id: 'EID',
+  labour_card: 'Labour',
+  ohc: 'Health',
+  medical_insurance: 'Insurance',
+  wps_card: 'WPS',
+};
+
+/** Most urgent first — the order a tone sorts and outranks another in. */
+const TONE_RANK: Record<PaperTone, number> = { expired: 0, due: 1, soon: 2, missing: 3, ok: 4 };
+
+export type PaperItem = {
+  spec: EmployeeDocumentTypeSpec;
+  short: string;
+  expiry?: string;
+  tone: PaperTone;
+  label: string;
+};
+
+export type PaperSummary = {
+  items: PaperItem[];
+  /** The most urgent tone across the types. */
+  tone: PaperTone;
+  /** One line saying what most needs doing, or that nothing does. */
+  headline: string;
+  /** Expired or inside the 15-day warning. */
+  urgent: number;
+  /** Due within 60 days, outside the warning. */
+  soon: number;
+  missing: number;
+  /** The on-file document expiring first, whatever its state. */
+  next?: PaperItem;
+  /** Sorts most urgent first: the tone, then how soon. */
+  rank: number;
+};
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+export function summarisePaperwork(
+  current: Record<string, { expiry_date: string } | undefined>,
+  specs: EmployeeDocumentTypeSpec[],
+): PaperSummary {
+  const items: PaperItem[] = specs.map((spec) => {
+    const expiry = current[spec.doc_type]?.expiry_date;
+    const { tone, label } = paperStatus(expiry);
+    return { spec, short: SHORT_LABEL[spec.doc_type] ?? spec.label, expiry, tone, label };
+  });
+  const byExpiry = (a: PaperItem, b: PaperItem) => (a.expiry ?? '').localeCompare(b.expiry ?? '');
+  const onFile = items.filter((i) => i.expiry).sort(byExpiry);
+  const urgent = onFile.filter((i) => i.tone === 'expired' || i.tone === 'due');
+  const soon = onFile.filter((i) => i.tone === 'soon');
+  const missing = items.filter((i) => i.tone === 'missing');
+  const tone = items.reduce<PaperTone>((worst, i) => (TONE_RANK[i.tone] < TONE_RANK[worst] ? i.tone : worst), 'ok');
+
+  const lead = urgent[0] ?? soon[0];
+  const more = (urgent.length || soon.length) - 1;
+  let headline: string;
+  if (lead) headline = `${lead.spec.label} ${lowerFirst(lead.label)}${more > 0 ? ` · ${more} more` : ''}`;
+  else if (missing.length === items.length && items.length > 0) headline = 'Nothing on file yet';
+  else if (missing.length === 1) headline = `${missing[0].spec.label} not on file`;
+  else if (missing.length > 1) headline = `${missing.length} documents not on file`;
+  else headline = items.length ? 'All documents valid' : '';
+
+  const next = onFile[0];
+  const days = next ? daysUntil(next.expiry!) : 100_000;
+  return {
+    items,
+    tone,
+    headline,
+    urgent: urgent.length,
+    soon: soon.length,
+    missing: missing.length,
+    next,
+    // Tone first; within it, the soonest expiry. Clamped so a long-expired
+    // document cannot reach into the next tone's band.
+    rank: TONE_RANK[tone] * 1_000_000 + Math.max(-99_999, Math.min(days, 99_999)) + 100_000,
+  };
+}
+
+/** The list's per-document chip: dot + short name, the full state on hover. */
+export function PaperChip({ item }: { item: PaperItem }) {
+  return (
+    <span
+      title={`${item.spec.label}: ${item.label}`}
+      className={cn(
+        'inline-flex items-center gap-1 border px-1.5 py-0.5 text-[10px] uppercase tracking-wide',
+        item.tone === 'missing' ? 'border-dashed border-gray-300 bg-white text-gray-400' : TONE[item.tone].pill,
+      )}
+    >
+      <span className={cn('h-1.5 w-1.5 rounded-full', TONE[item.tone].dot)} aria-hidden />
+      {item.short}
+      <span className="sr-only">: {item.label}</span>
+    </span>
+  );
+}
+
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/);
+  return ((words[0]?.[0] ?? '') + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
+}
+
 // ─── Status strip ────────────────────────────────────────────────────────────
 
 export type TypeState = {
@@ -296,7 +402,9 @@ export function DocumentCard({
                 className="shrink-0 text-gray-300 hover:text-primary"
                 onClick={() => onCopy(current.document_number!)}
               >
-                <span className="material-icons text-[16px]" aria-hidden>content_copy</span>
+                <span className="material-icons text-[16px]" aria-hidden>
+                  content_copy
+                </span>
               </button>
             </span>
           )}
@@ -323,7 +431,9 @@ export function DocumentCard({
             aria-expanded={showDetails}
             onClick={() => setShowDetails((v) => !v)}
           >
-            <span className="material-icons text-[16px]" aria-hidden>{showDetails ? 'expand_less' : 'expand_more'}</span>
+            <span className="material-icons text-[16px]" aria-hidden>
+              {showDetails ? 'expand_less' : 'expand_more'}
+            </span>
             {showDetails ? 'Hide details' : `Details (${extra})`}
           </button>
           {showDetails && (
@@ -352,7 +462,9 @@ export function DocumentCard({
               aria-expanded={showHistory}
               onClick={() => setShowHistory((v) => !v)}
             >
-              <span className="material-icons text-[16px]" aria-hidden>history</span>
+              <span className="material-icons text-[16px]" aria-hidden>
+                history
+              </span>
               {history.length} previous
             </button>
           ) : (
@@ -360,7 +472,9 @@ export function DocumentCard({
           )}
           {prompting && (
             <Button size="sm" onClick={onRenew}>
-              <span className="material-icons text-[16px]" aria-hidden>autorenew</span>
+              <span className="material-icons text-[16px]" aria-hidden>
+                autorenew
+              </span>
               {urgent ? 'Renew now' : 'Add renewal'}
             </Button>
           )}
@@ -452,7 +566,9 @@ export function OtherFiles({
             />
           )}
           <Button size="sm" variant="ghost" onClick={onAdd}>
-            <span className="material-icons text-[16px]" aria-hidden>upload_file</span>
+            <span className="material-icons text-[16px]" aria-hidden>
+              upload_file
+            </span>
             Add file
           </Button>
         </div>
@@ -478,7 +594,9 @@ export function OtherFiles({
                 onClick={() => onView(file)}
                 aria-label={`View ${file.title}`}
               >
-                <span className="material-icons text-[22px]" aria-hidden>{fileIcon(file.file_content_type)}</span>
+                <span className="material-icons text-[22px]" aria-hidden>
+                  {fileIcon(file.file_content_type)}
+                </span>
               </button>
               <div className="min-w-0 flex-1">
                 <button

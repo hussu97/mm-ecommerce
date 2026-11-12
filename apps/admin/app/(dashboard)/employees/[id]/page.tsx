@@ -21,7 +21,13 @@ import { Page } from '@/components/ui/Page';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { formatDate } from '@/components/pos/LegalEntityPaperwork';
 import { DocumentForm } from '@/components/people/DocumentForm';
-import { DocumentCard, OtherFiles, PaperworkSummary, type TypeState } from '@/components/people/EmployeePaperwork';
+import {
+  DocumentCard,
+  initials,
+  OtherFiles,
+  PaperworkSummary,
+  type TypeState,
+} from '@/components/people/EmployeePaperwork';
 import { EmployeeForm } from '@/components/people/EmployeeForm';
 import { FileForm } from '@/components/people/FileForm';
 import { useExpiringDocuments } from '@/components/people/ExpiringDocuments';
@@ -55,11 +61,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dd className="min-w-0 break-words text-right text-sm text-gray-800 lg:mt-0.5 lg:text-left">{children}</dd>
     </div>
   );
-}
-
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/);
-  return ((words[0]?.[0] ?? '') + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
 }
 
 /** "4 yrs 8 mos" since a date, for the header. */
@@ -274,7 +275,9 @@ export default function EmployeePage() {
         href="/employees"
         className="inline-flex items-center gap-1 text-xs font-body uppercase tracking-widest text-gray-500 hover:text-primary"
       >
-        <span className="material-icons text-[16px]" aria-hidden>arrow_back</span>
+        <span className="material-icons text-[16px]" aria-hidden>
+          arrow_back
+        </span>
         Employees
       </Link>
 
@@ -307,7 +310,9 @@ export default function EmployeePage() {
               onClick={() => photoInput.current?.click()}
               className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:text-primary"
             >
-              <span className="material-icons text-[16px]" aria-hidden>{busy ? 'hourglass_empty' : 'photo_camera'}</span>
+              <span className="material-icons text-[16px]" aria-hidden>
+                {busy ? 'hourglass_empty' : 'photo_camera'}
+              </span>
             </button>
             <input
               ref={photoInput}
@@ -342,7 +347,9 @@ export default function EmployeePage() {
         </div>
         <div className="flex shrink-0 gap-2">
           <Button variant="secondary" onClick={() => setEditingProfile(true)}>
-            <span className="material-icons text-[16px]" aria-hidden>edit</span>
+            <span className="material-icons text-[16px]" aria-hidden>
+              edit
+            </span>
             Edit profile
           </Button>
         </div>
@@ -449,7 +456,9 @@ export default function EmployeePage() {
             className="mt-3 inline-flex items-center gap-1 px-1 text-xs text-gray-400 hover:text-red-600"
             onClick={() => void removeEmployee()}
           >
-            <span className="material-icons text-[16px]" aria-hidden>delete_outline</span>
+            <span className="material-icons text-[16px]" aria-hidden>
+              delete_outline
+            </span>
             Delete employee
           </button>
         </aside>

@@ -1,7 +1,15 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EmployeeDocument, EmployeeDocumentTypeSpec, EmployeeFile } from '@/lib/people-api';
-import { DocumentCard, OtherFiles, PaperworkSummary, paperStatus, relativeDays } from './EmployeePaperwork';
+import {
+  DocumentCard,
+  initials,
+  OtherFiles,
+  PaperworkSummary,
+  paperStatus,
+  relativeDays,
+  summarisePaperwork,
+} from './EmployeePaperwork';
 
 // Noon in Dubai on 12 Nov 2026, so "today" is unambiguous.
 beforeAll(() => {
@@ -172,5 +180,53 @@ describe('OtherFiles', () => {
     fireEvent.change(screen.getByLabelText('Search other documents'), { target: { value: 'noc' } });
     expect(screen.getByText('Signed copy')).toBeInTheDocument();
     expect(screen.queryByText('Payslip 1')).not.toBeInTheDocument();
+  });
+});
+
+describe('summarisePaperwork (the list page)', () => {
+  const specs = [
+    { ...spec, doc_type: 'visa', label: 'Residence visa' },
+    { ...spec, doc_type: 'ohc', label: 'Occupational Health Card' },
+    { ...spec, doc_type: 'wps_card', label: 'WPS salary card' },
+  ];
+  const on = (m: Record<string, string>) =>
+    Object.fromEntries(Object.entries(m).map(([k, v]) => [k, { expiry_date: v }]));
+
+  it('leads with the most urgent document, in words', () => {
+    const s = summarisePaperwork(on({ visa: '2027-06-01', ohc: '2026-10-31', wps_card: '2026-11-20' }), specs);
+    expect(s.tone).toBe('expired');
+    expect(s.headline).toBe('Occupational Health Card expired 12 days ago · 1 more');
+    expect([s.urgent, s.soon, s.missing]).toEqual([2, 0, 0]);
+    expect(s.next?.spec.doc_type).toBe('ohc');
+    expect(s.items.map((i) => i.short)).toEqual(['Visa', 'Health', 'WPS']);
+  });
+
+  it('names a single missing document, counts several, and says when all is well', () => {
+    expect(summarisePaperwork(on({ visa: '2028-01-01', ohc: '2028-01-01' }), specs).headline).toBe(
+      'WPS salary card not on file',
+    );
+    expect(summarisePaperwork(on({ visa: '2028-01-01' }), specs).headline).toBe('2 documents not on file');
+    expect(summarisePaperwork({}, specs).headline).toBe('Nothing on file yet');
+    const ok = summarisePaperwork(on({ visa: '2028-01-01', ohc: '2028-01-01', wps_card: '2028-01-01' }), specs);
+    expect([ok.tone, ok.headline]).toEqual(['ok', 'All documents valid']);
+  });
+
+  it('ranks expired before due before soon before missing before valid, then by date', () => {
+    const rank = (m: Record<string, string>) => summarisePaperwork(on(m), specs).rank;
+    const full = { visa: '2028-01-01', ohc: '2028-01-01', wps_card: '2028-01-01' };
+    const ranks = [
+      rank({ ...full, ohc: '2020-01-01' }), // long expired
+      rank({ ...full, ohc: '2026-11-11' }), // expired yesterday
+      rank({ ...full, ohc: '2026-11-20' }), // due
+      rank({ ...full, ohc: '2026-12-20' }), // soon
+      rank({ visa: '2028-01-01', ohc: '2028-01-01' }), // missing
+      rank(full), // valid
+    ];
+    expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
+  });
+
+  it('makes initials from the first and last names', () => {
+    expect(initials('Adar Layling Tapsin')).toBe('AT');
+    expect(initials('  Priya ')).toBe('P');
   });
 });
