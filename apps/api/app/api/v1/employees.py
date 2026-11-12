@@ -1,6 +1,7 @@
 """Employees and their versioned documents — super-admin only, reads included.
 
-These records hold passport, visa, Emirates ID and labour-card numbers and scans, so every
+These records hold passport, visa, Emirates ID, labour-card, insurance and
+salary-card numbers and scans, so every
 route demands `require_superadmin()`: no role slug opens them, however broad.
 Document field values are typed by the super-admin, usually prefilled by the
 console's in-browser OCR of the scan — the API never reads the image itself.
@@ -91,6 +92,9 @@ async def document_types(_: User = Depends(require_superadmin())):
             doc_type=t,
             label=EMPLOYEE_DOCUMENT_SPECS[t]["label"],
             number_label=EMPLOYEE_DOCUMENT_SPECS[t]["number_label"],
+            authority_label=EMPLOYEE_DOCUMENT_SPECS[t].get(
+                "authority_label", "Issuing authority"
+            ),
             expiry_tracked=t in EXPIRY_TRACKED_TYPES,
             details=EMPLOYEE_DOCUMENT_SPECS[t]["details"],
         )

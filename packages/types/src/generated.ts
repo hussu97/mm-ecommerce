@@ -15274,7 +15274,7 @@ export interface components {
              * Doc Type
              * @enum {string}
              */
-            doc_type: "passport" | "visa" | "emirates_id" | "labour_card" | "ohc";
+            doc_type: "passport" | "visa" | "emirates_id" | "labour_card" | "ohc" | "medical_insurance" | "wps_card";
             /** Document Number */
             document_number?: string | null;
             /**
@@ -15362,6 +15362,11 @@ export interface components {
         };
         /** EmployeeDocumentTypeSpec */
         EmployeeDocumentTypeSpec: {
+            /**
+             * Authority Label
+             * @default Issuing authority
+             */
+            authority_label: string;
             /** Details */
             details: {
                 [key: string]: string;

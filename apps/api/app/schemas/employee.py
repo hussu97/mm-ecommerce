@@ -188,6 +188,8 @@ class EmployeeDocumentTypeSpec(BaseModel):
     doc_type: str
     label: str
     number_label: str
+    #: What `issuing_authority` is called for this type ("Insurer", …).
+    authority_label: str = "Issuing authority"
     #: Raises the expiry warning when it lapses.
     expiry_tracked: bool
     #: key → label of the type-specific fields.
@@ -213,7 +215,7 @@ class ExpiringDocument(BaseModel):
     owner_kind: Literal["employee", "legal_entity"]
     owner_id: UUID
     owner_name: str
-    #: `visa` / `emirates_id` / `labour_card` / `ohc` for an employee, `trade_license` for an entity.
+    #: An `EXPIRY_TRACKED_TYPES` value for an employee, `trade_license` for an entity.
     doc_type: str
     doc_label: str
     document_number: str | None

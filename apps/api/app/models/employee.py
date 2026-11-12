@@ -2,11 +2,13 @@
 
 An *employee* is a person the shop employs, whatever they do — not a console or
 till account (that is a `User`). Most employees never sign in to anything; the
-record exists because UAE employment hangs on five documents that each expire:
-the passport, the residence visa, the Emirates ID, the MOHRE labour card (work
-permit) and the municipality Occupational Health Card. A lapsed visa, Emirates
-ID, labour card or OHC is a fine for the employer, so the console warns a
-super-admin 15 days ahead.
+record exists because UAE employment hangs on documents that each expire: the
+passport, the residence visa, the Emirates ID, the MOHRE labour card (work
+permit), the municipality Occupational Health Card, the medical insurance the
+employer must provide, and the WPS salary card the wages are paid onto. A
+lapsed visa, Emirates ID, labour card, OHC or policy is a fine for the
+employer, and a lapsed salary card is a payroll that cannot be paid out, so
+the console warns a super-admin 15 days ahead.
 
 Each document is versioned by its issue→expiry cycle: a renewal adds a row and
 the old one stays on file with its scan. The row expiring last is the current
@@ -40,23 +42,35 @@ if TYPE_CHECKING:
 EMPLOYEE_STATUSES: tuple[str, ...] = ("active", "left")
 
 #: The document types, in the order the console shows them. Mirrored by the
-#: CHECK in migration `327_employee_emirates_id` (which widened `325_employees`'s).
+#: CHECK in migration `328_employee_insurance_wps` (the latest to widen
+#: `325_employees`'s).
 EMPLOYEE_DOCUMENT_TYPES: tuple[str, ...] = (
     "passport",
     "visa",
     "emirates_id",
     "labour_card",
     "ohc",
+    "medical_insurance",
+    "wps_card",
 )
 
 #: The types whose lapse the expiry warning tracks. A passport is renewed long
 #: before it matters (the visa cannot outlive it), so the owner left it out.
 #: The Emirates ID is tracked: the card is renewed with the visa but is its own
-#: expiry, and a lapsed one is a fine of its own.
-EXPIRY_TRACKED_TYPES: tuple[str, ...] = ("visa", "emirates_id", "labour_card", "ohc")
+#: expiry, and a lapsed one is a fine of its own. So is the health policy (the
+#: employer must insure every employee) and the salary card (WPS pays onto it).
+EXPIRY_TRACKED_TYPES: tuple[str, ...] = (
+    "visa",
+    "emirates_id",
+    "labour_card",
+    "ohc",
+    "medical_insurance",
+    "wps_card",
+)
 
-#: Per type: the label, what its number is called, and the type-specific fields
-#: kept in `employee_documents.details` (key → label). Served to the console by
+#: Per type: the label, what its number is called, what `issuing_authority` is
+#: called when it is not "Issuing authority", and the type-specific fields kept
+#: in `employee_documents.details` (key → label). Served to the console by
 #: `GET /employees/document-types`, so the form and this list cannot drift.
 EMPLOYEE_DOCUMENT_SPECS: dict[str, dict[str, Any]] = {
     "passport": {
@@ -116,6 +130,34 @@ EMPLOYEE_DOCUMENT_SPECS: dict[str, dict[str, Any]] = {
         "details": {
             "reference": "Reference / audit trail",
             "result": "Medical result / remarks",
+        },
+    },
+    "medical_insurance": {
+        "label": "Medical insurance",
+        #: What a clinic asks for: the member / card number on the insurance card.
+        "number_label": "Member / card number",
+        "authority_label": "Insurer",
+        "details": {
+            "policy_number": "Policy number",
+            "name": "Name as printed",
+            #: The third-party administrator that runs the claims (NAS, NextCare…).
+            "tpa": "TPA / administrator",
+            "network": "Network / plan",
+            "category": "Category / class",
+        },
+    },
+    "wps_card": {
+        "label": "WPS salary card",
+        #: A payroll card number is a payment-card number. Only its last four
+        #: digits are kept — `employee_service` refuses a full one — and the
+        #: scan in the private bucket is the full record.
+        "number_label": "Card number (last 4 digits)",
+        "authority_label": "Bank / exchange house",
+        "details": {
+            "name": "Name as printed",
+            "employee_code": "Employee / personal code",
+            "account_number": "Account / IBAN",
+            "routing_code": "Agent routing code",
         },
     },
 }
@@ -232,7 +274,8 @@ class EmployeeDocument(Base, UUIDMixin, TimestampMixin):
         nullable=False,
     )
     doc_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    #: Passport no., visa file no., work-permit no., OHC card no., Emirates ID no.
+    #: Passport no., visa file no., work-permit no., OHC card no., Emirates ID
+    #: no., insurance member no.; a WPS card's last four digits only.
     document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)

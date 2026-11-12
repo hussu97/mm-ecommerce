@@ -3,7 +3,8 @@
 Super-admin only, end to end: every `/employees` and `/compliance` route must
 carry `require_superadmin()`, which no role slug satisfies. A document is one
 issue→expiry cycle; the one expiring last per type is current, and only the
-current visa / Emirates ID / labour card / OHC of an active employee (plus each active legal
+current tracked document (visa, Emirates ID, labour card, OHC, medical
+insurance, WPS card) of an active employee (plus each active legal
 entity's current trade licence) feeds the 15-day warning.
 """
 
@@ -36,8 +37,13 @@ from app.services.people import employee_service
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 MIGRATION = VERSIONS / "325_employees.py"
-#: The revision that last widened the document-type CHECK.
-DOC_TYPES_MIGRATION = VERSIONS / "327_employee_emirates_id.py"
+#: The revisions that widened the document-type CHECK, oldest first; the last
+#: one must match the model.
+DOC_TYPES_MIGRATIONS = [
+    MIGRATION,
+    VERSIONS / "327_employee_emirates_id.py",
+    VERSIONS / "328_employee_insurance_wps.py",
+]
 
 
 def _migration(path: Path = MIGRATION):
@@ -91,15 +97,33 @@ async def test_require_superadmin_admits_a_superadmin():
 
 def test_migration_lists_match_the_model():
     assert _migration()._STATUSES == EMPLOYEE_STATUSES
-    widened = _migration(DOC_TYPES_MIGRATION)
-    assert widened._DOC_TYPES == EMPLOYEE_DOCUMENT_TYPES
-    # The widening revision restores exactly what 325 created on downgrade.
-    assert widened._PREVIOUS_DOC_TYPES == _migration()._DOC_TYPES
+    revisions = [_migration(p) for p in DOC_TYPES_MIGRATIONS]
+    assert revisions[-1]._DOC_TYPES == EMPLOYEE_DOCUMENT_TYPES
+    # Each widening restores exactly what the one before it created.
+    for before, after in zip(revisions, revisions[1:], strict=False):
+        assert after._PREVIOUS_DOC_TYPES == before._DOC_TYPES
 
 
 def test_every_type_has_a_spec_and_tracked_types_exclude_the_passport():
     assert set(EMPLOYEE_DOCUMENT_SPECS) == set(EMPLOYEE_DOCUMENT_TYPES)
-    assert set(EXPIRY_TRACKED_TYPES) == {"visa", "emirates_id", "labour_card", "ohc"}
+    assert set(EXPIRY_TRACKED_TYPES) == {
+        "visa",
+        "emirates_id",
+        "labour_card",
+        "ohc",
+        "medical_insurance",
+        "wps_card",
+    }
+
+
+async def test_document_types_name_the_authority_per_type():
+    specs = {s.doc_type: s for s in await employees.document_types(_=None)}
+    assert specs["medical_insurance"].authority_label == "Insurer"
+    assert specs["wps_card"].authority_label == "Bank / exchange house"
+    assert specs["visa"].authority_label == "Issuing authority"
+    assert (
+        specs["wps_card"].expiry_tracked and specs["medical_insurance"].expiry_tracked
+    )
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
@@ -128,6 +152,26 @@ def test_emirates_id_details_are_accepted():
         details={"card_number": "123456789", "occupation": "Baker", "employer": " "},
     )
     assert payload.details == {"card_number": "123456789", "occupation": "Baker"}
+
+
+@pytest.mark.parametrize(
+    "number", ["4111 1111 1111 1111", "4111-1111-1111-1111", "5123456789012"]
+)
+def test_a_full_salary_card_number_is_refused(number):
+    from app.core.exceptions import BadRequestError
+
+    with pytest.raises(BadRequestError):
+        employee_service._check_number("wps_card", number)
+
+
+@pytest.mark.parametrize("number", [None, "", "1234", "•••• 1234"])
+def test_a_salary_card_keeps_its_last_four(number):
+    employee_service._check_number("wps_card", number)
+
+
+def test_other_types_may_carry_long_numbers():
+    # An insurance member number can run long; only the salary card is a PAN.
+    employee_service._check_number("medical_insurance", "1234567890123456")
 
 
 def test_issue_after_expiry_is_refused():
@@ -222,11 +266,14 @@ async def test_versions_and_the_expiry_warning(monkeypatch):
             # Two visa cycles: the lapsed one is history, the renewal is current.
             # OHC lapsing in 10 days is warned; the labour card in 16 not yet;
             # a passport lapsing tomorrow is not tracked at all; an Emirates ID
-            # lapsing in 3 days is.
+            # lapsing in 3 days is, and so is a health policy lapsing in 7; a
+            # salary card lapsing in 20 is not yet.
             for doc_type, days in (
                 ("visa", -30),
                 ("visa", 700),
                 ("emirates_id", 3),
+                ("medical_insurance", 7),
+                ("wps_card", 20),
                 ("ohc", 10),
                 ("labour_card", 16),
                 ("passport", 1),
@@ -271,6 +318,7 @@ async def test_versions_and_the_expiry_warning(monkeypatch):
             assert mine == [
                 (f"Adar {tag}", "emirates_id", 3),
                 (f"Entity {tag}", "trade_license", 5),
+                (f"Adar {tag}", "medical_insurance", 7),
                 (f"Adar {tag}", "ohc", 10),
             ]
 

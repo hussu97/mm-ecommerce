@@ -14968,7 +14968,9 @@
               "visa",
               "emirates_id",
               "labour_card",
-              "ohc"
+              "ohc",
+              "medical_insurance",
+              "wps_card"
             ],
             "title": "Doc Type",
             "type": "string"
@@ -15196,6 +15198,11 @@
       },
       "EmployeeDocumentTypeSpec": {
         "properties": {
+          "authority_label": {
+            "default": "Issuing authority",
+            "title": "Authority Label",
+            "type": "string"
+          },
           "details": {
             "additionalProperties": {
               "type": "string"

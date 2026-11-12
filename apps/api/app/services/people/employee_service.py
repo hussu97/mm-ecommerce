@@ -1,7 +1,7 @@
 """Employee records and their versioned documents.
 
 A document is one issue→expiry cycle of one type (passport, visa, Emirates ID,
-labour card, OHC). A renewal is a new row, never an edit of the old one, so
+labour card, OHC, medical insurance, WPS salary card). A renewal is a new row, never an edit of the old one, so
 every scan that was valid on some date stays on file; the row expiring last per
 type is the current one. Scans and the photo live in the private finance bucket under
 `employees/<id>/…`, signed on read.
@@ -9,6 +9,7 @@ type is the current one. Scans and the photo live in the private finance bucket 
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date
 
@@ -205,6 +206,19 @@ async def photo_file(employee: Employee) -> storage.SignedFile:
 # ─── Documents ────────────────────────────────────────────────────────────────
 
 
+#: 13–19 digits, however spaced or dashed: the shape of a payment-card number.
+_CARD_NUMBER = re.compile(r"(?:\d[ -]?){13,19}")
+
+
+def _check_number(doc_type: str, number: str | None) -> None:
+    """A WPS salary card is a payment card: keep its last four digits, never
+    the whole number (the scan, in the private bucket, is the full record)."""
+    if doc_type == "wps_card" and number and _CARD_NUMBER.search(number):
+        raise BadRequestError(
+            "Enter only the last 4 digits of the salary card number, not the whole number"
+        )
+
+
 def _check_details(doc_type: str, details: dict[str, str]) -> None:
     allowed = EMPLOYEE_DOCUMENT_SPECS[doc_type]["details"]
     unknown = sorted(set(details) - set(allowed))
@@ -247,6 +261,7 @@ async def get_document(
 async def create_document(
     db: AsyncSession, employee: Employee, data: dict
 ) -> EmployeeDocument:
+    _check_number(data["doc_type"], data.get("document_number"))
     if await _cycle_taken(
         db, employee.id, data["doc_type"], data["expiry_date"], except_id=None
     ):
@@ -272,6 +287,8 @@ async def update_document(
         raise _duplicate(row.doc_type)
     if data.get("details") is not None:
         _check_details(row.doc_type, data["details"])
+    if "document_number" in data:
+        _check_number(row.doc_type, data["document_number"])
     for field, value in data.items():
         if value is None and field in {"expiry_date", "details"}:
             continue
