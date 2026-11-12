@@ -3,7 +3,7 @@
 Super-admin only, end to end: every `/employees` and `/compliance` route must
 carry `require_superadmin()`, which no role slug satisfies. A document is one
 issue→expiry cycle; the one expiring last per type is current, and only the
-current visa / labour card / OHC of an active employee (plus each active legal
+current visa / Emirates ID / labour card / OHC of an active employee (plus each active legal
 entity's current trade licence) feeds the 15-day warning.
 """
 
@@ -34,13 +34,14 @@ from app.models.role import ALL_PERMISSIONS
 from app.schemas.employee import EmployeeDocumentCreate, EmployeeDocumentUpdate
 from app.services.people import employee_service
 
-MIGRATION = (
-    Path(__file__).resolve().parents[2] / "alembic" / "versions" / "325_employees.py"
-)
+VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+MIGRATION = VERSIONS / "325_employees.py"
+#: The revision that last widened the document-type CHECK.
+DOC_TYPES_MIGRATION = VERSIONS / "327_employee_emirates_id.py"
 
 
-def _migration():
-    spec = importlib.util.spec_from_file_location("m325", MIGRATION)
+def _migration(path: Path = MIGRATION):
+    spec = importlib.util.spec_from_file_location(path.stem, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -89,14 +90,16 @@ async def test_require_superadmin_admits_a_superadmin():
 
 
 def test_migration_lists_match_the_model():
-    m = _migration()
-    assert m._STATUSES == EMPLOYEE_STATUSES
-    assert m._DOC_TYPES == EMPLOYEE_DOCUMENT_TYPES
+    assert _migration()._STATUSES == EMPLOYEE_STATUSES
+    widened = _migration(DOC_TYPES_MIGRATION)
+    assert widened._DOC_TYPES == EMPLOYEE_DOCUMENT_TYPES
+    # The widening revision restores exactly what 325 created on downgrade.
+    assert widened._PREVIOUS_DOC_TYPES == _migration()._DOC_TYPES
 
 
 def test_every_type_has_a_spec_and_tracked_types_exclude_the_passport():
     assert set(EMPLOYEE_DOCUMENT_SPECS) == set(EMPLOYEE_DOCUMENT_TYPES)
-    assert set(EXPIRY_TRACKED_TYPES) == {"visa", "labour_card", "ohc"}
+    assert set(EXPIRY_TRACKED_TYPES) == {"visa", "emirates_id", "labour_card", "ohc"}
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
@@ -115,6 +118,16 @@ def test_document_details_drop_blanks_and_refuse_unknown_keys():
             expiry_date=date(2028, 7, 16),
             details={"uid_number": "1"},
         )
+
+
+def test_emirates_id_details_are_accepted():
+    payload = EmployeeDocumentCreate(
+        doc_type="emirates_id",
+        document_number="784-1990-1234567-1",
+        expiry_date=date(2028, 1, 31),
+        details={"card_number": "123456789", "occupation": "Baker", "employer": " "},
+    )
+    assert payload.details == {"card_number": "123456789", "occupation": "Baker"}
 
 
 def test_issue_after_expiry_is_refused():
@@ -208,10 +221,12 @@ async def test_versions_and_the_expiry_warning(monkeypatch):
 
             # Two visa cycles: the lapsed one is history, the renewal is current.
             # OHC lapsing in 10 days is warned; the labour card in 16 not yet;
-            # a passport lapsing tomorrow is not tracked at all.
+            # a passport lapsing tomorrow is not tracked at all; an Emirates ID
+            # lapsing in 3 days is.
             for doc_type, days in (
                 ("visa", -30),
                 ("visa", 700),
+                ("emirates_id", 3),
                 ("ohc", 10),
                 ("labour_card", 16),
                 ("passport", 1),
@@ -254,6 +269,7 @@ async def test_versions_and_the_expiry_warning(monkeypatch):
                 if tag in i.owner_name
             ]
             assert mine == [
+                (f"Adar {tag}", "emirates_id", 3),
                 (f"Entity {tag}", "trade_license", 5),
                 (f"Adar {tag}", "ohc", 10),
             ]

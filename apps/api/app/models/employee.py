@@ -2,10 +2,11 @@
 
 An *employee* is a person the shop employs, whatever they do — not a console or
 till account (that is a `User`). Most employees never sign in to anything; the
-record exists because UAE employment hangs on four documents that each expire:
-the passport, the residence visa, the MOHRE labour card (work permit) and the
-municipality Occupational Health Card. A lapsed visa, labour card or OHC is a
-fine for the employer, so the console warns a super-admin 15 days ahead.
+record exists because UAE employment hangs on five documents that each expire:
+the passport, the residence visa, the Emirates ID, the MOHRE labour card (work
+permit) and the municipality Occupational Health Card. A lapsed visa, Emirates
+ID, labour card or OHC is a fine for the employer, so the console warns a
+super-admin 15 days ahead.
 
 Each document is versioned by its issue→expiry cycle: a renewal adds a row and
 the old one stays on file with its scan. The row expiring last is the current
@@ -39,12 +40,20 @@ if TYPE_CHECKING:
 EMPLOYEE_STATUSES: tuple[str, ...] = ("active", "left")
 
 #: The document types, in the order the console shows them. Mirrored by the
-#: CHECK in migration `325_employees`.
-EMPLOYEE_DOCUMENT_TYPES: tuple[str, ...] = ("passport", "visa", "labour_card", "ohc")
+#: CHECK in migration `327_employee_emirates_id` (which widened `325_employees`'s).
+EMPLOYEE_DOCUMENT_TYPES: tuple[str, ...] = (
+    "passport",
+    "visa",
+    "emirates_id",
+    "labour_card",
+    "ohc",
+)
 
 #: The types whose lapse the expiry warning tracks. A passport is renewed long
 #: before it matters (the visa cannot outlive it), so the owner left it out.
-EXPIRY_TRACKED_TYPES: tuple[str, ...] = ("visa", "labour_card", "ohc")
+#: The Emirates ID is tracked: the card is renewed with the visa but is its own
+#: expiry, and a lapsed one is a fine of its own.
+EXPIRY_TRACKED_TYPES: tuple[str, ...] = ("visa", "emirates_id", "labour_card", "ohc")
 
 #: Per type: the label, what its number is called, and the type-specific fields
 #: kept in `employee_documents.details` (key → label). Served to the console by
@@ -74,6 +83,22 @@ EMPLOYEE_DOCUMENT_SPECS: dict[str, dict[str, Any]] = {
             "profession": "Profession",
             "sponsor": "Sponsor / employer",
             "place_of_issue": "Place of issue",
+        },
+    },
+    "emirates_id": {
+        "label": "Emirates ID",
+        #: The 15-digit identity number (784-YYYY-NNNNNNN-C). It is the person's
+        #: for life and survives a renewal; the card number below does not.
+        "number_label": "ID number",
+        "details": {
+            "card_number": "Card number",
+            "name": "Name as printed",
+            "nationality": "Nationality",
+            "date_of_birth": "Date of birth",
+            "sex": "Sex",
+            "occupation": "Occupation",
+            "employer": "Employer",
+            "place_of_issue": "Issuing place",
         },
     },
     "labour_card": {
@@ -207,7 +232,7 @@ class EmployeeDocument(Base, UUIDMixin, TimestampMixin):
         nullable=False,
     )
     doc_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    #: Passport no., visa file no., work-permit no., OHC card no.
+    #: Passport no., visa file no., work-permit no., OHC card no., Emirates ID no.
     document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)

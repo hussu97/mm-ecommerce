@@ -15274,7 +15274,7 @@ export interface components {
              * Doc Type
              * @enum {string}
              */
-            doc_type: "passport" | "visa" | "labour_card" | "ohc";
+            doc_type: "passport" | "visa" | "emirates_id" | "labour_card" | "ohc";
             /** Document Number */
             document_number?: string | null;
             /**

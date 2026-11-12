@@ -213,7 +213,7 @@ class ExpiringDocument(BaseModel):
     owner_kind: Literal["employee", "legal_entity"]
     owner_id: UUID
     owner_name: str
-    #: `visa` / `labour_card` / `ohc` for an employee, `trade_license` for an entity.
+    #: `visa` / `emirates_id` / `labour_card` / `ohc` for an employee, `trade_license` for an entity.
     doc_type: str
     doc_label: str
     document_number: str | None

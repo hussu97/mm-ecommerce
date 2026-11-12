@@ -14966,6 +14966,7 @@
             "enum": [
               "passport",
               "visa",
+              "emirates_id",
               "labour_card",
               "ohc"
             ],

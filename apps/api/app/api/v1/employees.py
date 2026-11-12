@@ -1,6 +1,6 @@
 """Employees and their versioned documents — super-admin only, reads included.
 
-These records hold passport, visa and labour-card numbers and scans, so every
+These records hold passport, visa, Emirates ID and labour-card numbers and scans, so every
 route demands `require_superadmin()`: no role slug opens them, however broad.
 Document field values are typed by the super-admin, usually prefilled by the
 console's in-browser OCR of the scan — the API never reads the image itself.

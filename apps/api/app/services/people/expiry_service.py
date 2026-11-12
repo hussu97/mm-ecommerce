@@ -1,8 +1,9 @@
 """Which of the shop's paperwork lapses soon: the warning the console raises.
 
 Two sources, one list:
-- each **active** employee's *current* visa, labour card and OHC (the cycle
-  expiring last for that type — an older cycle lapsing is history, not news);
+- each **active** employee's *current* visa, Emirates ID, labour card and OHC
+  (the cycle expiring last for that type — an older cycle lapsing is history,
+  not news);
 - each **active** legal entity's current trade licence, which
   `legal_entity_documents.sync_current_license` mirrors onto
   `legal_entities.trade_license_expiry`.

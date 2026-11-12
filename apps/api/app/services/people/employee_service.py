@@ -1,9 +1,9 @@
 """Employee records and their versioned documents.
 
-A document is one issue→expiry cycle of one type (passport, visa, labour card,
-OHC). A renewal is a new row, never an edit of the old one, so every scan that
-was valid on some date stays on file; the row expiring last per type is the
-current one. Scans and the photo live in the private finance bucket under
+A document is one issue→expiry cycle of one type (passport, visa, Emirates ID,
+labour card, OHC). A renewal is a new row, never an edit of the old one, so
+every scan that was valid on some date stays on file; the row expiring last per
+type is the current one. Scans and the photo live in the private finance bucket under
 `employees/<id>/…`, signed on read.
 """
 
