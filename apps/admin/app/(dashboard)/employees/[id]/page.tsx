@@ -9,6 +9,7 @@ import {
   type EmployeeDocType,
   type EmployeeDocument,
   type EmployeeDocumentTypeSpec,
+  type EmployeeFile,
   type SignedDocumentUrl,
 } from '@/lib/people-api';
 import { branchesApi, legalEntitiesApi, staffApi } from '@/lib/pos-api';
@@ -21,12 +22,14 @@ import { formatDate } from '@/components/pos/LegalEntityPaperwork';
 import { DocumentForm } from '@/components/people/DocumentForm';
 import { DocumentExpiry } from '@/components/people/DocumentExpiry';
 import { EmployeeForm } from '@/components/people/EmployeeForm';
+import { FileForm } from '@/components/people/FileForm';
 import { useExpiringDocuments } from '@/components/people/ExpiringDocuments';
 import { useFilePreview } from '@/components/ui/FilePreview';
 
 /**
  * One employee: profile, photo, and each document's full history — the cycle
- * expiring last is current, earlier ones stay on file with their scans.
+ * expiring last is current, earlier ones stay on file with their scans — then
+ * any other files kept against them (a name and a free-text type each).
  * `?add=<type>` (from the expiry popup) opens the add form for that type.
  */
 
@@ -59,6 +62,7 @@ export default function EmployeePage() {
   const [loadError, setLoadError] = useState('');
   const [editingProfile, setEditingProfile] = useState(false);
   const [form, setForm] = useState<{ type: EmployeeDocType; doc?: EmployeeDocument } | null>(null);
+  const [fileForm, setFileForm] = useState<{ file?: EmployeeFile } | null>(null);
   const [busy, setBusy] = useState(false);
   const { preview, node: previewNode } = useFilePreview();
 
@@ -140,6 +144,16 @@ export default function EmployeePage() {
       await afterChange('Document deleted');
     } catch (err) {
       toast.error(errorText(err, 'Could not delete the document.'));
+    }
+  }
+
+  async function removeFile(file: EmployeeFile) {
+    if (!employee || !(await confirm({ message: `Delete “${file.title}” and its file?`, danger: true }))) return;
+    try {
+      await employeesApi.removeFile(employee.id, file.id);
+      await afterChange('File deleted');
+    } catch (err) {
+      toast.error(errorText(err, 'Could not delete the file.'));
     }
   }
 
@@ -312,6 +326,58 @@ export default function EmployeePage() {
               </section>
             );
           })}
+
+          <section className="border border-gray-200 bg-white p-4 font-body" data-testid="employee-files">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-display text-sm text-primary tracking-wide">Other documents</h2>
+              <Button size="sm" onClick={() => setFileForm({})}>
+                Add file
+              </Button>
+            </div>
+            {employee.files.length === 0 ? (
+              <p className="mt-2 text-xs text-gray-400">
+                Contracts, certificates, letters — anything else kept against this employee.
+              </p>
+            ) : (
+              <div className="mt-2 divide-y divide-gray-100">
+                {employee.files.map((file) => (
+                  <div key={file.id} className="flex flex-col gap-2 py-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm text-gray-800 break-words">{file.title}</span>
+                        {file.category && <Badge variant="info">{file.category}</Badge>}
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        Added {formatDate(file.created_at.slice(0, 10))}
+                        {file.original_filename && ` · ${file.original_filename}`}
+                      </p>
+                      {file.notes && <p className="mt-1 whitespace-pre-line text-xs text-gray-600">{file.notes}</p>}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-4 text-xs uppercase tracking-widest">
+                      {file.has_file ? (
+                        <button
+                          className="text-primary hover:underline"
+                          onClick={() =>
+                            preview(`${employee.full_name} — ${file.title}`, () => employeesApi.fileUrl(employee.id, file.id))
+                          }
+                        >
+                          View
+                        </button>
+                      ) : (
+                        <span className="text-gray-400">No file</span>
+                      )}
+                      <button className="text-gray-600 hover:underline" onClick={() => setFileForm({ file })}>
+                        Edit
+                      </button>
+                      <button className="text-red-600 hover:underline" onClick={() => void removeFile(file)}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       </div>
 
@@ -339,6 +405,17 @@ export default function EmployeePage() {
           onSaved={() => {
             setForm(null);
             void afterChange('Document saved');
+          }}
+        />
+      )}
+      {fileForm && (
+        <FileForm
+          employee={employee}
+          file={fileForm.file ?? null}
+          onClose={() => setFileForm(null)}
+          onSaved={() => {
+            setFileForm(null);
+            void afterChange('File saved');
           }}
         />
       )}

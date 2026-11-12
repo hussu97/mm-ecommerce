@@ -16,6 +16,9 @@ export type EmployeeDocumentTypeSpec = Schemas['EmployeeDocumentTypeSpec'];
 export type ExpiringDocument = Schemas['ExpiringDocument'];
 export type ExpiringDocuments = Schemas['ExpiringDocumentsResponse'];
 export type SignedDocumentUrl = Schemas['SignedDocumentUrl'];
+export type EmployeeFile = Schemas['EmployeeFileResponse'];
+export type EmployeeFileCreate = Schemas['EmployeeFileCreate'];
+export type EmployeeFileUpdate = Schemas['EmployeeFileUpdate'];
 export type EmployeeDocType = EmployeeDocumentCreate['doc_type'];
 
 /** Raw bytes to the private bucket; signed on view, never public. */
@@ -48,6 +51,16 @@ export const employeesApi = {
     api.get<SignedDocumentUrl>(`/employees/${id}/documents/${docId}/file`),
   removeDocumentFile: (id: string, docId: string) =>
     api.delete<EmployeeDocument>(`/employees/${id}/documents/${docId}/file`),
+
+  /** Other files: a name, a free-text type, any number per employee. */
+  fileCategories: () => api.get<string[]>('/employees/file-categories'),
+  createFile: (id: string, d: EmployeeFileCreate) => api.post<EmployeeFile>(`/employees/${id}/files`, d),
+  updateFile: (id: string, fileId: string, d: EmployeeFileUpdate) =>
+    api.patch<EmployeeFile>(`/employees/${id}/files/${fileId}`, d),
+  removeFile: (id: string, fileId: string) => api.delete<void>(`/employees/${id}/files/${fileId}`),
+  uploadFile: (id: string, fileId: string, file: File) =>
+    uploadRaw<EmployeeFile>(`/employees/${id}/files/${fileId}/file`, file),
+  fileUrl: (id: string, fileId: string) => api.get<SignedDocumentUrl>(`/employees/${id}/files/${fileId}/file`),
 };
 
 export const complianceApi = {
