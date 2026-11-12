@@ -113,8 +113,9 @@ export function EmployeeForm({
       <div className="space-y-4 font-body text-sm">
         {!employee && (
           <p className="text-xs text-gray-500">
-            Start with the name — then add the passport, visa, Emirates ID, labour card and health card on the
-            employee&rsquo;s page, where each scan fills the rest of this profile.
+            Start with the name — then add the passport, visa, Emirates ID, labour card, health card,
+            medical insurance and WPS card on the employee&rsquo;s page, where each scan fills the rest
+            of this profile.
           </p>
         )}
         <div className="grid gap-3 sm:grid-cols-2">

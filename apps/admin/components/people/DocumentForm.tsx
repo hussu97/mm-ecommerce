@@ -24,10 +24,13 @@ import { Modal } from '@/components/pos/ResourcePage';
  * A scan can also fill the employee's empty profile fields (name, nationality,
  * date of birth, personal number, sponsor), offered as a ticked checkbox.
  *
- * The Emirates ID is two-sided and the numbers worth checking (the MRZ) are on
- * the back, so for it the picker takes either one PDF/photo showing both sides
- * or two photos of the front and the back, which are combined into the one
- * scan that is read and stored.
+ * Two-sided cards — the Emirates ID (its MRZ is on the back) and the medical
+ * insurance card (dates and network are often on the back) — take either one
+ * PDF/photo showing both sides or two photos of the front and the back, which
+ * are combined into the one scan that is read and stored.
+ *
+ * A WPS salary card's number is a payment-card number: the reader fills in
+ * only its last four digits, and the API refuses a whole one.
  */
 
 const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
@@ -35,7 +38,7 @@ const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
 /** Document types with a machine-readable zone worth an extra OCR pass. */
 const MRZ_TYPES: ReadonlySet<EmployeeDocType> = new Set(['passport', 'emirates_id']);
 /** Two-sided cards: two photos are combined, a scanned PDF's page 2 is read. */
-const TWO_SIDED_TYPES: ReadonlySet<EmployeeDocType> = new Set(['emirates_id']);
+const TWO_SIDED_TYPES: ReadonlySet<EmployeeDocType> = new Set(['emirates_id', 'medical_insurance']);
 
 function errorText(err: unknown): string {
   return err instanceof ApiError ? err.message : 'network error';
@@ -305,7 +308,7 @@ export function DocumentForm({
             onChange={(e) => set('document_number', e.target.value)}
           />
           <Input
-            label="Issuing authority"
+            label={spec?.authority_label ?? 'Issuing authority'}
             value={draft.issuing_authority}
             onChange={(e) => set('issuing_authority', e.target.value)}
           />

@@ -8,12 +8,14 @@ import {
   mrzNames,
   parseLabourCard,
   parseEmiratesId,
+  parseMedicalInsurance,
   parseMrz,
   parseOhc,
   parseTd1,
   parsePassport,
   parseTradeLicense,
   parseVisa,
+  parseWpsCard,
 } from './parse';
 
 // Fixtures are real reader output with the person's name and numbers swapped
@@ -490,5 +492,107 @@ CRUZ<<JUAN<SANTOSKLLLLLLLLLLLL`;
     // The MRZ's composite check passes, so its number wins.
     expect(out.document_number).toBe('784-1990-1234567-1');
     expect(out.warnings.join(' ')).toMatch(/ID number on the front and in the machine-readable zone differ/);
+  });
+});
+
+describe('medical insurance card', () => {
+  // A TPA-run card (NAS layout): dates side by side, insurer named by label.
+  const nas = `NAS Neuron
+Insurer: Orient Insurance
+Member Name: JUAN SANTOS CRUZ
+Member ID: 1234 5678 9012
+Policy No: P/2026/004512
+Network: RN3
+Category: C
+Date of Birth: 15/01/1990   Gender: Male
+Valid From: 01/04/2026   Valid To: 31/03/2027`;
+
+  it('reads the member and policy numbers, insurer, TPA, network and dates', () => {
+    const out = parseMedicalInsurance(nas);
+    expect(out.document_number).toBe('1234 5678 9012');
+    expect(out.issuing_authority).toBe('Orient Insurance');
+    expect(out.details).toEqual({
+      policy_number: 'P/2026/004512',
+      tpa: 'NAS',
+      network: 'RN3',
+      category: 'C',
+      name: 'Juan Santos Cruz',
+    });
+    // Side by side on one line, and the birth date is not the issue date.
+    expect(out.issue_date).toBe('2026-04-01');
+    expect(out.expiry_date).toBe('2027-03-31');
+    expect(out.person).toMatchObject({
+      full_name: 'Juan Santos Cruz',
+      date_of_birth: '1990-01-15',
+      gender: 'M',
+    });
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('knows the insurer by its name when nothing labels it', () => {
+    const out = parseMedicalInsurance(`DAMAN National Health Insurance Company
+Card No: 1-234-5678901-02
+Valid Until: 31/12/2027`);
+    expect(out.issuing_authority).toBe('Daman');
+    expect(out.document_number).toBe('1-234-5678901-02');
+    expect(out.expiry_date).toBe('2027-12-31');
+    expect(out.details.tpa).toBeUndefined();
+  });
+
+  it('says so when it has to guess the expiry', () => {
+    const out = parseMedicalInsurance('Orient Insurance\n01/04/2026 31/03/2027');
+    expect(out.expiry_date).toBe('2027-03-31');
+    expect(out.warnings.join(' ')).toMatch(/guessed/);
+  });
+});
+
+describe('WPS salary card', () => {
+  const ratibi = `ratibi
+FAB
+5368 9812 3456 7890
+VALID THRU 08/28
+JUAN SANTOS CRUZ
+Employee ID: 30400000000001`;
+
+  it('keeps only the last four digits of the card number', () => {
+    const out = parseWpsCard(ratibi);
+    expect(out.document_number).toBe('7890');
+    expect(JSON.stringify(out)).not.toMatch(/5368/);
+  });
+
+  it('reads valid-thru as the last day of that month, and the provider', () => {
+    const out = parseWpsCard(ratibi);
+    expect(out.expiry_date).toBe('2028-08-31');
+    expect(out.issuing_authority).toBe('First Abu Dhabi Bank (Ratibi)');
+    expect(out.details.name).toBe('Juan Santos Cruz');
+    expect(out.details.employee_code).toBe('30400000000001');
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('handles February and a masked number', () => {
+    const out = parseWpsCard('C3Pay\nXXXX XXXX XXXX 4321\nGOOD THRU 02/28');
+    expect(out.document_number).toBe('4321');
+    expect(out.expiry_date).toBe('2028-02-29');
+    expect(out.issuing_authority).toBe('C3Pay');
+  });
+
+  it('picks the embossed name that matches the employee on file', () => {
+    const out = parseWpsCard('MASTERCARD\nAL ANSARI EXCHANGE\nMARIA REYES\nSAMPLE TEXT', {
+      knownName: 'Maria Lourdes Reyes',
+    });
+    expect(out.details.name).toBe('Maria Reyes');
+    expect(out.issuing_authority).toBe('Al Ansari Exchange');
+  });
+
+  it('leaves the name empty when several lines could be it', () => {
+    const out = parseWpsCard('MARIA REYES\nSAMPLE TEXT');
+    expect(out.details.name).toBeUndefined();
+  });
+
+  it('flags an unlabelled month/year and reads an IBAN', () => {
+    const out = parseWpsCard('Emirates NBD\n1234 5678 9012 3456\n11/29\nAE07 0331 2345 6789 0123 456');
+    expect(out.expiry_date).toBe('2029-11-30');
+    expect(out.details.account_number).toBe('AE070331234567890123456');
+    expect(out.warnings.join(' ')).toMatch(/unlabelled month\/year/);
   });
 });

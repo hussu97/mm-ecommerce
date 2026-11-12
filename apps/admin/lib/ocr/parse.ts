@@ -13,7 +13,15 @@
  * the text does not clearly support is left out rather than guessed.
  */
 
-export type OcrDocType = 'passport' | 'visa' | 'emirates_id' | 'labour_card' | 'ohc' | 'trade_license';
+export type OcrDocType =
+  | 'passport'
+  | 'visa'
+  | 'emirates_id'
+  | 'labour_card'
+  | 'ohc'
+  | 'medical_insurance'
+  | 'wps_card'
+  | 'trade_license';
 
 /** What a scan can tell us about the person it belongs to. */
 export type PersonFields = {
@@ -143,6 +151,24 @@ function dateNear(text: string, label: RegExp, window = 80): string | undefined 
     const start = (m.index ?? 0) + m[0].length;
     const found = findDates(text.slice(start, start + window));
     if (found.length) return found[0];
+  }
+  return undefined;
+}
+
+/**
+ * The date printed straight after a label ("Expiry Date: 10/03/2028"), with
+ * nothing but a colon between. Cards print issue and expiry side by side on
+ * one line ("Valid From: … Valid To: …"), where `dateNear`'s
+ * nearest-on-either-side rule hands the expiry label the issue date that ends
+ * one space before it; the card parsers read this first and keep `dateNear`
+ * as the fallback for looser layouts.
+ */
+function dateRightAfter(text: string, label: RegExp): string | undefined {
+  for (const m of text.matchAll(globalRe(label))) {
+    const rest = text.slice((m.index ?? 0) + m[0].length);
+    const lead = rest.match(/^[ \t]*[:.]?[ \t]*/)?.[0].length ?? 0;
+    const hit = dateHits(rest.slice(lead, lead + 24))[0];
+    if (hit && hit.start === 0) return hit.value;
   }
   return undefined;
 }
@@ -880,23 +906,6 @@ function afterLabel(latin: string, label: RegExp, value: RegExp): string | undef
   return first(latin, new RegExp(`${label.source}[ \\t]*[:.]?[ \\t]*(${value.source})[ \\t]*(?:\\n|$)`, 'm'));
 }
 
-/**
- * The date printed straight after a label ("Expiry Date: 10/03/2028"), with
- * nothing but a colon between. The card prints issue and expiry side by side
- * on one line, where `dateNear`'s nearest-on-either-side rule hands the
- * expiry label the issue date that ends one space before it; this reading
- * comes first, and `dateNear` stays the fallback for looser layouts.
- */
-function dateRightAfter(text: string, label: RegExp): string | undefined {
-  for (const m of text.matchAll(globalRe(label))) {
-    const rest = text.slice((m.index ?? 0) + m[0].length);
-    const lead = rest.match(/^[ \t]*[:.]?[ \t]*/)?.[0].length ?? 0;
-    const hit = dateHits(rest.slice(lead, lead + 24))[0];
-    if (hit && hit.start === 0) return hit.value;
-  }
-  return undefined;
-}
-
 const EID_ISSUE = /Issu(?:ing|e)\s*Date|Date\s*of\s*Issue/i;
 const EID_EXPIRY = /Expiry\s*Date|Date\s*of\s*Expiry|Expiration\s*Date/i;
 const EID_BIRTH = /Date\s*of\s*Birth|D\.?O\.?B/i;
@@ -988,6 +997,194 @@ export function parseEmiratesId(raw: string): DocumentFields {
     job_title: occupation ? titleCase(occupation) : undefined,
     establishment: employer,
   };
+  return out;
+}
+
+// ─── Medical insurance card ──────────────────────────────────────────────────
+
+/** Insurers on UAE health cards, matched loosely, in the shop's spelling. */
+const INSURERS: Array<[RegExp, string]> = [
+  [/\bDaman\b|National\s*Health\s*Insurance/i, 'Daman'],
+  [/\bSukoon\b|Oman\s*Insurance/i, 'Sukoon (Oman Insurance)'],
+  [/\bOrient\s*Insurance/i, 'Orient Insurance'],
+  [/\bADNIC\b|Abu\s*Dhabi\s*National\s*Insurance/i, 'ADNIC'],
+  [/\bGIG\b|AXA\s*Gulf|Gulf\s*Insurance\s*Group/i, 'GIG Gulf'],
+  [/\bDubai\s*Insurance/i, 'Dubai Insurance'],
+  [/\bTakaful\s*Emarat/i, 'Takaful Emarat'],
+  [/\bAl\s*Buhaira/i, 'Al Buhaira National Insurance'],
+  [/\bWatania\b/i, 'Watania Takaful'],
+  [/\bAl\s*Sagr/i, 'Al Sagr National Insurance'],
+  [/\bRAK\s*Insurance/i, 'RAK Insurance'],
+  [/\bUnion\s*Insurance/i, 'Union Insurance'],
+  [/\bFidelity\s*United/i, 'Fidelity United'],
+  [/\bNational\s*General\s*Insurance|\bNGI\b/i, 'National General Insurance'],
+  [/\bAl\s*Ain\s*Ahlia/i, 'Al Ain Ahlia Insurance'],
+  [/\bQatar\s*Insurance|\bQIC\b/i, 'Qatar Insurance'],
+  [/\bAl\s*Wathba/i, 'Al Wathba National Insurance'],
+  [/\bMetLife\b/i, 'MetLife'],
+  [/\bCigna\b/i, 'Cigna'],
+  [/\bBupa\b/i, 'Bupa'],
+  [/\bAllianz\b/i, 'Allianz'],
+];
+
+/** Third-party administrators that print their own name on the card. */
+const TPAS: Array<[RegExp, string]> = [
+  [/\bNAS\b|Neuron\b/i, 'NAS'],
+  [/Next\s*Care/i, 'NextCare'],
+  [/Med\s*Net\b/i, 'MedNet'],
+  [/\bFMC\b|First\s*Med/i, 'FMC'],
+  [/\bInayah\b/i, 'Inayah'],
+  [/Al\s*Madallah/i, 'Al Madallah'],
+  [/\bMSH\b/i, 'MSH International'],
+  [/\bAafiya\b/i, 'Aafiya'],
+];
+
+const INS_ISSUE = /Valid\s*From|Effective\s*(?:Date|From)|Start\s*Date|Inception\s*Date|Issue\s*Date|Date\s*of\s*Issue/i;
+const INS_EXPIRY =
+  /Valid\s*(?:To|Till|Until|Upto|Up\s*to|Thru|Through)|Expiry\s*Date|Date\s*of\s*Expiry|Expiration\s*Date|End\s*Date|Expires?(?:\s*on)?/i;
+const BIRTH = /Date\s*of\s*Birth|D\.?O\.?B/i;
+
+export function parseMedicalInsurance(raw: string): DocumentFields {
+  const text = normalise(raw);
+  const latin = text.replace(/[؀-ۿ]+/g, ' ').replace(/[ \t]+/g, ' ');
+  const out = empty();
+
+  out.document_number = sameLineValue(
+    latin,
+    /(?:Member(?:ship)?|Card|Insurance|Insured)\s*(?:ID|No|Number|#)/i,
+    /[A-Z0-9](?:[A-Z0-9/-]| (?=\d)){4,30}/,
+  );
+  const policy = sameLineValue(latin, /Policy\s*(?:No|Number|#)/i, /[A-Z0-9][A-Z0-9/-]{3,30}/);
+  if (policy) out.details.policy_number = policy;
+
+  const insurer =
+    afterLabel(latin, /\b(?:Insurer|INSURER|Insurance\s*Company|Insured\s*by|Underwritten\s*by)/, /[A-Z][A-Za-z&.' -]{2,60}/) ??
+    INSURERS.find(([re]) => re.test(latin))?.[1];
+  if (insurer) out.issuing_authority = insurer;
+  const tpa =
+    afterLabel(latin, /\b(?:TPA|Administrator|Administered\s*by)/, /[A-Z][A-Za-z&.' -]{1,40}/) ??
+    TPAS.find(([re]) => re.test(latin))?.[1];
+  if (tpa && tpa !== insurer) out.details.tpa = tpa;
+
+  const network = afterLabel(latin, /\b(?:Network|NETWORK|Plan|PLAN|Product|PRODUCT)/, /[A-Za-z0-9][A-Za-z0-9 +/&-]{1,40}/);
+  if (network) out.details.network = network;
+  const category = afterLabel(latin, /\b(?:Category|CATEGORY|Class|CLASS)/, /[A-Za-z0-9][A-Za-z0-9 +/-]{0,30}/);
+  if (category) out.details.category = category;
+
+  const name = afterLabel(latin, /\b(?:Member\s*Name|Insured\s*Name|Name|NAME)/, PRINTED_NAME);
+  if (name) {
+    out.details.name = titleCase(name);
+    out.person.full_name = titleCase(name);
+  }
+  const dob = dateRightAfter(latin, BIRTH) ?? dateNear(latin, BIRTH, 40);
+  if (dob) out.person.date_of_birth = dob;
+  const sex = first(latin, /\b(?:Sex|Gender)[ \t]*:?[ \t]*(M|F|Male|Female)\b/i);
+  if (sex) out.person.gender = sex[0].toUpperCase() as 'M' | 'F';
+
+  const labelled = issueAndExpiry(latin, INS_ISSUE, INS_EXPIRY, { exclude: [dob] });
+  out.expiry_date = dateRightAfter(latin, INS_EXPIRY) ?? labelled.expiry;
+  const issue = dateRightAfter(latin, INS_ISSUE) ?? labelled.issue;
+  if (issue && out.expiry_date && issue < out.expiry_date) out.issue_date = issue;
+  if (!out.expiry_date) out.warnings.push('No expiry date found — enter it from the card.');
+  else if (labelled.guessed && out.expiry_date === labelled.expiry && !dateRightAfter(latin, INS_EXPIRY)) {
+    out.warnings.push('Expiry date guessed as the latest date on the card — check it.');
+  }
+  return out;
+}
+
+// ─── WPS salary card ─────────────────────────────────────────────────────────
+
+/** Who issues UAE payroll cards — banks and exchange houses. */
+const WPS_PROVIDERS: Array<[RegExp, string]> = [
+  [/\bratibi\b|\bFAB\b|First\s*Abu\s*Dhabi/i, 'First Abu Dhabi Bank (Ratibi)'],
+  [/\bC3\s*Pay\b|\bC3\b/i, 'C3Pay'],
+  [/Al\s*Ansari/i, 'Al Ansari Exchange'],
+  [/UAE\s*Exchange|\bUnimoni\b/i, 'UAE Exchange'],
+  [/\bLu\s*Lu\b/i, 'LuLu Exchange'],
+  [/Al\s*Fardan/i, 'Al Fardan Exchange'],
+  [/Al\s*Rostamani|\bAREX\b/i, 'Al Rostamani Exchange'],
+  [/Wall\s*Street\s*Exchange/i, 'Wall Street Exchange'],
+  [/Emirates\s*Islamic/i, 'Emirates Islamic'],
+  [/Emirates\s*NBD|\bENBD\b/i, 'Emirates NBD'],
+  [/Mashreq/i, 'Mashreq'],
+  [/RAK\s*BANK/i, 'RAKBANK'],
+  [/\bADCB\b|Abu\s*Dhabi\s*Commercial/i, 'ADCB'],
+  [/Dubai\s*Islamic|\bDIB\b/i, 'Dubai Islamic Bank'],
+  [/Commercial\s*Bank\s*of\s*Dubai|\bCBD\b/i, 'Commercial Bank of Dubai'],
+  [/\bNOW\s*Money\b/i, 'NOW Money'],
+  [/\bEdenred\b/i, 'Edenred'],
+];
+
+/** Words printed on a payroll card that are never part of the holder's name. */
+const CARD_WORDS = new Set(
+  'VALID THRU THROUGH GOOD FROM UNTIL EXPIRES EXPIRY MONTH YEAR DEBIT PREPAID PAYROLL SALARY CARD BANK EXCHANGE MASTERCARD VISA WORLD PLATINUM ELECTRONIC USE ONLY WPS RATIBI MEMBER SINCE EMPLOYEE CUSTOMER SERVICE CALL CENTRE CENTER UAE DUBAI ABU DHABI SHARJAH ISLAMIC MONEY PAY'.split(
+    ' ',
+  ),
+);
+
+function lastDayOfMonth(year: number, month: number): string | null {
+  const day = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return iso(year, month, day);
+}
+
+export function parseWpsCard(raw: string, hint: PassportHint = {}): DocumentFields {
+  const text = normalise(raw);
+  const out = empty();
+
+  // Only the last four digits are kept — the API refuses a full card number.
+  const pan = text.match(/\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}(?:[ -]?\d{1,3})?\b/);
+  const masked = text.match(/(?:[X*•]{4}[ -]?){3}(\d{4})\b/i);
+  const digits = pan?.[0].replace(/\D/g, '');
+  out.document_number = digits ? digits.slice(-4) : masked?.[1];
+  if (!out.document_number) out.warnings.push('No card number found — enter its last 4 digits from the card.');
+
+  // "VALID THRU 08/28": a card is good to the last day of that month.
+  const labelled = text.match(
+    /(?:VALID\s*(?:THRU|THROUGH|TILL|UP\s*TO)|GOOD\s*THRU|EXP(?:IRY|IRES)?(?:\s*DATE)?|MONTH\s*\/\s*YEAR)[ \t]*:?[ \t]*(0[1-9]|1[0-2])\s*\/\s*(\d{2}|\d{4})\b/i,
+  );
+  const bare = [...text.matchAll(/(?<![\d/])(0[1-9]|1[0-2])\s*\/\s*(\d{2})(?![\d/])/g)];
+  const mmYY = labelled ?? (bare.length === 1 ? bare[0] : undefined);
+  if (mmYY) {
+    const year = mmYY[2].length === 2 ? 2000 + +mmYY[2] : +mmYY[2];
+    out.expiry_date = lastDayOfMonth(year, +mmYY[1]) ?? undefined;
+  }
+  if (!out.expiry_date) {
+    out.warnings.push('No expiry (valid thru) found — enter it from the card; it is good to the last day of that month.');
+  } else if (!labelled) {
+    out.warnings.push('Expiry read from an unlabelled month/year — check it against the card.');
+  }
+
+  const provider =
+    afterLabel(text, /\b(?:Issued\s*by|ISSUED\s*BY)/, /[A-Z][A-Za-z&.' -]{2,60}/) ??
+    WPS_PROVIDERS.find(([re]) => re.test(text))?.[1];
+  if (provider) out.issuing_authority = provider;
+
+  // The holder's name is embossed in capitals with no label. Prefer the line
+  // that shares a word with the name on file; else take it only if just one
+  // line looks like a name.
+  const candidates = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^[A-Z]{2,}(?: [A-Z]{2,}){1,4}$/.test(l))
+    .filter((l) => !l.split(' ').some((w) => CARD_WORDS.has(w)));
+  const known = nameWords(hint.knownName);
+  const name =
+    candidates.find((l) => l.split(' ').some((w) => known.includes(w))) ??
+    (candidates.length === 1 ? candidates[0] : undefined);
+  if (name) {
+    out.details.name = titleCase(name);
+    out.person.full_name = titleCase(name);
+  }
+
+  const code = sameLineValue(text, /(?:Employee|Emp\.?|Staff|Personal)\s*(?:ID|No|Number|Code)/i, /[A-Z0-9][A-Z0-9-]{2,20}/);
+  if (code) out.details.employee_code = code;
+  const iban = text.match(/\bAE ?\d{2}(?: ?\d){19}\b/);
+  const account =
+    (iban && iban[0].replace(/ /g, '').length === 23 ? iban[0].replace(/ /g, '') : undefined) ??
+    sameLineValue(text, /(?:Account|A\/C)\s*(?:No|Number)?/i, /\d{8,20}/);
+  if (account) out.details.account_number = account;
+  const routing = sameLineValue(text, /Routing\s*(?:Code|No|Number)?/i, /\d{9}/);
+  if (routing) out.details.routing_code = routing;
   return out;
 }
 
@@ -1114,5 +1311,9 @@ export function parseDocument(
       return parseLabourCard(text);
     case 'ohc':
       return parseOhc(text);
+    case 'medical_insurance':
+      return parseMedicalInsurance(text);
+    case 'wps_card':
+      return parseWpsCard(text, hint);
   }
 }

@@ -81,13 +81,15 @@ export default function EmployeesPage() {
     docColumn('emirates_id', 'Emirates ID'),
     docColumn('labour_card', 'Labour card'),
     docColumn('ohc', 'Health card'),
+    docColumn('medical_insurance', 'Insurance'),
+    docColumn('wps_card', 'WPS card'),
     docColumn('passport', 'Passport'),
   ];
 
   return (
     <ListPage
       title="Employees"
-      description="Passports, visas, Emirates IDs, labour cards and health cards — every renewal kept on file. Visible to super-admins only."
+      description="Passports, visas, Emirates IDs, labour cards, health cards, medical insurance and WPS salary cards — every renewal kept on file. Visible to super-admins only."
       search={{ value: search, onChange: setSearch, placeholder: 'Search name, number…' }}
       toolbar={
         <div className="w-full sm:w-36">
