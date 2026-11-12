@@ -12,7 +12,10 @@ the console warns a super-admin 15 days ahead.
 
 Each document is versioned by its issue→expiry cycle: a renewal adds a row and
 the old one stays on file with its scan. The row expiring last is the current
-one. The scans live in the private finance bucket, signed on read.
+one. Everything else kept against a person — a contract, a certificate, a
+warning letter — is an `EmployeeFile`: a named file with a free-text type, as
+many as needed, no expiry. The scans live in the private finance bucket,
+signed on read.
 """
 
 from __future__ import annotations
@@ -231,6 +234,13 @@ class Employee(Base, UUIDMixin, TimestampMixin):
         order_by="EmployeeDocument.expiry_date.desc()",
         lazy="selectin",
     )
+    files: Mapped[list[EmployeeFile]] = relationship(
+        "EmployeeFile",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeeFile.created_at.desc()",
+        lazy="selectin",
+    )
 
     @property
     def has_photo(self) -> bool:
@@ -296,3 +306,39 @@ class EmployeeDocument(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<EmployeeDocument {self.doc_type} → {self.expiry_date}>"
+
+
+class EmployeeFile(Base, UUIDMixin, TimestampMixin):
+    """Any other paper kept against an employee — no fixed fields, no expiry.
+
+    The title and the type are free text, typed or suggested by the console's
+    OCR of the scan; the console offers the types already in use so the same
+    kind of paper is spelled the same way. A row is created first and its file
+    uploaded after, like a document cycle's scan.
+    """
+
+    __tablename__ = "employee_files"
+    __table_args__ = (Index("ix_employee_files_employee", "employee_id"),)
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: Free text ("Employment contract", "Food safety certificate", …).
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The name the file had on the uploader's machine, for reference only.
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_object_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    employee: Mapped[Employee] = relationship("Employee", back_populates="files")
+
+    @property
+    def has_file(self) -> bool:
+        return bool(self.file_object_key)
+
+    def __repr__(self) -> str:
+        return f"<EmployeeFile {self.title}>"

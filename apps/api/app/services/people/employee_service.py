@@ -3,7 +3,9 @@
 A document is one issue→expiry cycle of one type (passport, visa, Emirates ID,
 labour card, OHC, medical insurance, WPS salary card). A renewal is a new row, never an edit of the old one, so
 every scan that was valid on some date stays on file; the row expiring last per
-type is the current one. Scans and the photo live in the private finance bucket under
+type is the current one. Anything else is an `EmployeeFile` — a named file with a free-text
+type, any number of them. Scans, files and the photo live in the private
+finance bucket under
 `employees/<id>/…`, signed on read.
 """
 
@@ -23,6 +25,7 @@ from app.models.employee import (
     EMPLOYEE_DOCUMENT_SPECS,
     Employee,
     EmployeeDocument,
+    EmployeeFile,
 )
 from app.models.user import User
 from app.schemas.employee import (
@@ -44,6 +47,11 @@ def document_key(row: EmployeeDocument, ext: str) -> str:
     return (
         f"employees/{row.employee_id}/{row.doc_type}/{row.expiry_date.isoformat()}{ext}"
     )
+
+
+def file_key(row: EmployeeFile, ext: str) -> str:
+    """One object per file row."""
+    return f"employees/{row.employee_id}/files/{row.id}{ext}"
 
 
 # ─── Read models ──────────────────────────────────────────────────────────────
@@ -139,7 +147,7 @@ async def create_employee(db: AsyncSession, data: dict) -> Employee:
     employee = Employee(**data)
     db.add(employee)
     await db.flush()
-    await db.refresh(employee, ["documents", "user"])
+    await db.refresh(employee, ["documents", "files", "user"])
     return employee
 
 
@@ -158,6 +166,7 @@ async def update_employee(db: AsyncSession, employee: Employee, data: dict) -> E
 
 async def delete_employee(db: AsyncSession, employee: Employee) -> None:
     keys = [d.file_object_key for d in employee.documents if d.file_object_key]
+    keys += [f.file_object_key for f in employee.files if f.file_object_key]
     if employee.photo_object_key:
         keys.append(employee.photo_object_key)
     await db.delete(employee)
@@ -347,5 +356,87 @@ async def document_file(
     return await storage.sign_file(
         row.file_object_key,
         title=f"{employee.full_name} - {label} - expires {row.expiry_date.isoformat()}",
+        content_type=row.file_content_type,
+    )
+
+
+# ─── Other files ──────────────────────────────────────────────────────────────
+
+
+async def file_categories(db: AsyncSession) -> list[str]:
+    """Every type already given to a file, most used first, so the console can
+    offer them and the same kind of paper keeps one spelling."""
+    count = func.count(EmployeeFile.id)
+    rows = await db.execute(
+        select(EmployeeFile.category)
+        .where(EmployeeFile.category.is_not(None))
+        .group_by(EmployeeFile.category)
+        .order_by(count.desc(), EmployeeFile.category)
+    )
+    return [r for (r,) in rows]
+
+
+async def get_file(
+    db: AsyncSession, employee: Employee, file_id: uuid.UUID
+) -> EmployeeFile:
+    row = await db.get(EmployeeFile, file_id)
+    if row is None or row.employee_id != employee.id:
+        raise NotFoundError("File not found")
+    return row
+
+
+async def create_file(db: AsyncSession, employee: Employee, data: dict) -> EmployeeFile:
+    row = EmployeeFile(employee_id=employee.id, **data)
+    db.add(row)
+    await db.flush()
+    await db.refresh(row)
+    await db.refresh(employee, ["files"])
+    return row
+
+
+async def update_file(
+    db: AsyncSession, employee: Employee, row: EmployeeFile, data: dict
+) -> EmployeeFile:
+    for field, value in data.items():
+        # `None` for the required title means "not sent" in a partial update.
+        if value is None and field == "title":
+            continue
+        setattr(row, field, value)
+    await db.flush()
+    await db.refresh(row)
+    await db.refresh(employee, ["files"])
+    return row
+
+
+async def delete_file(db: AsyncSession, employee: Employee, row: EmployeeFile) -> None:
+    key = row.file_object_key
+    await db.delete(row)
+    await db.flush()
+    await db.refresh(employee, ["files"])
+    if key:
+        await storage.delete_quietly(key)
+
+
+async def store_file(
+    db: AsyncSession, row: EmployeeFile, body: bytes, content_type: str
+) -> EmployeeFile:
+    content_type, ext = storage.validate(body, content_type, "File")
+    key = file_key(row, ext)
+    await storage.upload(key, body, content_type, "file")
+    previous = row.file_object_key
+    row.file_object_key = key
+    row.file_content_type = content_type
+    await db.flush()
+    if previous and previous != key:
+        await storage.delete_quietly(previous)
+    return row
+
+
+async def signed_file(employee: Employee, row: EmployeeFile) -> storage.SignedFile:
+    if not row.file_object_key:
+        raise NotFoundError("This record has no file")
+    return await storage.sign_file(
+        row.file_object_key,
+        title=f"{employee.full_name} - {row.title}",
         content_type=row.file_content_type,
     )

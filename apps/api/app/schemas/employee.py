@@ -1,4 +1,5 @@
-"""Employees, their versioned documents, and the expiring-paperwork warning."""
+"""Employees, their versioned documents, their other files, and the
+expiring-paperwork warning."""
 
 from __future__ import annotations
 
@@ -95,6 +96,19 @@ class EmployeeDocumentResponse(_ORM):
     updated_at: datetime
 
 
+class EmployeeFileResponse(_ORM):
+    id: UUID
+    employee_id: UUID
+    title: str
+    category: str | None
+    notes: str | None
+    original_filename: str | None
+    has_file: bool
+    file_content_type: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class EmployeeResponse(_ORM):
     id: UUID
     full_name: str
@@ -116,6 +130,8 @@ class EmployeeResponse(_ORM):
     notes: str | None
     has_photo: bool
     documents: list[EmployeeDocumentResponse] = []
+    #: Other files, newest first.
+    files: list[EmployeeFileResponse] = []
     created_at: datetime
     updated_at: datetime
 
@@ -194,6 +210,56 @@ class EmployeeDocumentTypeSpec(BaseModel):
     expiry_tracked: bool
     #: key → label of the type-specific fields.
     details: dict[str, str]
+
+
+# ─── Other files ──────────────────────────────────────────────────────────────
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return text or None
+
+
+class EmployeeFileCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    category: str | None = Field(None, max_length=80)
+    notes: str | None = Field(None, max_length=4000)
+    original_filename: str | None = Field(None, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A name is required")
+        return value
+
+    @field_validator("category", "notes", "original_filename")
+    @classmethod
+    def _blank(cls, value: str | None) -> str | None:
+        return _blank_to_none(value)
+
+
+class EmployeeFileUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=200)
+    category: str | None = Field(None, max_length=80)
+    notes: str | None = Field(None, max_length=4000)
+    original_filename: str | None = Field(None, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("A name is required")
+        return value
+
+    @field_validator("category", "notes", "original_filename")
+    @classmethod
+    def _blank(cls, value: str | None) -> str | None:
+        return _blank_to_none(value)
 
 
 class SignedDocumentUrl(BaseModel):

@@ -1,7 +1,7 @@
 """Employees and their versioned documents — super-admin only, reads included.
 
 These records hold passport, visa, Emirates ID, labour-card, insurance and
-salary-card numbers and scans, so every
+salary-card numbers and scans, and other personal papers, so every
 route demands `require_superadmin()`: no role slug opens them, however broad.
 Document field values are typed by the super-admin, usually prefilled by the
 console's in-browser OCR of the scan — the API never reads the image itself.
@@ -32,6 +32,9 @@ from app.schemas.employee import (
     EmployeeDocumentResponse,
     EmployeeDocumentTypeSpec,
     EmployeeDocumentUpdate,
+    EmployeeFileCreate,
+    EmployeeFileResponse,
+    EmployeeFileUpdate,
     EmployeeListItem,
     EmployeeResponse,
     EmployeeUpdate,
@@ -100,6 +103,15 @@ async def document_types(_: User = Depends(require_superadmin())):
         )
         for t in EMPLOYEE_DOCUMENT_TYPES
     ]
+
+
+@router.get("/file-categories", response_model=list[str])
+async def file_categories(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_superadmin()),
+):
+    """The types already given to other files, most used first."""
+    return await svc.file_categories(db)
 
 
 # ─── Employees ────────────────────────────────────────────────────────────────
@@ -363,3 +375,105 @@ async def delete_document_file(
         {"document_file_removed": str(document_id)},
     )
     return svc.to_document_response(row, svc.current_by_type(employee.documents))
+
+
+# ─── Other files ──────────────────────────────────────────────────────────────
+
+
+def _file_summary(row) -> dict:
+    return {"title": row.title, "category": row.category}
+
+
+@router.post(
+    "/{employee_id}/files",
+    response_model=EmployeeFileResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_file(
+    employee_id: uuid.UUID,
+    data: EmployeeFileCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superadmin()),
+):
+    """Record another paper kept against the employee; its file is uploaded
+    next, to `/{employee_id}/files/{file_id}/file`."""
+    employee = await svc.get_employee(db, employee_id)
+    row = await svc.create_file(db, employee, data.model_dump())
+    await _audit(
+        db, request, admin, employee, "UPDATE", {"file_added": _file_summary(row)}
+    )
+    return row
+
+
+@router.patch("/{employee_id}/files/{file_id}", response_model=EmployeeFileResponse)
+async def update_file(
+    employee_id: uuid.UUID,
+    file_id: uuid.UUID,
+    data: EmployeeFileUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superadmin()),
+):
+    employee = await svc.get_employee(db, employee_id)
+    row = await svc.get_file(db, employee, file_id)
+    row = await svc.update_file(db, employee, row, data.model_dump(exclude_unset=True))
+    await _audit(
+        db,
+        request,
+        admin,
+        employee,
+        "UPDATE",
+        {
+            "file_updated": str(file_id),
+            "data": data.model_dump(mode="json", exclude_unset=True),
+        },
+    )
+    return row
+
+
+@router.delete("/{employee_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_file(
+    employee_id: uuid.UUID,
+    file_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superadmin()),
+):
+    employee = await svc.get_employee(db, employee_id)
+    row = await svc.get_file(db, employee, file_id)
+    summary = _file_summary(row)
+    await svc.delete_file(db, employee, row)
+    await _audit(db, request, admin, employee, "UPDATE", {"file_deleted": summary})
+
+
+@router.post("/{employee_id}/files/{file_id}/file", response_model=EmployeeFileResponse)
+async def upload_file(
+    employee_id: uuid.UUID,
+    file_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superadmin()),
+):
+    """Attach or replace the file. The body is the raw bytes (JPEG, PNG, WebP
+    or PDF, max 10 MB); the type comes from the request header."""
+    employee = await svc.get_employee(db, employee_id)
+    row = await svc.get_file(db, employee, file_id)
+    body, content_type = await _read_body(request)
+    row = await svc.store_file(db, row, body, content_type)
+    await _audit(
+        db, request, admin, employee, "UPDATE", {"file_uploaded": str(file_id)}
+    )
+    return row
+
+
+@router.get("/{employee_id}/files/{file_id}/file", response_model=SignedDocumentUrl)
+async def get_file(
+    employee_id: uuid.UUID,
+    file_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_superadmin()),
+):
+    employee = await svc.get_employee(db, employee_id)
+    row = await svc.get_file(db, employee, file_id)
+    return _signed(await svc.signed_file(employee, row))

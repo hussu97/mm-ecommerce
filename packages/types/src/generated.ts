@@ -3536,6 +3536,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/employees/file-categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File Categories
+         * @description The types already given to other files, most used first.
+         */
+        get: operations["file_categories_api_v1_employees_file_categories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/employees/{employee_id}": {
         parameters: {
             query?: never;
@@ -3621,6 +3641,67 @@ export interface paths {
         post: operations["upload_document_file_api_v1_employees__employee_id__documents__document_id__file_post"];
         /** Delete Document File */
         delete: operations["delete_document_file_api_v1_employees__employee_id__documents__document_id__file_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create File
+         * @description Record another paper kept against the employee; its file is uploaded
+         *     next, to `/{employee_id}/files/{file_id}/file`.
+         */
+        post: operations["create_file_api_v1_employees__employee_id__files_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete File */
+        delete: operations["delete_file_api_v1_employees__employee_id__files__file_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update File */
+        patch: operations["update_file_api_v1_employees__employee_id__files__file_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/employees/{employee_id}/files/{file_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get File */
+        get: operations["get_file_api_v1_employees__employee_id__files__file_id__file_get"];
+        put?: never;
+        /**
+         * Upload File
+         * @description Attach or replace the file. The body is the raw bytes (JPEG, PNG, WebP
+         *     or PDF, max 10 MB); the type comes from the request header.
+         */
+        post: operations["upload_file_api_v1_employees__employee_id__files__file_id__file_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -15400,6 +15481,63 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
+        /** EmployeeFileCreate */
+        EmployeeFileCreate: {
+            /** Category */
+            category?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Original Filename */
+            original_filename?: string | null;
+            /** Title */
+            title: string;
+        };
+        /** EmployeeFileResponse */
+        EmployeeFileResponse: {
+            /** Category */
+            category: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Employee Id
+             * Format: uuid
+             */
+            employee_id: string;
+            /** File Content Type */
+            file_content_type: string | null;
+            /** Has File */
+            has_file: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Notes */
+            notes: string | null;
+            /** Original Filename */
+            original_filename: string | null;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** EmployeeFileUpdate */
+        EmployeeFileUpdate: {
+            /** Category */
+            category?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Original Filename */
+            original_filename?: string | null;
+            /** Title */
+            title?: string | null;
+        };
         /** EmployeeListItem */
         EmployeeListItem: {
             /** Branch Id */
@@ -15449,6 +15587,11 @@ export interface components {
              * @default []
              */
             documents: components["schemas"]["EmployeeDocumentResponse"][];
+            /**
+             * Files
+             * @default []
+             */
+            files: components["schemas"]["EmployeeFileResponse"][];
             /** Full Name */
             full_name: string;
             /** Full Name Ar */
@@ -32303,6 +32446,26 @@ export interface operations {
             };
         };
     };
+    file_categories_api_v1_employees_file_categories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
     get_employee_api_v1_employees__employee_id__get: {
         parameters: {
             query?: never;
@@ -32582,6 +32745,171 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EmployeeDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_file_api_v1_employees__employee_id__files_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmployeeFileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeFileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_file_api_v1_employees__employee_id__files__file_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_file_api_v1_employees__employee_id__files__file_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmployeeFileUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeFileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_file_api_v1_employees__employee_id__files__file_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_file_api_v1_employees__employee_id__files__file_id__file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                employee_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmployeeFileResponse"];
                 };
             };
             /** @description Validation Error */

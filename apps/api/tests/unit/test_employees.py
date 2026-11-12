@@ -32,7 +32,12 @@ from app.models.employee import (
     EmployeeDocument,
 )
 from app.models.role import ALL_PERMISSIONS
-from app.schemas.employee import EmployeeDocumentCreate, EmployeeDocumentUpdate
+from app.schemas.employee import (
+    EmployeeDocumentCreate,
+    EmployeeDocumentUpdate,
+    EmployeeFileCreate,
+    EmployeeFileUpdate,
+)
 from app.services.people import employee_service
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
@@ -172,6 +177,25 @@ def test_a_salary_card_keeps_its_last_four(number):
 def test_other_types_may_carry_long_numbers():
     # An insurance member number can run long; only the salary card is a PAN.
     employee_service._check_number("medical_insurance", "1234567890123456")
+
+
+def test_other_files_trim_and_drop_blanks():
+    created = EmployeeFileCreate(
+        title="  Employment contract ",
+        category=" ",
+        notes="",
+        original_filename="a.pdf",
+    )
+    assert created.title == "Employment contract"
+    assert created.category is None and created.notes is None
+    with pytest.raises(ValidationError):
+        EmployeeFileCreate(title="   ")
+    with pytest.raises(ValidationError):
+        EmployeeFileUpdate(title="  ")
+    # A partial update that sends no title leaves it alone.
+    assert EmployeeFileUpdate(category="NOC").model_dump(exclude_unset=True) == {
+        "category": "NOC"
+    }
 
 
 def test_issue_after_expiry_is_refused():
@@ -382,5 +406,79 @@ async def test_an_account_links_to_one_employee_at_most():
             )
             if user_id:
                 await db.execute(delete(User).where(User.id == user_id))
+            await db.commit()
+        await engine.dispose()
+
+
+@db_required
+async def test_other_files_many_per_employee(monkeypatch):
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core import private_documents
+    from app.models import Employee
+
+    uploads: list[str] = []
+    deleted: list[str] = []
+
+    async def fake_upload(key, body, content_type, label):
+        uploads.append(key)
+
+    async def fake_delete(key):
+        deleted.append(key)
+
+    monkeypatch.setattr(private_documents, "upload", fake_upload)
+    monkeypatch.setattr(private_documents, "delete_quietly", fake_delete)
+
+    engine = create_async_engine(DATABASE_URL)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    ids: list[uuid.UUID] = []
+    try:
+        async with Session() as db:
+            adar = await employee_service.create_employee(
+                db, {"full_name": f"Adar {tag}", "status": "active"}
+            )
+            ids.append(adar.id)
+            category = f"Contract {tag}"
+            first = await employee_service.create_file(
+                db, adar, {"title": "Offer", "category": category}
+            )
+            # Same type, same title: files are not cycles, nothing is unique.
+            await employee_service.create_file(
+                db, adar, {"title": "Offer", "category": category}
+            )
+            await employee_service.create_file(
+                db, adar, {"title": "Food safety", "category": f"Cert {tag}"}
+            )
+            assert len(adar.files) == 3
+
+            first = await employee_service.store_file(
+                db, first, b"%PDF-1.4", "application/pdf"
+            )
+            assert first.file_object_key == f"employees/{adar.id}/files/{first.id}.pdf"
+            assert first.has_file
+
+            mine = [c for c in await employee_service.file_categories(db) if tag in c]
+            assert mine == [category, f"Cert {tag}"]  # most used first
+
+            response = employee_service.to_response(adar)
+            assert len(response.files) == 3
+            assert {f.title for f in response.files} == {"Offer", "Food safety"}
+
+            first = await employee_service.update_file(
+                db, adar, first, {"title": None, "category": "NOC"}
+            )
+            assert first.title == "Offer" and first.category == "NOC"
+            await db.commit()
+
+        async with Session() as db:
+            full = await employee_service.get_employee(db, adar.id)
+            await employee_service.delete_employee(db, full)
+            await db.commit()
+            assert first.file_object_key in deleted
+    finally:
+        async with Session() as db:
+            await db.execute(delete(Employee).where(Employee.id.in_(ids)))
             await db.commit()
         await engine.dispose()

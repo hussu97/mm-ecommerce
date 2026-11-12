@@ -95,7 +95,7 @@ from .device_push_token import (  # noqa: F401
     PushPlatformEnum,
 )
 from .email_log import EmailLog  # noqa: F401
-from .employee import Employee, EmployeeDocument  # noqa: F401
+from .employee import Employee, EmployeeDocument, EmployeeFile  # noqa: F401
 from .external_item_map import ExternalItemMap  # noqa: F401
 from .grubops import (  # noqa: F401
     GrubOpsLocationMap,
