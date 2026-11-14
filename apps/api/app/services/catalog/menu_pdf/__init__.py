@@ -20,17 +20,20 @@ mid-layout; the WhatsApp QR is an inline SVG from ``segno``. Fonts are bundled
 Public surface:
     build_menu_document(db, root, *, lang)  -> MenuDocument   (builder.py)
     render_menu_pdf(document)               -> bytes          (render.py)
+    publish.run_forever()                   keeps each branch's live menu PDF in
+                                            the public bucket (publish.py)
 """
 
 from __future__ import annotations
 
-from .builder import build_menu_document
+from .builder import build_menu_document, menu_pdf_filename
 from .render import prepare_menu_assets, render_menu_pdf
 from .view_models import MenuDocument
 
 __all__ = [
     "MenuDocument",
     "build_menu_document",
+    "menu_pdf_filename",
     "prepare_menu_assets",
     "render_menu_pdf",
 ]

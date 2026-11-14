@@ -83,6 +83,7 @@ _LOOP_BEATS = {
         "run_forever",
         "payment_reconcile",
     ),
+    "app.services.catalog.menu_pdf.publish": ("run_forever", "menu_pdf_publish"),
 }
 
 

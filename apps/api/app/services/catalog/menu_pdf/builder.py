@@ -10,13 +10,16 @@ does).
 
 from __future__ import annotations
 
+import re
 import uuid
 from decimal import Decimal
 from typing import Any
 
+import phonenumbers
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.phone import normalise_phone
 from app.models.branch import Branch
 from app.models.menu import MenuGroup
 from app.models.product import Product
@@ -329,13 +332,30 @@ async def _resolve_brand(db: AsyncSession, root: MenuGroup):
     return "Menu", None, theme_for_entity_reference(None)
 
 
+def menu_pdf_filename(name: str | None, lang: str) -> str:
+    """`<slug>-menu-<lang>.pdf` — the download name the admin hands out, and the
+    object name `publish` keeps each branch's live menu under."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "menu").lower()).strip("-") or "menu"
+    return f"{slug}-menu-{lang}.pdf"
+
+
 def _whatsapp(branch: Branch | None) -> tuple[str | None, str | None]:
+    """The printed number and its `wa.me` link, read through `normalise_phone`.
+
+    A branch phone is typed however the admin typed it, and Barsha's is stored as
+    the bare `508463045` — so the old digits-only link was `wa.me/508463045`, a
+    number with no country that WhatsApp cannot open. E.164 first; a phone that
+    will not parse still prints as typed, with no QR rather than a wrong one.
+    """
     if branch is None or not branch.phone:
         return None, None
-    digits = "".join(ch for ch in branch.phone if ch.isdigit())
-    if not digits:
+    e164 = normalise_phone(branch.phone)
+    if not e164:
         return branch.phone, None
-    return branch.phone, f"https://wa.me/{digits}"
+    shown = phonenumbers.format_number(
+        phonenumbers.parse(e164), phonenumbers.PhoneNumberFormat.INTERNATIONAL
+    )
+    return shown, f"https://wa.me/{e164.lstrip('+')}"
 
 
 async def build_menu_document(

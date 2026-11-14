@@ -54,8 +54,13 @@ def upload_object(
     body: bytes,
     content_type: str,
     cache_control: str | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> None:
     """Write `body` to `gs://{bucket}/{key}`.
+
+    *metadata* is stored as the object's custom metadata (`x-goog-meta-*`) and
+    read back with `object_metadata` — how a publisher remembers what it last
+    wrote without a table of its own.
 
     Raises on failure so callers that care (image upload) can surface a 502;
     the read/delete/sign helpers below swallow instead.
@@ -64,7 +69,19 @@ def upload_object(
     blob = client.bucket(bucket).blob(key)
     if cache_control is not None:
         blob.cache_control = cache_control
+    if metadata is not None:
+        blob.metadata = metadata
     blob.upload_from_string(body, content_type=content_type)
+
+
+def object_metadata(*, bucket: str, key: str) -> dict[str, str] | None:
+    """The custom metadata of `gs://{bucket}/{key}` (`{}` when it has none), or
+    None when the object does not exist. Raises on a storage failure, so a caller
+    cannot mistake an outage for "never written"."""
+    blob = _get_client().bucket(bucket).get_blob(key)
+    if blob is None:
+        return None
+    return dict(blob.metadata or {})
 
 
 def object_exists(*, bucket: str, key: str) -> bool:

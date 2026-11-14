@@ -265,6 +265,18 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
             )
         )
 
+    # Each branch's live menu PDF in the public bucket, re-published when the
+    # menu group's products, prices or names change — the object a printed QR
+    # points at. Same lifespan reasons as its neighbours. Production only: a
+    # dev database must never overwrite the shop's live menu, and a maintainer's
+    # ADC can write to that bucket. Elsewhere its heartbeat reads null.
+    if settings.is_production:
+        from app.services.catalog.menu_pdf import publish as menu_pdf_publish
+
+        background.append(
+            spawn_tracked(menu_pdf_publish.run_forever(), name="menu_pdf_publish")
+        )
+
     # The business-day sweeper. Same lifespan reasons as its neighbours —
     # no cron here, an advisory lock so a second copy is harmless. Hourly
     # it closes any trading day that rolled past its cut-off without an

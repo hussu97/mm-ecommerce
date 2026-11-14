@@ -10,7 +10,6 @@ terminal fetches the tree to lay its buttons out; writing needs an admin.
 from __future__ import annotations
 
 import asyncio
-import re
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -31,16 +30,12 @@ from app.schemas.menu_group import (
 from app.services.catalog import menu_group_service
 from app.services.catalog.menu_pdf import (
     build_menu_document,
+    menu_pdf_filename,
     prepare_menu_assets,
     render_menu_pdf,
 )
 
 router = APIRouter()
-
-
-def _pdf_filename(brand: str, lang: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", (brand or "menu").lower()).strip("-") or "menu"
-    return f"{slug}-menu-{lang}.pdf"
 
 
 def _to_response(group) -> MenuGroupResponse:
@@ -116,7 +111,7 @@ async def get_group_pdf(
     document = await build_menu_document(db, group, lang=lang)
     await prepare_menu_assets(document)
     pdf = await asyncio.to_thread(render_menu_pdf, document)
-    filename = _pdf_filename(document.brand_name, lang)
+    filename = menu_pdf_filename(document.brand_name, lang)
     return Response(
         content=pdf,
         media_type="application/pdf",
