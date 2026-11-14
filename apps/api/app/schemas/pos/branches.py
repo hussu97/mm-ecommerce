@@ -2,14 +2,41 @@
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ._base import _TIME_RE, ORMModel, Translations
+
+#: Branch text a till prints or a menu shows. Kept free of invisible format
+#: characters (Unicode category Cf): a phone copied from iOS Contacts or WhatsApp
+#: arrives wrapped in bidi embedding marks (U+202A … U+202C), invisible in the
+#: admin, and on the Sharjah till the receipt encoder aborted the whole app on
+#: them — every reprint crashed (2026-11-14).
+_PRINTED_TEXT_FIELDS = (
+    "name",
+    "name_localized",
+    "phone",
+    "address",
+    "address_localized",
+    "city",
+    "city_localized",
+    "receipt_header",
+    "receipt_footer",
+    "tax_number",
+    "tax_registration_name",
+)
+
+
+def strip_invisible(value: object) -> object:
+    """`value` without Unicode format characters, trimmed; non-strings untouched."""
+    if not isinstance(value, str):
+        return value
+    return "".join(ch for ch in value if unicodedata.category(ch) != "Cf").strip()
 
 
 class BranchCreate(BaseModel):
@@ -58,6 +85,11 @@ class BranchCreate(BaseModel):
     is_active: bool = True
     display_order: int = 0
 
+    @field_validator(*_PRINTED_TEXT_FIELDS, mode="before")
+    @classmethod
+    def _no_invisible_characters(cls, value: object) -> object:
+        return strip_invisible(value)
+
 
 class BranchUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
@@ -96,6 +128,11 @@ class BranchUpdate(BaseModel):
     reservation_times: dict | None = None
     is_active: bool | None = None
     display_order: int | None = None
+
+    @field_validator(*_PRINTED_TEXT_FIELDS, mode="before")
+    @classmethod
+    def _no_invisible_characters(cls, value: object) -> object:
+        return strip_invisible(value)
 
 
 class BranchResponse(ORMModel):
