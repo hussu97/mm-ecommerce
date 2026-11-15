@@ -1124,7 +1124,7 @@ everyone). It is free and needs no Cloudflare plan.
 | Where | Key | Notes |
 |-------|-----|-------|
 | GitHub secret, `mm-ecommerce` | `FIREBASE_PROJECT_ID` | `melting-moments-cakes`. Not secret, but it is the audience check. `gh secret set FIREBASE_PROJECT_ID --repo hussu97/mm-ecommerce` |
-| Vercel env, storefront | `NEXT_PUBLIC_FIREBASE_API_KEY` | `AIzaSyC38DuQCuPjs-jK04f1YQF4wQdoCBAvPxE`. Public by design; restricted by HTTP referrer and to the AE SMS region. |
+| Vercel env, storefront | `NEXT_PUBLIC_FIREBASE_API_KEY` | `AIzaSyC38DuQCuPjs-jK04f1YQF4wQdoCBAvPxE`. Public by design; restricted by HTTP referrer and to an SMS region allowlist: AE, SA, OM, BH, KW, QA, IN, PK, AU, GB, US (Firebase console → Authentication → Settings → SMS region policy). |
 | Vercel env, storefront | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `melting-moments-cakes.firebaseapp.com` |
 | Vercel env, storefront | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | `melting-moments-cakes` |
 | Vercel env, storefront | `NEXT_PUBLIC_FIREBASE_APP_ID` | `1:136865397988:web:9012ddfa2418fb8ac280f1` |

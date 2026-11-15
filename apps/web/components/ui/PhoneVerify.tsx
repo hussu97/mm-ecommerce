@@ -36,9 +36,10 @@ import { Icon } from '@/components/ui/Icon';
  * number was already proved, so the exposure was one impatient customer wide.
  *
  * They are honest-user guards, not a security control. Anything driving Google's
- * REST endpoint with the public API key skips this file entirely — the AE-only
- * SMS region policy, App Check and reCAPTCHA SMS Defense are the parts Google
- * enforces, and they are configured in a console rather than here.
+ * REST endpoint with the public API key skips this file entirely — the SMS
+ * region allowlist (GCC, IN, PK, AU, GB, US), App Check and reCAPTCHA SMS
+ * Defense are the parts Google enforces, and they are configured in a console
+ * rather than here.
  */
 
 type Step = 'idle' | 'sending' | 'code' | 'verifying' | 'done';

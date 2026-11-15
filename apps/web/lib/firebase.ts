@@ -8,10 +8,10 @@
  *
  * The API key here is public by design: it identifies the project, it is not a
  * credential, and it is restricted server-side — HTTP referrers on the key
- * itself, an AE-only SMS region policy, and an authorized-domain list on the
- * Identity Platform config. What actually protects the flow is that the server
- * verifies the resulting token's signature and audience; the browser is not
- * trusted with anything.
+ * itself, an SMS region allowlist (GCC, IN, PK, AU, GB, US), and an
+ * authorized-domain list on the Identity Platform config. What actually
+ * protects the flow is that the server verifies the resulting token's
+ * signature and audience; the browser is not trusted with anything.
  */
 
 const CONFIG = {
