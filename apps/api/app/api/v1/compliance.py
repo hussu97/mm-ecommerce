@@ -24,7 +24,7 @@ async def expiring_documents(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_superadmin()),
 ):
-    """Active employees' current visa / labour card / OHC and active legal
-    entities' current trade licence that expire within *within_days* days (or
-    already have), soonest first."""
+    """Active employees' current tracked documents and active legal entities'
+    current trade licence and tracked registration documents that expire within *within_days* days (or already have),
+    soonest first."""
     return await expiry_service.expiring_documents(db, within_days=within_days)

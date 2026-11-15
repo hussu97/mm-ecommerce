@@ -281,7 +281,8 @@ class ExpiringDocument(BaseModel):
     owner_kind: Literal["employee", "legal_entity"]
     owner_id: UUID
     owner_name: str
-    #: An `EXPIRY_TRACKED_TYPES` value for an employee, `trade_license` for an entity.
+    #: An `EXPIRY_TRACKED_TYPES` value for an employee; for an entity
+    #: `trade_license` or an `ENTITY_EXPIRY_TRACKED_TYPES` value.
     doc_type: str
     doc_label: str
     document_number: str | None

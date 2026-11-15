@@ -182,11 +182,13 @@ api_router.include_router(
 api_router.include_router(branches_router, prefix="/branches", tags=["Branches"])
 api_router.include_router(taxes_router, prefix="/taxes", tags=["Taxes"])
 api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Taxes"])
-api_router.include_router(
-    legal_entities_router, prefix="/legal-entities", tags=["Legal Entities"]
-)
+# The paperwork router first: its static paths (`/document-types`…) must match
+# before the CRUD router's `/{id}`.
 api_router.include_router(
     legal_entity_documents_router, prefix="/legal-entities", tags=["Legal Entities"]
+)
+api_router.include_router(
+    legal_entities_router, prefix="/legal-entities", tags=["Legal Entities"]
 )
 # Super-admin only (staff identity documents + the expiring-paperwork warning).
 api_router.include_router(employees_router, prefix="/employees", tags=["Employees"])

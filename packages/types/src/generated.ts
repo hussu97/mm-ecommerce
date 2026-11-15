@@ -2755,9 +2755,9 @@ export interface paths {
         };
         /**
          * Expiring Documents
-         * @description Active employees' current visa / labour card / OHC and active legal
-         *     entities' current trade licence that expire within *within_days* days (or
-         *     already have), soonest first.
+         * @description Active employees' current tracked documents and active legal entities'
+         *     current trade licence and tracked registration documents that expire within *within_days* days (or already have),
+         *     soonest first.
          */
         get: operations["expiring_documents_api_v1_compliance_expiring_documents_get"];
         put?: never;
@@ -5861,6 +5861,213 @@ export interface paths {
         put?: never;
         /** Create Item */
         post: operations["create_item_api_v1_legal_entities_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/document-overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Overview
+         * @description Each entity's current document per type — the list's chips. An
+         *     entity with nothing on file is absent.
+         */
+        get: operations["document_overview_api_v1_legal_entities_document_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/document-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Types
+         * @description The registration document types besides the trade licence and VAT
+         *     certificate, their labels and fields, in the console's order.
+         */
+        get: operations["document_types_api_v1_legal_entities_document_types_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/file-categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File Categories
+         * @description The types already given to other entity files, most used first.
+         */
+        get: operations["file_categories_api_v1_legal_entities_file_categories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Document
+         * @description Record a document cycle. A renewal adds a new one; earlier ones are kept.
+         */
+        post: operations["create_document_api_v1_legal_entities__entity_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Document
+         * @description Remove a cycle recorded by mistake, and its scan.
+         */
+        delete: operations["delete_document_api_v1_legal_entities__entity_id__documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Document */
+        patch: operations["update_document_api_v1_legal_entities__entity_id__documents__document_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/documents/{document_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document File */
+        get: operations["get_document_file_api_v1_legal_entities__entity_id__documents__document_id__file_get"];
+        put?: never;
+        /**
+         * Upload Document File
+         * @description Attach this cycle's scan. The body is the raw file bytes (JPEG, PNG,
+         *     WebP or PDF, max 10 MB); the type comes from the request header.
+         */
+        post: operations["upload_document_file_api_v1_legal_entities__entity_id__documents__document_id__file_post"];
+        /** Delete Document File */
+        delete: operations["delete_document_file_api_v1_legal_entities__entity_id__documents__document_id__file_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create File
+         * @description Record another paper kept against the entity; its file is uploaded next,
+         *     to `/{entity_id}/files/{file_id}/file`.
+         */
+        post: operations["create_file_api_v1_legal_entities__entity_id__files_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete File */
+        delete: operations["delete_file_api_v1_legal_entities__entity_id__files__file_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update File */
+        patch: operations["update_file_api_v1_legal_entities__entity_id__files__file_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/files/{file_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get File */
+        get: operations["get_file_api_v1_legal_entities__entity_id__files__file_id__file_get"];
+        put?: never;
+        /**
+         * Upload File
+         * @description Attach or replace the file. The body is the raw bytes (JPEG, PNG, WebP
+         *     or PDF, max 10 MB); the type comes from the request header.
+         */
+        post: operations["upload_file_api_v1_legal_entities__entity_id__files__file_id__file_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{entity_id}/paperwork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Paperwork
+         * @description Every cycle of every document, and the other files.
+         */
+        get: operations["get_paperwork_api_v1_legal_entities__entity_id__paperwork_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -17469,6 +17676,138 @@ export interface components {
             /** Vat Tin */
             vat_tin?: string | null;
         };
+        /** LegalEntityDocumentCreate */
+        LegalEntityDocumentCreate: {
+            /**
+             * Details
+             * @default {}
+             */
+            details: {
+                [key: string]: string | null;
+            };
+            /**
+             * Doc Type
+             * @enum {string}
+             */
+            doc_type: "establishment_card" | "mohre_card" | "chamber_certificate" | "corporate_tax" | "moa" | "tenancy_contract" | "food_permit" | "civil_defence" | "signage_permit" | "pest_control";
+            /** Document Number */
+            document_number?: string | null;
+            /** Expiry Date */
+            expiry_date?: string | null;
+            /** Issue Date */
+            issue_date?: string | null;
+            /** Issuing Authority */
+            issuing_authority?: string | null;
+            /** Notes */
+            notes?: string | null;
+        };
+        /** LegalEntityDocumentResponse */
+        LegalEntityDocumentResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Details */
+            details: {
+                [key: string]: string;
+            };
+            /** Doc Type */
+            doc_type: string;
+            /** Document Number */
+            document_number: string | null;
+            /** Expiry Date */
+            expiry_date: string | null;
+            /** File Content Type */
+            file_content_type: string | null;
+            /** Has File */
+            has_file: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Is Current
+             * @default false
+             */
+            is_current: boolean;
+            /** Issue Date */
+            issue_date: string | null;
+            /** Issuing Authority */
+            issuing_authority: string | null;
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
+            /** Notes */
+            notes: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** LegalEntityDocumentSummary */
+        LegalEntityDocumentSummary: {
+            /** Doc Type */
+            doc_type: string;
+            /** Document Number */
+            document_number: string | null;
+            /** Expiry Date */
+            expiry_date: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** LegalEntityDocumentTypeSpec */
+        LegalEntityDocumentTypeSpec: {
+            /** Authorities */
+            authorities: string[];
+            /** Authority Label */
+            authority_label: string;
+            /** Details */
+            details: {
+                [key: string]: string;
+            };
+            /** Doc Type */
+            doc_type: string;
+            /** Expires */
+            expires: boolean;
+            /** Expiry Tracked */
+            expiry_tracked: boolean;
+            /** Group */
+            group: string;
+            /** Hint */
+            hint: string;
+            /** Label */
+            label: string;
+            /** Number Label */
+            number_label: string;
+        };
+        /**
+         * LegalEntityDocumentUpdate
+         * @description `doc_type` is fixed once created; the per-type checks run in the service.
+         */
+        LegalEntityDocumentUpdate: {
+            /** Details */
+            details?: {
+                [key: string]: string | null;
+            } | null;
+            /** Document Number */
+            document_number?: string | null;
+            /** Expiry Date */
+            expiry_date?: string | null;
+            /** Issue Date */
+            issue_date?: string | null;
+            /** Issuing Authority */
+            issuing_authority?: string | null;
+            /** Notes */
+            notes?: string | null;
+        };
         /**
          * LegalEntityDocumentUrl
          * @description A legal-entity document in the private bucket, signed twice: `url` shows
@@ -17484,6 +17823,101 @@ export interface components {
             filename: string;
             /** Url */
             url: string;
+        };
+        /**
+         * LegalEntityFileCreate
+         * @description Same fields and trimming as an employee's other file.
+         */
+        LegalEntityFileCreate: {
+            /** Category */
+            category?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Original Filename */
+            original_filename?: string | null;
+            /** Title */
+            title: string;
+        };
+        /** LegalEntityFileResponse */
+        LegalEntityFileResponse: {
+            /** Category */
+            category: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** File Content Type */
+            file_content_type: string | null;
+            /** Has File */
+            has_file: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
+            /** Notes */
+            notes: string | null;
+            /** Original Filename */
+            original_filename: string | null;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * LegalEntityFileUpdate
+         * @description Same fields and trimming as an employee's other file.
+         */
+        LegalEntityFileUpdate: {
+            /** Category */
+            category?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Original Filename */
+            original_filename?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * LegalEntityPaperwork
+         * @description Everything on file for one entity besides its licence and VAT certificate.
+         */
+        LegalEntityPaperwork: {
+            /**
+             * Documents
+             * @default []
+             */
+            documents: components["schemas"]["LegalEntityDocumentResponse"][];
+            /**
+             * Files
+             * @default []
+             */
+            files: components["schemas"]["LegalEntityFileResponse"][];
+        };
+        /**
+         * LegalEntityPaperworkOverview
+         * @description The current cycle per type for one entity — the list's chips.
+         */
+        LegalEntityPaperworkOverview: {
+            /**
+             * Current Documents
+             * @default []
+             */
+            current_documents: components["schemas"]["LegalEntityDocumentSummary"][];
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
         };
         /** LegalEntityResponse */
         LegalEntityResponse: {
@@ -37485,6 +37919,459 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LegalEntityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_overview_api_v1_legal_entities_document_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityPaperworkOverview"][];
+                };
+            };
+        };
+    };
+    document_types_api_v1_legal_entities_document_types_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentTypeSpec"][];
+                };
+            };
+        };
+    };
+    file_categories_api_v1_legal_entities_file_categories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
+    create_document_api_v1_legal_entities__entity_id__documents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegalEntityDocumentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_document_api_v1_legal_entities__entity_id__documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_document_api_v1_legal_entities__entity_id__documents__document_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegalEntityDocumentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_document_file_api_v1_legal_entities__entity_id__documents__document_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_document_file_api_v1_legal_entities__entity_id__documents__document_id__file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_document_file_api_v1_legal_entities__entity_id__documents__document_id__file_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_file_api_v1_legal_entities__entity_id__files_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegalEntityFileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityFileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_file_api_v1_legal_entities__entity_id__files__file_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_file_api_v1_legal_entities__entity_id__files__file_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegalEntityFileUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityFileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_file_api_v1_legal_entities__entity_id__files__file_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityDocumentUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_file_api_v1_legal_entities__entity_id__files__file_id__file_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityFileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_paperwork_api_v1_legal_entities__entity_id__paperwork_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityPaperwork"];
                 };
             };
             /** @description Validation Error */

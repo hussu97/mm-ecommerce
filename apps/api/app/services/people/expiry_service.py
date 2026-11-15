@@ -7,7 +7,11 @@ Two sources, one list:
   news);
 - each **active** legal entity's current trade licence, which
   `legal_entity_documents.sync_current_license` mirrors onto
-  `legal_entities.trade_license_expiry`.
+  `legal_entities.trade_license_expiry`;
+- each active legal entity's current cycle of every
+  `ENTITY_EXPIRY_TRACKED_TYPES` document — establishment card, labour company
+  card, chamber membership, and its shop's tenancy, food permit, Civil
+  Defence certificate, signage permit and pest-control contract.
 
 A document already expired stays on the list (negative `days_left`) until a
 renewal is entered — that is exactly when it most needs uploading. "Today" is
@@ -28,7 +32,12 @@ from app.models.employee import (
     Employee,
     EmployeeDocument,
 )
-from app.models.legal_entity import LegalEntity
+from app.models.legal_entity import (
+    ENTITY_EXPIRY_TRACKED_TYPES,
+    LEGAL_ENTITY_DOCUMENT_SPECS,
+    LegalEntity,
+    LegalEntityDocument,
+)
 from app.schemas.employee import ExpiringDocument, ExpiringDocumentsResponse
 
 #: The owner's lead time: warn 15 days before a document lapses.
@@ -113,6 +122,50 @@ async def expiring_documents(
                 document_number=row.trade_license_number,
                 expiry_date=row.trade_license_expiry,
                 days_left=(row.trade_license_expiry - today).days,
+            )
+        )
+
+    # The current cycle per (entity, type), as for employees.
+    current_entity_docs = (
+        select(
+            LegalEntityDocument.legal_entity_id,
+            LegalEntityDocument.doc_type,
+            LegalEntityDocument.document_number,
+            LegalEntityDocument.expiry_date,
+        )
+        .join(LegalEntity, LegalEntity.id == LegalEntityDocument.legal_entity_id)
+        .where(
+            LegalEntity.is_active.is_(True),
+            LegalEntityDocument.doc_type.in_(ENTITY_EXPIRY_TRACKED_TYPES),
+            LegalEntityDocument.expiry_date.is_not(None),
+        )
+        .distinct(
+            LegalEntityDocument.legal_entity_id,
+            LegalEntityDocument.doc_type,
+        )
+        .order_by(
+            LegalEntityDocument.legal_entity_id,
+            LegalEntityDocument.doc_type,
+            LegalEntityDocument.expiry_date.desc(),
+        )
+        .subquery()
+    )
+    entity_docs = await db.execute(
+        select(current_entity_docs, LegalEntity.legal_name)
+        .join(LegalEntity, LegalEntity.id == current_entity_docs.c.legal_entity_id)
+        .where(current_entity_docs.c.expiry_date <= cutoff)
+    )
+    for row in entity_docs:
+        items.append(
+            ExpiringDocument(
+                owner_kind="legal_entity",
+                owner_id=row.legal_entity_id,
+                owner_name=row.legal_name,
+                doc_type=row.doc_type,
+                doc_label=LEGAL_ENTITY_DOCUMENT_SPECS[row.doc_type]["label"],
+                document_number=row.document_number,
+                expiry_date=row.expiry_date,
+                days_left=(row.expiry_date - today).days,
             )
         )
 
