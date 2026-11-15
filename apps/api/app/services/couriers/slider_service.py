@@ -376,6 +376,118 @@ def _fare(payload: dict[str, Any], vehicle: str) -> tuple[Decimal | None, float 
     return cost, distance_km
 
 
+def _record_fare(
+    delivery: OrderDelivery,
+    *,
+    cost: Decimal,
+    vehicle: str,
+    requested_vehicle: str,
+    distance_km: float | None,
+    distance_is_estimated: bool,
+) -> None:
+    """Write Slider's billed fare onto the row — the one shape every path uses.
+
+    The create reply and the delivery-details lookup (`fill_missing_fare`) both
+    carry the run as Slider will bill it; writing it in one place keeps the
+    margin report reading the same columns whichever of them supplied it.
+    """
+    delivery.quoted_cost = cost
+    delivery.quoted_currency = "AED"
+    if distance_km is not None:
+        delivery.quoted_distance_m = int(distance_km * 1000)
+    delivery.quoted_at = datetime.now(timezone.utc)
+    delivery.cost_total = cost
+    delivery.price_breakdown = {
+        "source": "slider_fare",
+        "vehicle": vehicle,
+        # What the zone pinned and the checkout quoted, kept beside what was
+        # actually booked so a bike→car substitution is legible after the
+        # fact — the charge above is the car's, this says a bike was asked for.
+        "requested_vehicle": requested_vehicle,
+        "distance_km": round(distance_km, 2) if distance_km is not None else None,
+        "total": str(cost),
+        "currency": "AED",
+        "is_estimate": False,
+        # Whether the distance beside it is Slider's measured road figure or
+        # our straight line times the fitted factor. The fare is theirs
+        # either way; only this number can be ours.
+        "distance_is_estimated": distance_is_estimated,
+    }
+
+
+#: How long a webhook waits on Slider for the fare. Short and single-shot: the
+#: push is holding a request open, and a miss is retried by the next push.
+_FARE_LOOKUP_TIMEOUT_SECONDS = 5.0
+
+
+def _take_fare_from(delivery: OrderDelivery, details: dict[str, Any]) -> bool:
+    """Record the fare off a delivery-details reply, if it carries one.
+
+    The vehicle is Slider's (`vehicle_type`), not ours: a bike asked for and a car
+    sent is billed as a car, and the row's provider follows it exactly as a
+    create reply's would (`dispatch_order`). Returns whether a fare was recorded.
+    """
+    cost = aed(details.get("fare") or details.get("total"))
+    if cost is None:
+        return False
+    requested = vehicle_for_provider(delivery.provider) or CAR
+    assigned = str(details.get("vehicle_type") or "").strip().lower() or requested
+    km = details.get("distance_km", details.get("distance"))
+    try:
+        billed_km = float(km) if km is not None else None
+    except (TypeError, ValueError):
+        billed_km = None
+    _record_fare(
+        delivery,
+        cost=cost,
+        vehicle=assigned,
+        requested_vehicle=requested,
+        distance_km=billed_km,
+        distance_is_estimated=False,
+    )
+    delivery.provider = provider_for_vehicle(assigned)
+    return True
+
+
+async def fill_missing_fare(delivery: OrderDelivery) -> bool:
+    """Fetch Slider's billed fare for a booked run that has none recorded.
+
+    A booking confirmed by push (`_confirm_booking`, after a create that timed
+    out) never saw the create reply that carries the fare, so the row went out
+    with no courier cost — MM-20261115-003, a AED 38.86 car run recorded as a
+    free bike. Slider's delivery-details endpoint carries the same figure, so
+    once the run is under way it is asked for. A no-op when a fare is already
+    on the row; a failure is logged and left for the next push to retry.
+    """
+    if delivery.cost_total is not None or not delivery.courier_order_id:
+        return False
+    if not is_enabled():
+        return False
+    try:
+        details = await provider.get_delivery(
+            str(delivery.courier_order_id),
+            timeout=_FARE_LOOKUP_TIMEOUT_SECONDS,
+            attempts=1,
+        )
+    except Exception as exc:  # noqa: BLE001 — a missing fare must not stop a push
+        logger.warning(
+            "Could not read the fare for Slider delivery %s: %s",
+            delivery.courier_order_id,
+            exc,
+        )
+        return False
+    if not _take_fare_from(delivery, details):
+        logger.warning("Slider delivery %s carried no fare", delivery.courier_order_id)
+        return False
+    logger.info(
+        "Recorded Slider fare AED %s (%s) for delivery %s",
+        delivery.cost_total,
+        (delivery.price_breakdown or {}).get("vehicle"),
+        delivery.courier_order_id,
+    )
+    return True
+
+
 async def _quote(
     pickup: PickupPoint, latitude: float, longitude: float, address: str | None
 ) -> dict[str, Any]:
@@ -792,27 +904,14 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         billed_km = None
     recorded_km = billed_km or distance_km
     if cost is not None:
-        delivery.quoted_cost = cost
-        delivery.quoted_currency = "AED"
-        delivery.quoted_distance_m = int(recorded_km * 1000)
-        delivery.quoted_at = datetime.now(timezone.utc)
-        delivery.cost_total = cost
-        delivery.price_breakdown = {
-            "source": "slider_fare",
-            "vehicle": assigned,
-            # What the zone pinned and the checkout quoted, kept beside what was
-            # actually booked so a bike→car substitution is legible after the
-            # fact — the charge above is the car's, this says a bike was asked for.
-            "requested_vehicle": vehicle,
-            "distance_km": round(recorded_km, 2),
-            "total": str(cost),
-            "currency": "AED",
-            "is_estimate": False,
-            # Whether the distance beside it is Slider's measured road figure or
-            # our straight line times the fitted factor. The fare is theirs
-            # either way; only this number can be ours.
-            "distance_is_estimated": not (billed_km or bike_km or car_km),
-        }
+        _record_fare(
+            delivery,
+            cost=cost,
+            vehicle=assigned,
+            requested_vehicle=vehicle,
+            distance_km=recorded_km,
+            distance_is_estimated=not (billed_km or bike_km or car_km),
+        )
         if assigned != vehicle:
             logger.info(
                 "Slider assigned %s for %s where %s was asked for",
@@ -930,6 +1029,10 @@ _ORDER_STATUS_FOR: dict[str, OrderStatusEnum] = {
     SliderStatusEnum.DELIVERED.value: OrderStatusEnum.DELIVERED,
     SliderStatusEnum.RETURN_TRIP_STARTED.value: OrderStatusEnum.UNDELIVERED,
 }
+
+#: Order states by which a Slider run is priced and its fare must be on the row
+#: (`fill_missing_fare`): the rider has the parcel, so the fare is final.
+_FARE_DUE = frozenset({OrderStatusEnum.OUT_FOR_DELIVERY, OrderStatusEnum.DELIVERED})
 
 
 def _reference(payload: dict[str, Any]) -> str:
@@ -1262,6 +1365,11 @@ async def apply_webhook(
 
     if awaited and delivery.courier_order_id and status not in SLIDER_FAILED_STATUSES:
         await _confirm_booking(db, delivery, at=updated_at)
+    # Out for delivery (or past it) with no fare on the row: ask Slider for it.
+    # Before `_advance_order`, so the transition is labelled with the vehicle
+    # that actually carried it. Every later push retries until one lands.
+    if _ORDER_STATUS_FOR.get(delivery.courier_status or "") in _FARE_DUE:
+        await fill_missing_fare(delivery)
     await _advance_order(db, delivery, at=updated_at)
     return delivery
 
@@ -1275,8 +1383,9 @@ async def _confirm_booking(
     already holds their id and tracking link (set above), so this clears the
     hold and stamps the order `packed` — before `_advance_order`, which moves a
     packed order on to out-for-delivery and would skip one that never got there.
-    The fare stays empty: a push carries none, and a figure on this row is only
-    ever one of Slider's.
+    The fare stays empty here — a push carries none — and is fetched from
+    Slider's delivery details once the run is out for delivery
+    (`fill_missing_fare`), so a figure on this row is still only ever theirs.
     """
     from app.services.orders import order_service
 
@@ -1325,6 +1434,10 @@ async def refresh(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery | None
     except SliderError as exc:
         delivery.last_error = f"Could not read the delivery from Slider: {exc}"
         return delivery
+
+    # The details carry the fare too; a row booked without one takes it here.
+    if delivery.cost_total is None:
+        _take_fare_from(delivery, details)
 
     # Fed through the real handler rather than written beside it. Ending a
     # booking here is the order's transition, the customer's email, the refund
