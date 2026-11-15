@@ -125,6 +125,9 @@ def test_thirty_five_road_km_is_not_thirty_five_straight_line(monkeypatch):
 #: and shared by both tiers. Read as a mapping with a `fare` key — which is what
 #: this fixture used to assert — every tier prices as nothing and every Slider
 #: zone silently falls back to the courier it was meant to replace.
+#: The real lookup, kept before `inbound` stubs it for the tests that don't care.
+_REAL_FILL_MISSING_FARE = slider_service.fill_missing_fare
+
 FARE = {
     "distance_km": 12.4,
     "duration_minutes": 19,
@@ -1166,6 +1169,10 @@ def inbound(monkeypatch):
     async def advance(db, delivery, at=None):
         moved.append(delivery.courier_status)
 
+    async def no_fare(delivery):
+        return False
+
+    monkeypatch.setattr(slider_service, "fill_missing_fare", no_fare)
     monkeypatch.setattr(slider_service.driver_assignment, "record", record)
     monkeypatch.setattr(
         slider_service.driver_assignment, "record_position", record_position
@@ -1257,6 +1264,130 @@ async def test_confirming_clears_the_hold_and_stamps_the_order_packed(monkeypatc
     assert delivery.last_error is None and delivery.dispatch_attempts == 0
     assert delivery.booked_at is not None
     assert stamped == ["slider booking confirmed"]
+
+
+@pytest.fixture
+def details(monkeypatch):
+    """Slider's delivery-details endpoint, stubbed; records the lookups."""
+    calls: list[tuple[str, dict]] = []
+    reply: dict = {
+        "order_number": 48404549,
+        "status": "in_transit",
+        "vehicle_type": "car",
+        "fare": 38.86,
+        "distance": 35.43,
+    }
+
+    async def get_delivery(order_number, **kwargs):
+        calls.append((order_number, kwargs))
+        if isinstance(reply.get("raise"), Exception):
+            raise reply["raise"]
+        return reply
+
+    monkeypatch.setattr(slider_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(slider_service.provider, "get_delivery", get_delivery)
+    return SimpleNamespace(calls=calls, reply=reply)
+
+
+@pytest.mark.asyncio
+async def test_a_booking_confirmed_by_push_takes_its_fare_once_out_for_delivery(
+    inbound, details, monkeypatch
+):
+    """MM-20261115-003: the create timed out, the first push confirmed it, and
+    no fare ever reached the row. Out for delivery, Slider is asked for it — and
+    the car they sent, not the bike the zone asked for, is what is recorded."""
+    monkeypatch.setattr(slider_service, "fill_missing_fare", _REAL_FILL_MISSING_FARE)
+    delivery = _row("slider_bike")
+    delivery.courier_order_id = "48404549"
+    delivery.courier_status = "at_pickup"
+
+    await slider_service.apply_webhook(
+        None, {"order_number": 48404549, "status": "in_transit"}, delivery
+    )
+
+    assert details.calls == [("48404549", {"timeout": 5.0, "attempts": 1})]
+    assert delivery.cost_total == Decimal("38.86")
+    assert delivery.quoted_cost == Decimal("38.86")
+    assert delivery.quoted_distance_m == 35430
+    assert delivery.provider == "slider_car"
+    assert delivery.price_breakdown["vehicle"] == "car"
+    assert delivery.price_breakdown["requested_vehicle"] == "bike"
+    assert delivery.price_breakdown["is_estimate"] is False
+    assert inbound == ["in_transit"]
+
+
+@pytest.mark.asyncio
+async def test_a_fare_already_on_the_row_is_never_asked_for_again(
+    inbound, details, monkeypatch
+):
+    monkeypatch.setattr(slider_service, "fill_missing_fare", _REAL_FILL_MISSING_FARE)
+    delivery = _row("slider_bike")
+    delivery.courier_order_id = "1"
+    delivery.courier_status = "at_pickup"
+    delivery.cost_total = Decimal("12.00")
+
+    await slider_service.apply_webhook(
+        None, {"order_number": 1, "status": "in_transit"}, delivery
+    )
+
+    assert details.calls == []
+    assert delivery.cost_total == Decimal("12.00")
+    assert delivery.provider == "slider_bike"
+
+
+@pytest.mark.asyncio
+async def test_the_fare_is_not_asked_for_before_the_rider_has_the_parcel(
+    inbound, details, monkeypatch
+):
+    monkeypatch.setattr(slider_service, "fill_missing_fare", _REAL_FILL_MISSING_FARE)
+    delivery = _row("slider_bike")
+    delivery.courier_order_id = "1"
+    delivery.courier_status = "rider_assigned"
+
+    await slider_service.apply_webhook(
+        None, {"order_number": 1, "status": "heading_to_pickup"}, delivery
+    )
+
+    assert details.calls == []
+    assert delivery.cost_total is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fare_lookup_does_not_stop_the_push_and_the_next_retries(
+    inbound, details, monkeypatch
+):
+    from app.services.providers.slider_provider import SliderError
+
+    monkeypatch.setattr(slider_service, "fill_missing_fare", _REAL_FILL_MISSING_FARE)
+    delivery = _row("slider_bike")
+    delivery.courier_order_id = "1"
+    delivery.courier_status = "at_pickup"
+    details.reply["raise"] = SliderError("Slider is unreachable: ReadTimeout")
+
+    await slider_service.apply_webhook(
+        None, {"order_number": 1, "status": "in_transit"}, delivery
+    )
+    assert delivery.cost_total is None
+    assert delivery.courier_status == "in_transit"
+    assert inbound == ["in_transit"]
+
+    del details.reply["raise"]
+    await slider_service.apply_webhook(
+        None, {"order_number": 1, "status": "delivered"}, delivery
+    )
+    assert len(details.calls) == 2
+    assert delivery.cost_total == Decimal("38.86")
+
+
+@pytest.mark.asyncio
+async def test_a_details_reply_with_no_fare_records_nothing(details):
+    details.reply.pop("fare")
+    delivery = _row("slider_bike")
+    delivery.courier_order_id = "1"
+
+    assert await slider_service.fill_missing_fare(delivery) is False
+    assert delivery.cost_total is None
+    assert delivery.provider == "slider_bike"
 
 
 @pytest.mark.asyncio

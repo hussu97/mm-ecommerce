@@ -361,13 +361,30 @@ class SliderClient:
             or {}
         )
 
-    async def get_delivery(self, order_number: str) -> dict[str, Any]:
-        """GET /deliveries/{order_number} — status, rider, tracking link.
+    async def get_delivery(
+        self,
+        order_number: str,
+        *,
+        timeout: float | None = None,
+        attempts: int = 2,
+    ) -> dict[str, Any]:
+        """GET /deliveries/{order_number} — status, rider, tracking link, fare.
 
         Keyed by **their** `order_number` from the create response, not by ours
-        and not by an `id` field, which they do not return.
+        and not by an `id` field, which they do not return. Carries `fare`,
+        `vehicle_type` and `distance` — the billed run, the same figures a create
+        reply does. `timeout`/`attempts` let a caller inside a webhook keep the
+        wait short rather than hold the push for the full retry ladder.
         """
-        return await self._call("GET", f"/deliveries/{order_number}") or {}
+        return (
+            await self._call(
+                "GET",
+                f"/deliveries/{order_number}",
+                timeout=timeout,
+                attempts=attempts,
+            )
+            or {}
+        )
 
     async def cancel_delivery(self, order_number: str) -> dict[str, Any]:
         """DELETE /deliveries/{order_number} — before the parcel is collected."""
