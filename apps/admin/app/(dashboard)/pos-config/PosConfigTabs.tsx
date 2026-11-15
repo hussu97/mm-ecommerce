@@ -20,7 +20,6 @@ import { cn } from '@/lib/utils';
 const TABS = [
   { href: '/pos-config/payment-methods', label: 'Payment Methods' },
   { href: '/pos-config/taxes', label: 'Taxes' },
-  { href: '/pos-config/legal-entities', label: 'Legal Entities' },
   { href: '/pos-config/charges', label: 'Charges' },
   { href: '/pos-config/reasons', label: 'Reasons' },
   { href: '/pos-config/custom-orders', label: 'Custom Orders' },

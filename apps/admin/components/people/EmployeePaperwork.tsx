@@ -10,20 +10,26 @@ import { EXPIRY_WARNING_DAYS } from './ExpiringDocuments';
 /**
  * The pieces of the employee page that show paperwork: a status strip with
  * one tile per document type (a missing type's tile is how it is added), a
- * card per document on file, and the list of other files.
+ * card per document on file, and the list of other files. The legal entity
+ * page uses the same pieces for its documents, so the two read as one system.
  *
  * One status vocabulary throughout, the same thresholds as the expiry popup:
  * expired, due (inside the 15-day warning), soon (within 60 days), valid, or
- * missing.
+ * missing. A document issued once (an MoA, a Corporate Tax certificate) has
+ * no expiry and is simply valid while on file.
  */
 
 export type PaperTone = 'expired' | 'due' | 'soon' | 'ok' | 'missing';
 
-export function paperStatus(expiry: string | null | undefined): {
+export function paperStatus(
+  expiry: string | null | undefined,
+  /** On file without an expiry date (issued once). */
+  onFile = false,
+): {
   tone: PaperTone;
   label: string;
 } {
-  if (!expiry) return { tone: 'missing', label: 'Not on file' };
+  if (!expiry) return onFile ? { tone: 'ok', label: 'On file · no expiry' } : { tone: 'missing', label: 'Not on file' };
   const days = daysUntil(expiry);
   if (days < 0)
     return {
@@ -155,13 +161,26 @@ const SHORT_LABEL: Record<string, string> = {
   ohc: 'Health',
   medical_insurance: 'Insurance',
   wps_card: 'WPS',
+  // A legal entity's documents (the entities list).
+  trade_license: 'Licence',
+  vat_certificate: 'VAT',
+  establishment_card: 'Est. card',
+  mohre_card: 'Labour',
+  chamber_certificate: 'Chamber',
+  corporate_tax: 'CT',
+  moa: 'MoA',
+  tenancy_contract: 'Tenancy',
+  food_permit: 'Food permit',
+  civil_defence: 'Civil Defence',
+  signage_permit: 'Signage',
+  pest_control: 'Pest control',
 };
 
 /** Most urgent first — the order a tone sorts and outranks another in. */
 const TONE_RANK: Record<PaperTone, number> = { expired: 0, due: 1, soon: 2, missing: 3, ok: 4 };
 
 export type PaperItem = {
-  spec: EmployeeDocumentTypeSpec;
+  spec: { doc_type: string; label: string };
   short: string;
   expiry?: string;
   tone: PaperTone;
@@ -188,12 +207,12 @@ export type PaperSummary = {
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 export function summarisePaperwork(
-  current: Record<string, { expiry_date: string } | undefined>,
-  specs: EmployeeDocumentTypeSpec[],
+  current: Record<string, { expiry_date?: string | null } | undefined>,
+  specs: { doc_type: string; label: string }[],
 ): PaperSummary {
   const items: PaperItem[] = specs.map((spec) => {
-    const expiry = current[spec.doc_type]?.expiry_date;
-    const { tone, label } = paperStatus(expiry);
+    const expiry = current[spec.doc_type]?.expiry_date ?? undefined;
+    const { tone, label } = paperStatus(expiry, Boolean(current[spec.doc_type]));
     return { spec, short: SHORT_LABEL[spec.doc_type] ?? spec.label, expiry, tone, label };
   });
   const byExpiry = (a: PaperItem, b: PaperItem) => (a.expiry ?? '').localeCompare(b.expiry ?? '');
@@ -252,9 +271,17 @@ export function initials(name: string): string {
 
 // ─── Status strip ────────────────────────────────────────────────────────────
 
-export type TypeState = {
-  spec: EmployeeDocumentTypeSpec;
-  current?: EmployeeDocument;
+export type TypeState<
+  S extends { doc_type: string; label: string } = EmployeeDocumentTypeSpec,
+  D extends { expiry_date?: string | null } = EmployeeDocument,
+> = {
+  spec: S;
+  current?: D;
+  /** Tile identity when one type has several tiles (a permit per branch);
+   *  defaults to the type. Passed back to `onOpen` / `onAdd`. */
+  key?: string;
+  /** Tile label when it is not the type's ("Tenancy · Sharjah Kitchen"). */
+  label?: string;
 };
 
 /** One tile per document type: on file → jumps to its card; missing → adds it. */
@@ -262,36 +289,43 @@ export function PaperworkSummary({
   states,
   onOpen,
   onAdd,
+  title = 'Paperwork',
+  emptyText = 'Nothing on file yet — start with the passport or visa',
 }: {
-  states: TypeState[];
-  onOpen: (docType: string) => void;
-  onAdd: (docType: string) => void;
+  states: TypeState<{ doc_type: string; label: string }, { expiry_date?: string | null }>[];
+  onOpen: (key: string) => void;
+  onAdd: (key: string) => void;
+  title?: string;
+  emptyText?: string;
 }) {
-  const flagged = states.filter((s) => needsAttention(paperStatus(s.current?.expiry_date).tone)).length;
+  const statusOf = (s: (typeof states)[number]) => paperStatus(s.current?.expiry_date, Boolean(s.current));
+  const flagged = states.filter((s) => needsAttention(statusOf(s).tone)).length;
   const onFile = states.filter((s) => s.current).length;
   return (
     <section className="border border-gray-200 bg-white p-4 font-body" aria-labelledby="paperwork-heading">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="paperwork-heading" className="font-display text-sm tracking-wide text-primary">
-          Paperwork
+          {title}
         </h2>
         <p className={cn('text-xs', onFile === 0 ? 'text-gray-500' : flagged ? 'text-red-700' : 'text-green-700')}>
           {onFile === 0
-            ? 'Nothing on file yet — start with the passport or visa'
+            ? emptyText
             : flagged
               ? `${flagged} need${flagged === 1 ? 's' : ''} attention`
               : 'Everything is on file and valid'}
         </p>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-        {states.map(({ spec, current }) => {
-          const status = paperStatus(current?.expiry_date);
+        {states.map((state) => {
+          const { spec, current } = state;
+          const key = state.key ?? spec.doc_type;
+          const status = statusOf(state);
           return (
             <button
-              key={spec.doc_type}
+              key={key}
               type="button"
-              data-testid={`status-${spec.doc_type}`}
-              onClick={() => (current ? onOpen(spec.doc_type) : onAdd(spec.doc_type))}
+              data-testid={`status-${key}`}
+              onClick={() => (current ? onOpen(key) : onAdd(key))}
               className={cn(
                 'group flex min-h-[60px] flex-col items-start justify-center gap-1 border px-3 py-2 text-left transition-colors hover:border-primary/50',
                 TONE[status.tone].tile,
@@ -299,7 +333,7 @@ export function PaperworkSummary({
             >
               <span className="flex w-full items-start gap-2">
                 <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', TONE[status.tone].dot)} aria-hidden />
-                <span className="text-sm leading-tight text-gray-800">{spec.label}</span>
+                <span className="text-sm leading-tight text-gray-800">{state.label ?? spec.label}</span>
               </span>
               <span
                 className={cn(
@@ -316,7 +350,9 @@ export function PaperworkSummary({
                 {status.tone === 'missing'
                   ? '+ Add'
                   : status.tone === 'ok'
-                    ? `Until ${formatDate(current!.expiry_date)}`
+                    ? current?.expiry_date
+                      ? `Until ${formatDate(current.expiry_date)}`
+                      : 'On file'
                     : status.label}
               </span>
             </button>
@@ -329,7 +365,29 @@ export function PaperworkSummary({
 
 // ─── A document on file ──────────────────────────────────────────────────────
 
-export function DocumentCard({
+/** What a card needs to know about its type — an employee's or an entity's. */
+export type CardSpec = {
+  doc_type: string;
+  label: string;
+  number_label: string;
+  authority_label?: string;
+  details: Record<string, string>;
+};
+
+/** One cycle of a document, whoever it belongs to. */
+export type CardDoc = {
+  id: string;
+  document_number?: string | null;
+  issue_date?: string | null;
+  /** Null for a document issued once. */
+  expiry_date?: string | null;
+  issuing_authority?: string | null;
+  details: Record<string, string>;
+  notes?: string | null;
+  has_file: boolean;
+};
+
+export function DocumentCard<D extends CardDoc>({
   spec,
   current,
   history,
@@ -339,20 +397,30 @@ export function DocumentCard({
   onDelete,
   onRenew,
   onCopy,
+  title,
+  anchor,
+  renewLabel = 'Add renewal',
 }: {
-  spec: EmployeeDocumentTypeSpec;
-  current: EmployeeDocument;
-  history: EmployeeDocument[];
+  spec: CardSpec;
+  current: D;
+  history: D[];
   highlighted: boolean;
-  onView: (doc: EmployeeDocument) => void;
-  onEdit: (doc: EmployeeDocument) => void;
-  onDelete: (doc: EmployeeDocument) => void;
+  onView: (doc: D) => void;
+  onEdit: (doc: D) => void;
+  onDelete: (doc: D) => void;
   onRenew: () => void;
   onCopy: (text: string) => void;
+  /** Heading when it is not the type's label ("Tenancy contract · Barsha"). */
+  title?: string;
+  /** Element id the status strip scrolls to; defaults to `doc-<type>`. */
+  anchor?: string;
+  /** For a document that does not expire: "Add amended version". */
+  renewLabel?: string;
 }) {
   const [showDetails, setShowDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const status = paperStatus(current.expiry_date);
+  const status = paperStatus(current.expiry_date, true);
+  const id = anchor ?? `doc-${spec.doc_type}`;
   const details = Object.entries(spec.details).filter(([key]) => current.details[key]);
   const extra = details.length + (current.notes ? 1 : 0);
   const urgent = status.tone === 'expired' || status.tone === 'due';
@@ -362,8 +430,8 @@ export function DocumentCard({
 
   return (
     <article
-      id={`doc-${spec.doc_type}`}
-      data-testid={`doc-${spec.doc_type}`}
+      id={id}
+      data-testid={id}
       className={cn(
         'flex scroll-mt-24 flex-col border bg-white font-body transition-shadow',
         urgent ? 'border-red-200' : 'border-gray-200',
@@ -372,7 +440,7 @@ export function DocumentCard({
     >
       <header className="flex items-start justify-between gap-2 border-b border-gray-100 px-4 py-3">
         <div className="min-w-0">
-          <h3 className="font-display text-sm tracking-wide text-primary">{spec.label}</h3>
+          <h3 className="font-display text-sm tracking-wide text-primary">{title ?? spec.label}</h3>
           <div className="mt-1">
             <StatusPill tone={status.tone} />
           </div>
@@ -385,7 +453,7 @@ export function DocumentCard({
             onClick={() => onView(current)}
           />
           <IconAction icon="edit" label="Edit" onClick={() => onEdit(current)} />
-          {!prompting && <IconAction icon="autorenew" label="Add renewal" onClick={onRenew} />}
+          {!prompting && <IconAction icon="autorenew" label={renewLabel} onClick={onRenew} />}
           <IconAction icon="delete_outline" label="Delete this record" danger onClick={() => onDelete(current)} />
         </div>
       </header>
@@ -410,15 +478,21 @@ export function DocumentCard({
           )}
         </Fact>
         <Fact label="Expires">
-          {formatDate(current.expiry_date)}
-          {status.tone !== 'ok' && (
-            <span className={cn('block text-xs', urgent ? 'text-red-700' : 'text-amber-800')}>
-              {relativeDays(current.expiry_date)}
-            </span>
+          {current.expiry_date ? (
+            <>
+              {formatDate(current.expiry_date)}
+              {status.tone !== 'ok' && (
+                <span className={cn('block text-xs', urgent ? 'text-red-700' : 'text-amber-800')}>
+                  {relativeDays(current.expiry_date)}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="text-gray-500">No expiry</span>
           )}
         </Fact>
         <Fact label="Issued">{current.issue_date && formatDate(current.issue_date)}</Fact>
-        <Fact label={spec.authority_label} wide>
+        <Fact label={spec.authority_label ?? 'Issuing authority'} wide>
           {current.issuing_authority}
         </Fact>
       </dl>
@@ -475,7 +549,7 @@ export function DocumentCard({
               <span className="material-icons text-[16px]" aria-hidden>
                 autorenew
               </span>
-              {urgent ? 'Renew now' : 'Add renewal'}
+              {urgent ? 'Renew now' : renewLabel}
             </Button>
           )}
           {showHistory && (
@@ -485,8 +559,11 @@ export function DocumentCard({
                   <div className="min-w-0 text-xs text-gray-600">
                     <span className="font-mono text-gray-800">{doc.document_number || '—'}</span>
                     <span className="block text-gray-400 sm:inline sm:pl-2">
-                      {doc.issue_date ? `${formatDate(doc.issue_date)} → ` : 'until '}
-                      {formatDate(doc.expiry_date)}
+                      {doc.expiry_date
+                        ? `${doc.issue_date ? `${formatDate(doc.issue_date)} → ` : 'until '}${formatDate(doc.expiry_date)}`
+                        : doc.issue_date
+                          ? `issued ${formatDate(doc.issue_date)}`
+                          : ''}
                     </span>
                   </div>
                   <div className="flex shrink-0">
@@ -517,8 +594,14 @@ function fileIcon(contentType: string | null | undefined): string {
   return 'description';
 }
 
+/** A free-form file, an employee's or an entity's. */
+export type FileRow = Pick<
+  EmployeeFile,
+  'id' | 'title' | 'category' | 'notes' | 'original_filename' | 'has_file' | 'file_content_type' | 'created_at'
+>;
+
 /** Show a type only when it adds something the name does not already say. */
-function categoryWorthShowing(file: EmployeeFile): boolean {
+function categoryWorthShowing(file: FileRow): boolean {
   if (!file.category) return false;
   const norm = (s: string) =>
     s
@@ -528,18 +611,20 @@ function categoryWorthShowing(file: EmployeeFile): boolean {
   return !norm(file.title).includes(norm(file.category));
 }
 
-export function OtherFiles({
+export function OtherFiles<F extends FileRow>({
   files,
   onAdd,
   onView,
   onEdit,
   onDelete,
+  emptyText = 'Contracts, certificates, letters — anything else kept for this employee. Click to add the first.',
 }: {
-  files: EmployeeFile[];
+  files: F[];
   onAdd: () => void;
-  onView: (file: EmployeeFile) => void;
-  onEdit: (file: EmployeeFile) => void;
-  onDelete: (file: EmployeeFile) => void;
+  onView: (file: F) => void;
+  onEdit: (file: F) => void;
+  onDelete: (file: F) => void;
+  emptyText?: string;
 }) {
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -579,7 +664,7 @@ export function OtherFiles({
           onClick={onAdd}
           className="block w-full px-4 py-6 text-center text-xs text-gray-400 hover:text-primary"
         >
-          Contracts, certificates, letters — anything else kept for this employee. Click to add the first.
+          {emptyText}
         </button>
       ) : shown.length === 0 ? (
         <p className="px-4 py-6 text-center text-xs text-gray-400">Nothing matches “{query}”.</p>

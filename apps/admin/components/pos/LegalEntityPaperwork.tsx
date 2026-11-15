@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { legalEntitiesApi, inventoryApi } from '@/lib/pos-api';
+import { useEffect, useState } from 'react';
+import { legalEntitiesApi } from '@/lib/pos-api';
 import type {
   Emirate,
   LegalEntity,
@@ -12,18 +12,19 @@ import type {
 import { ApiError } from '@/lib/api';
 import { extractText } from '@/lib/ocr/extract';
 import { parseTradeLicense } from '@/lib/ocr/parse';
-import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
+import { Badge, Button, Input, Select } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { useFilePreview, type PreviewSource } from '@/components/ui/FilePreview';
+import type { PreviewSource } from '@/components/ui/FilePreview';
 
 type Preview = (title: string, source: PreviewSource) => void;
 
 /**
- * A legal entity's registration paperwork, opened under its row on the Legal
- * entities page: the VAT registration (TRN, the e-invoicing TIN + Peppol ID, the
- * issuing authority and emirate, the certificate) and the trade licence's full
- * history — one row per issue→expiry cycle, each with its own scan. The cycle
- * that expires last is the current one, mirrored onto the entity's list row.
+ * Pieces of a legal entity's registration paperwork, used by its page
+ * (`/legal-entities/[id]`): the VAT registration card (TRN, the e-invoicing
+ * TIN + Peppol ID, the issuing authority and emirate, the certificate), the
+ * trade-licence form (one issue→expiry cycle; a renewal is seeded from the
+ * current one and read from the scan), and the date helpers the console's
+ * paperwork screens share.
  *
  * Documents sit in the private finance bucket and open in a preview pop-up
  * through a short-lived signed link; nothing here is public.
@@ -40,7 +41,7 @@ export const EMIRATES: Emirate[] = [
 ];
 const EMIRATE_OPTIONS = EMIRATES.map((e) => ({ value: e, label: e }));
 
-type TradeLicenseType = NonNullable<TradeLicenseWrite['license_type']>;
+export type TradeLicenseType = NonNullable<TradeLicenseWrite['license_type']>;
 /** Labels for the API's licence-type codes; a `Record` over the generated
  *  union, so a code added server-side fails the typecheck until labelled. */
 export const TRADE_LICENSE_TYPE_LABELS: Record<TradeLicenseType, string> = {
@@ -162,7 +163,7 @@ function vatDraft(e: LegalEntity): VatDraft {
   };
 }
 
-function VatSection({ entity, onSaved, preview }: { entity: LegalEntity; onSaved: () => void; preview: Preview }) {
+export function VatSection({ entity, onSaved, preview }: { entity: LegalEntity; onSaved: () => void; preview: Preview }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
@@ -351,7 +352,7 @@ function Fact({ label, value, mono }: { label: string; value: string | null | un
 
 // ─── Trade-licence history ───────────────────────────────────────────────────
 
-interface LicenseDraft {
+export interface LicenseDraft {
   license_number: string;
   registration_number: string;
   issuing_authority: string;
@@ -363,7 +364,7 @@ interface LicenseDraft {
   notes: string;
 }
 
-function licenseDraft(row?: TradeLicense, seed?: TradeLicense): LicenseDraft {
+export function licenseDraft(row?: TradeLicense, seed?: TradeLicense): LicenseDraft {
   // A renewal keeps the number, register no., authority and emirate — seed a
   // new cycle from the current one so only the dates need typing.
   const from = row ?? seed;
@@ -380,7 +381,7 @@ function licenseDraft(row?: TradeLicense, seed?: TradeLicense): LicenseDraft {
   };
 }
 
-function LicenseForm({
+export function LicenseForm({
   initial,
   authorities,
   onSubmit,
@@ -511,7 +512,7 @@ function LicenseForm({
   );
 }
 
-function toWrite(d: LicenseDraft): TradeLicenseWrite {
+export function licenseToWrite(d: LicenseDraft): TradeLicenseWrite {
   return {
     license_number: d.license_number.trim(),
     registration_number: d.registration_number.trim() || null,
@@ -523,227 +524,4 @@ function toWrite(d: LicenseDraft): TradeLicenseWrite {
     expiry_date: d.expiry_date,
     notes: d.notes.trim() || null,
   };
-}
-
-function LicenseHistory({
-  entity,
-  onChanged,
-  preview,
-}: {
-  entity: LegalEntity;
-  onChanged: () => void;
-  preview: Preview;
-}) {
-  const toast = useToast();
-  const confirm = useConfirm();
-  const [rows, setRows] = useState<TradeLicense[] | null>(null);
-  const [authorities, setAuthorities] = useState<TradeLicenseAuthorityOption[]>([]);
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [uploadingId, setUploadingId] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    legalEntitiesApi
-      .tradeLicenses(entity.id)
-      .then(setRows)
-      .catch((err) => {
-        setRows([]);
-        toast.error(errorText(err, 'Could not load the trade licences.'));
-      });
-  }, [entity.id, toast]);
-
-  useEffect(load, [load]);
-  useEffect(() => {
-    inventoryApi.tradeLicenseAuthorities().then(setAuthorities).catch(() => setAuthorities([]));
-  }, []);
-
-  const authorityLabel = (code: string) => authorities.find((a) => a.code === code)?.label ?? code;
-  const refresh = () => {
-    load();
-    onChanged();
-  };
-
-  async function create(d: LicenseDraft, file: File | null) {
-    const row = await legalEntitiesApi.createTradeLicense(entity.id, toWrite(d));
-    if (file) {
-      try {
-        await legalEntitiesApi.uploadTradeLicenseDocument(entity.id, row.id, file);
-      } catch (err) {
-        toast.error(`Licence saved, but the document did not upload: ${errorText(err, 'upload failed')}`);
-      }
-    }
-    toast.success('Trade licence added');
-    setAdding(false);
-    refresh();
-  }
-
-  async function update(row: TradeLicense, d: LicenseDraft, file: File | null) {
-    await legalEntitiesApi.updateTradeLicense(entity.id, row.id, toWrite(d));
-    if (file) await legalEntitiesApi.uploadTradeLicenseDocument(entity.id, row.id, file);
-    toast.success('Trade licence saved');
-    setEditingId(null);
-    refresh();
-  }
-
-  async function upload(row: TradeLicense, file: File) {
-    setUploadingId(row.id);
-    try {
-      await legalEntitiesApi.uploadTradeLicenseDocument(entity.id, row.id, file);
-      toast.success('Document uploaded');
-      load();
-    } catch (err) {
-      toast.error(errorText(err, 'Could not upload the document.'));
-    } finally {
-      setUploadingId(null);
-    }
-  }
-
-  async function removeDocument(row: TradeLicense) {
-    if (
-      !(await confirm({
-        title: 'Remove licence document',
-        message: `Delete the document for the cycle expiring ${formatDate(row.expiry_date)}? This cannot be undone.`,
-        confirmLabel: 'Remove',
-        danger: true,
-      }))
-    )
-      return;
-    try {
-      await legalEntitiesApi.removeTradeLicenseDocument(entity.id, row.id);
-      load();
-    } catch (err) {
-      toast.error(errorText(err, 'Could not remove the document.'));
-    }
-  }
-
-  async function removeCycle(row: TradeLicense) {
-    if (
-      !(await confirm({
-        title: 'Delete licence cycle',
-        message: `Delete the cycle expiring ${formatDate(row.expiry_date)} and its document? Only do this for a cycle recorded by mistake — renewals keep the old cycle as history.`,
-        confirmLabel: 'Delete',
-        danger: true,
-      }))
-    )
-      return;
-    try {
-      await legalEntitiesApi.removeTradeLicense(entity.id, row.id);
-      refresh();
-    } catch (err) {
-      toast.error(errorText(err, 'Could not delete the cycle.'));
-    }
-  }
-
-  const current = rows?.find((r) => r.is_current);
-
-  return (
-    <section>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <SectionTitle>Trade licence history</SectionTitle>
-        {!adding && (
-          <Button size="sm" variant="ghost" onClick={() => setAdding(true)}>
-            {rows?.length ? 'Add renewal' : 'Add licence'}
-          </Button>
-        )}
-      </div>
-      {adding && (
-        <div className="mb-3">
-          <LicenseForm
-            initial={licenseDraft(undefined, current)}
-            authorities={authorities}
-            onSubmit={create}
-            onCancel={() => setAdding(false)}
-            submitLabel="Add"
-          />
-        </div>
-      )}
-      {rows === null ? (
-        <Spinner className="h-5 w-5" />
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-gray-500 font-body">No trade licence recorded yet.</p>
-      ) : (
-        <ul className="divide-y divide-gray-200 rounded border border-gray-200 bg-white">
-          {rows.map((row) =>
-            editingId === row.id ? (
-              <li key={row.id} className="p-2">
-                <LicenseForm
-                  initial={licenseDraft(row)}
-                  authorities={authorities}
-                  onSubmit={(d, file) => update(row, d, file)}
-                  onCancel={() => setEditingId(null)}
-                  submitLabel="Save"
-                />
-              </li>
-            ) : (
-              <li key={row.id} className="flex flex-col gap-2 p-3 text-sm font-body sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono font-medium text-gray-900">{row.license_number}</span>
-                    {row.is_current ? <Badge variant="success">Current</Badge> : <Badge>Previous</Badge>}
-                    {row.registration_number && (
-                      <span className="text-xs text-gray-500">Register no. {row.registration_number}</span>
-                    )}
-                  </div>
-                  <div className="text-gray-700">
-                    {authorityLabel(row.issuing_authority)} · {row.emirate}
-                    {row.license_type && (
-                      <>
-                        {' · '}
-                        {TRADE_LICENSE_TYPE_LABELS[row.license_type as TradeLicenseType] ?? row.license_type} licence
-                      </>
-                    )}
-                  </div>
-                  {row.legal_form && <div className="text-xs text-gray-500">{row.legal_form}</div>}
-                  <div className="text-gray-600">
-                    Issued {formatDate(row.issue_date)} · Expires{' '}
-                    {row.is_current ? <ExpiryBadge expiry={row.expiry_date} /> : formatDate(row.expiry_date)}
-                  </div>
-                  {row.notes && <div className="text-xs text-gray-500">{row.notes}</div>}
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-3">
-                  {row.has_document ? (
-                    <>
-                      <button
-                        type="button"
-                        className="text-primary hover:underline"
-                        onClick={() =>
-                          preview(`${entity.legal_name} — Trade licence ${row.license_number}`, () =>
-                            legalEntitiesApi.tradeLicenseDocumentUrl(entity.id, row.id),
-                          )
-                        }
-                      >
-                        View document
-                      </button>
-                      <button type="button" className="text-gray-500 hover:text-red-600" onClick={() => removeDocument(row)}>
-                        Remove file
-                      </button>
-                    </>
-                  ) : (
-                    <FileButton label="Upload document" onFile={(f) => upload(row, f)} busy={uploadingId === row.id} />
-                  )}
-                  <button type="button" className="text-gray-600 hover:underline" onClick={() => setEditingId(row.id)}>
-                    Edit
-                  </button>
-                  <button type="button" className="text-gray-500 hover:text-red-600" onClick={() => removeCycle(row)}>
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ),
-          )}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-export function LegalEntityPaperwork({ entity, onChanged }: { entity: LegalEntity; onChanged: () => void }) {
-  const { preview, node } = useFilePreview();
-  return (
-    <div className="grid gap-6 bg-gray-50 p-4">
-      <LicenseHistory entity={entity} onChanged={onChanged} preview={preview} />
-      <VatSection entity={entity} onSaved={onChanged} preview={preview} />
-      {node}
-    </div>
-  );
 }

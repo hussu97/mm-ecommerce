@@ -163,7 +163,7 @@ function dateNear(text: string, label: RegExp, window = 80): string | undefined 
  * one space before it; the card parsers read this first and keep `dateNear`
  * as the fallback for looser layouts.
  */
-function dateRightAfter(text: string, label: RegExp): string | undefined {
+export function dateRightAfter(text: string, label: RegExp): string | undefined {
   for (const m of text.matchAll(globalRe(label))) {
     const rest = text.slice((m.index ?? 0) + m[0].length);
     const lead = rest.match(/^[ \t]*[:.]?[ \t]*/)?.[0].length ?? 0;
@@ -175,7 +175,7 @@ function dateRightAfter(text: string, label: RegExp): string | undefined {
 
 /** Labelled issue/expiry, made consistent: a missing or out-of-order pair
  *  falls back to the latest date (expiry) and the earliest before it (issue). */
-function issueAndExpiry(
+export function issueAndExpiry(
   text: string,
   issueLabel: RegExp,
   expiryLabel: RegExp,
@@ -216,7 +216,7 @@ function clean(value: string | undefined): string | undefined {
   return v ? v : undefined;
 }
 
-function first(text: string, re: RegExp, group = 1): string | undefined {
+export function first(text: string, re: RegExp, group = 1): string | undefined {
   return clean(text.match(re)?.[group]);
 }
 

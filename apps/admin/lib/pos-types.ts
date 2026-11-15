@@ -139,6 +139,18 @@ export type TradeLicenseWrite = Schemas['TradeLicenseCreate'];
 export type TradeLicenseUpdate = Schemas['TradeLicenseUpdate'];
 export type LegalEntityDocumentUrl = Schemas['LegalEntityDocumentUrl'];
 export type Emirate = TradeLicenseWrite['emirate'];
+/** The registration documents besides the licence and VAT certificate —
+ *  establishment card, labour company card, chamber, premises permits… */
+export type EntityDocumentTypeSpec = Schemas['LegalEntityDocumentTypeSpec'];
+export type EntityDocument = Schemas['LegalEntityDocumentResponse'];
+export type EntityDocumentCreate = Schemas['LegalEntityDocumentCreate'];
+export type EntityDocumentUpdate = Schemas['LegalEntityDocumentUpdate'];
+export type EntityDocType = EntityDocumentCreate['doc_type'];
+export type EntityFile = Schemas['LegalEntityFileResponse'];
+export type EntityFileCreate = Schemas['LegalEntityFileCreate'];
+export type EntityFileUpdate = Schemas['LegalEntityFileUpdate'];
+export type EntityPaperwork = Schemas['LegalEntityPaperwork'];
+export type EntityPaperworkOverview = Schemas['LegalEntityPaperworkOverview'];
 
 /**
  * Which legal entity a (branch, sales channel) trades under. A branch can trade

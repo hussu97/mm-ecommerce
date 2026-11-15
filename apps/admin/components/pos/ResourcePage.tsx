@@ -544,7 +544,7 @@ function FormField({
  * public URL. The URL is what is saved on the record, so nothing else changes —
  * a receipt/report reads the same `logo_url` whether it was pasted or uploaded.
  */
-function ImageField({
+export function ImageField({
   field,
   value,
   onChange,

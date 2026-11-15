@@ -11,6 +11,8 @@ import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, BusinessSettingsUpdate, Charge, Device, DrawerOperation,
   BranchChannelTaxConfig, BranchChannelTaxConfigsWrite,
   LegalEntity, LegalEntityDocumentUrl, LegalEntityUpdate, LegalEntityWrite,
+  EntityDocument, EntityDocumentCreate, EntityDocumentTypeSpec, EntityDocumentUpdate,
+  EntityFile, EntityFileCreate, EntityFileUpdate, EntityPaperwork, EntityPaperworkOverview,
   TradeLicense, TradeLicenseUpdate, TradeLicenseWrite,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   KitchenFlow, PaymentMethod,
@@ -182,6 +184,38 @@ export const legalEntitiesApi = {
   vatCertificateUrl: (id: string) =>
     api.get<LegalEntityDocumentUrl>(`/legal-entities/${id}/vat-certificate`),
   removeVatCertificate: (id: string) => api.delete<LegalEntity>(`/legal-entities/${id}/vat-certificate`),
+
+  // Other registration documents (establishment card, labour card, chamber,
+  // per-premises permits) — every cycle kept — and free-form other files.
+  documentTypes: () => api.get<EntityDocumentTypeSpec[]>('/legal-entities/document-types'),
+  documentOverview: () => api.get<EntityPaperworkOverview[]>('/legal-entities/document-overview'),
+  paperwork: (id: string) => api.get<EntityPaperwork>(`/legal-entities/${id}/paperwork`),
+  createDocument: (id: string, d: EntityDocumentCreate) =>
+    api.post<EntityDocument>(`/legal-entities/${id}/documents`, d),
+  updateDocument: (id: string, docId: string, d: EntityDocumentUpdate) =>
+    api.patch<EntityDocument>(`/legal-entities/${id}/documents/${docId}`, d),
+  removeDocument: (id: string, docId: string) => api.delete<void>(`/legal-entities/${id}/documents/${docId}`),
+  uploadDocumentFile: (id: string, docId: string, file: File) =>
+    request<EntityDocument>(`/legal-entities/${id}/documents/${docId}/file`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    }),
+  documentFileUrl: (id: string, docId: string) =>
+    api.get<LegalEntityDocumentUrl>(`/legal-entities/${id}/documents/${docId}/file`),
+  fileCategories: () => api.get<string[]>('/legal-entities/file-categories'),
+  createFile: (id: string, d: EntityFileCreate) => api.post<EntityFile>(`/legal-entities/${id}/files`, d),
+  updateFile: (id: string, fileId: string, d: EntityFileUpdate) =>
+    api.patch<EntityFile>(`/legal-entities/${id}/files/${fileId}`, d),
+  removeFile: (id: string, fileId: string) => api.delete<void>(`/legal-entities/${id}/files/${fileId}`),
+  uploadFile: (id: string, fileId: string, file: File) =>
+    request<EntityFile>(`/legal-entities/${id}/files/${fileId}/file`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    }),
+  fileUrl: (id: string, fileId: string) =>
+    api.get<LegalEntityDocumentUrl>(`/legal-entities/${id}/files/${fileId}/file`),
 };
 
 export const paymentMethodsApi = {

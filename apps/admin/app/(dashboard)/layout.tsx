@@ -20,9 +20,15 @@ interface SidebarContentProps {
 
 function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: SidebarContentProps) {
   const currentHref = activeNavHref(pathname);
-  // Employee paperwork lapsing within the warning window, counted on the
-  // Employees entry (empty for anyone but a super-admin).
-  const expiring = useExpiringDocuments().items.filter((i) => i.owner_kind === 'employee').length;
+  // Paperwork lapsing within the warning window, counted on the Employees and
+  // Legal Entities entries (empty for anyone but a super-admin).
+  const warnings = useExpiringDocuments().items;
+  const expiringFor = (href: string) =>
+    href === '/employees'
+      ? warnings.filter((i) => i.owner_kind === 'employee').length
+      : href === '/legal-entities'
+        ? warnings.filter((i) => i.owner_kind === 'legal_entity').length
+        : 0;
   // Show only the screens this user's API access would actually serve, and drop
   // a section heading once all its entries are gone (F-ADM-7).
   const allowed = NAV.filter((e) => 'section' in e || canAccessNav(e, user));
@@ -60,6 +66,7 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
           }
           const { href, label, icon } = entry;
           const active = href === currentHref;
+          const expiring = expiringFor(href);
           return (
             <Link
               key={href}
@@ -76,7 +83,7 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
             >
               <span className="relative material-icons text-[18px] shrink-0">
                 {icon}
-                {collapsed && href === '/employees' && expiring > 0 && (
+                {collapsed && expiring > 0 && (
                   <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500" />
                 )}
               </span>
@@ -89,7 +96,7 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
                   {label}
                 </span>
               )}
-              {!collapsed && href === '/employees' && expiring > 0 && (
+              {!collapsed && expiring > 0 && (
                 <span
                   className="ml-auto min-w-[18px] rounded-full bg-red-500 px-1.5 text-center text-[10px] font-body leading-[18px] text-white"
                   title={`${expiring} document(s) expiring within 15 days`}

@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { employeesApi, type Employee, type EmployeeFile } from '@/lib/people-api';
+import { employeesApi, type Employee } from '@/lib/people-api';
 import { extractText } from '@/lib/ocr/extract';
 import { suggestFromText, titleFromFilename } from '@/lib/ocr/classify';
 import { ApiError } from '@/lib/api';
 import { Button, Input, Textarea } from '@/components/ui';
 import { Modal } from '@/components/pos/ResourcePage';
+import type { FileRow } from './EmployeePaperwork';
 
 /**
  * Add or edit one of an employee's "other" files — a contract, a certificate,
@@ -19,22 +20,46 @@ import { Modal } from '@/components/pos/ResourcePage';
 
 const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
 
+type FileBody = { title: string; category: string | null; notes: string | null; original_filename?: string };
+
+/** Where a file is saved — an employee's or a legal entity's. */
+export type FileFormApi = {
+  categories: () => Promise<string[]>;
+  create: (d: FileBody) => Promise<{ id: string }>;
+  update: (fileId: string, d: FileBody) => Promise<unknown>;
+  upload: (fileId: string, file: File) => Promise<unknown>;
+};
+
+function employeeFiles(employeeId: string): FileFormApi {
+  return {
+    categories: () => employeesApi.fileCategories(),
+    create: (d) => employeesApi.createFile(employeeId, d),
+    update: (fileId, d) => employeesApi.updateFile(employeeId, fileId, d),
+    upload: (fileId, file) => employeesApi.uploadFile(employeeId, fileId, file),
+  };
+}
+
 function errorText(err: unknown): string {
   return err instanceof ApiError ? err.message : 'network error';
 }
 
 export function FileForm({
   employee,
+  api: given,
   file: existing,
   onClose,
   onSaved,
 }: {
-  employee: Employee;
+  /** An employee's file… */
+  employee?: Employee;
+  /** …or anyone else's, through these calls. */
+  api?: FileFormApi;
   /** Editing this file; omit to add a new one. */
-  file?: EmployeeFile | null;
+  file?: FileRow | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [api] = useState<FileFormApi>(() => given ?? employeeFiles(employee!.id));
   const editing = Boolean(existing);
   const [title, setTitle] = useState(existing?.title ?? '');
   const [category, setCategory] = useState(existing?.category ?? '');
@@ -51,8 +76,8 @@ export function FileForm({
   const [createdId, setCreatedId] = useState<string | null>(null);
 
   useEffect(() => {
-    employeesApi.fileCategories().then(setCategories).catch(() => {});
-  }, []);
+    api.categories().then(setCategories).catch(() => {});
+  }, [api]);
 
   async function onFile(file: File | null) {
     setPicked(file);
@@ -101,9 +126,9 @@ export function FileForm({
     let savedId = existingId;
     try {
       if (existingId) {
-        await employeesApi.updateFile(employee.id, existingId, body);
+        await api.update(existingId, body);
       } else {
-        savedId = (await employeesApi.createFile(employee.id, body)).id;
+        savedId = (await api.create(body)).id;
         setCreatedId(savedId);
       }
     } catch (err) {
@@ -113,7 +138,7 @@ export function FileForm({
     }
     if (picked && savedId) {
       try {
-        await employeesApi.uploadFile(employee.id, savedId, picked);
+        await api.upload(savedId, picked);
       } catch (err) {
         setError(`The details are saved, but the file did not upload (${errorText(err)}). Save again to retry.`);
         setSaving(false);

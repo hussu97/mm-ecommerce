@@ -77,9 +77,11 @@ export const NAV: Array<NavEntry | NavSection> = [
   { href: '/delivery-zones', label: 'Delivery',       icon: 'local_shipping', requires: 'delivery.manage' },
 
   // Employees' passports, visas, labour cards and health cards — super-admin
-  // only, like the expiring-paperwork popup that links here.
-  { section: 'People' },
+  // only, like the expiring-paperwork popup that links here — and the legal
+  // entities' licences, cards and permits, which the same popup tracks.
+  { section: 'People & Companies' },
   { href: '/employees',     label: 'Employees',       icon: 'assignment_ind',        requires: SUPERADMIN_ONLY },
+  { href: '/legal-entities', label: 'Legal Entities', icon: 'domain',                requires: 'admin.settings.manage' },
 
   // All reporting in one place. Live Baskets is now a tab of Analytics (the
   // same funnel one step earlier), not its own drawer item; "Counter Reports"
