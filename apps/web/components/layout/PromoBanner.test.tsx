@@ -26,6 +26,7 @@ const STRINGS: Record<string, string> = {
   'promo.new_customer_title': '{percent}% off your first {orders} orders',
   'promo.use_code': 'Use code',
   'promo.dismiss_banner': 'Dismiss offer',
+  'promo.ends': 'Offer ends {date}',
 };
 
 vi.mock('@/lib/i18n/TranslationProvider', () => ({
@@ -66,6 +67,16 @@ describe('PromoBanner', () => {
     // Boxed and set apart, not run together with the sentence explaining the
     // offer — it is the one part of the strip the customer has to type.
     expect(screen.getByText('NEW')).toBeInTheDocument();
+  });
+
+  it('says when the offer ends, read off the row', () => {
+    render(<PromoBanner promo={{ ...COUPON, valid_until: '2027-01-01T00:00:00Z' }} />);
+    expect(screen.getByText('Offer ends Dec 31')).toBeInTheDocument();
+  });
+
+  it('states no end for an open-ended campaign rather than inventing one', () => {
+    render(<PromoBanner promo={{ ...COUPON, valid_until: null }} />);
+    expect(screen.queryByText(/Offer ends/)).toBeNull();
   });
 
   it('renders nothing when no campaign is running', () => {

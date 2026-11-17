@@ -20,7 +20,14 @@ import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-se
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
 import { fetchJson, fetchJsonOrNull } from '@/lib/fetch-json';
 import { productPathOf } from '@/lib/category-links';
-import { getFeaturedPromo, isAdvertisable, offerHeadline, offerSentence } from '@/lib/offer';
+import {
+  getFeaturedPromo,
+  isAdvertisable,
+  offerClosing,
+  offerHeadline,
+  offerSentence,
+} from '@/lib/offer';
+import { offerEndDate } from '@/lib/offer-ends';
 import { composeMetaDescription, splitSentences } from '@/lib/meta-description';
 import { offerPrice } from '@/lib/pricing';
 
@@ -273,14 +280,26 @@ export async function generateMetadata({
   // precisely the string Google prints as the Arabic snippet. The CMS
   // description is per-locale; the offer has to be too.
   const lang = locale === 'ar' ? 'ar' : 'en';
+  //
+  // **With its end date, when it has one** — the same closing sentence
+  // `offerSentence` uses, so the snippet and the JSON-LD cannot disagree on the
+  // deadline. Open-ended campaigns say nothing here rather than "limited time",
+  // which is not worth its share of 160 characters.
+  // Offered to the composer as a preference, with the dateless line as its
+  // fallback: a slot that does not fit is dropped whole, and losing the offer
+  // from the snippet to make room for its deadline would be the wrong trade.
   const headline = offerHeadline(promo, lang);
   const offerLine = headline
     ? lang === 'ar'
       ? `للعملاء الجدد: ${headline} بكود ${promo!.code}.`
       : `New customers: ${headline} with code ${promo!.code}.`
     : null;
+  const offerSlot =
+    offerLine && offerEndDate(promo!.valid_until, lang)
+      ? [`${offerLine} ${offerClosing(promo!, lang)}`, offerLine]
+      : offerLine;
   const [lead = base, ...rest] = splitSentences(base);
-  const description = composeMetaDescription(lead, [offerLine, ...rest]);
+  const description = composeMetaDescription(lead, [offerSlot, ...rest]);
 
   return {
     title,

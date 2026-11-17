@@ -6,6 +6,7 @@ import { analytics } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { AdvertisedPromo } from '@/lib/types';
 import { CouponCode } from '@/components/promo/CouponCode';
+import { offerEndDate } from '@/lib/offer-ends';
 import { Icon } from '@/components/ui/Icon';
 
 const DISMISS_KEY = 'mm_promo_banner_dismissed';
@@ -62,6 +63,8 @@ export function PromoBanner({ promo }: { promo: AdvertisedPromo | null }) {
   // The Arabic spelling is a second name for the same row, so either one
   // applies the same coupon. Show the one the page is being read in.
   const code = (locale === 'ar' && promo.code_ar) || promo.code;
+  // Off the row like every other figure here; absent for an open-ended campaign.
+  const ends = offerEndDate(promo.valid_until, locale);
 
   const dismiss = () => {
     sessionStorage.setItem(DISMISS_KEY, '1');
@@ -86,6 +89,12 @@ export function PromoBanner({ promo }: { promo: AdvertisedPromo | null }) {
           <span aria-hidden className="opacity-50">·</span>
           <span>{t('promo.use_code')}</span>
           <CouponCode code={code} tone="dark" />
+          {ends && (
+            <>
+              <span aria-hidden className="opacity-50">·</span>
+              <span>{t('promo.ends', { date: ends })}</span>
+            </>
+          )}
         </span>
       </Link>
       <button

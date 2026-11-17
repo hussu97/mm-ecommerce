@@ -8,6 +8,7 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { AdvertisedPromo } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 import { CouponCode } from '@/components/promo/CouponCode';
+import { offerEndDate } from '@/lib/offer-ends';
 
 /**
  * What came of applying the code.
@@ -111,6 +112,9 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
   const applied =
     appliedCode !== null &&
     [promo.code, promo.code_ar].some((c) => c && c.toUpperCase() === appliedCode.toUpperCase());
+  // When the campaign closes, off the row; null for an open-ended one, which
+  // keeps the undated "limited time" term instead.
+  const ends = offerEndDate(promo.valid_until, locale);
 
   const terms = [
     promo.max_discount_amount !== null
@@ -120,7 +124,7 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
     // Only when it is true of this coupon. A term about a step the customer
     // does not have to take is a reason not to bother.
     promo.requires_phone_verification ? t('promo.terms_verify') : null,
-    t('promo.terms_limited'),
+    ends ? t('promo.terms_ends', { date: ends }) : t('promo.terms_limited'),
     t('promo.terms_combine'),
   ].filter((line): line is string => Boolean(line));
 
@@ -162,6 +166,12 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
           <p className="font-body text-xs text-gray-500 mt-1 flex items-center gap-1.5">
             <span>{t('promo.use_code')}</span>
             <CouponCode code={code} />
+            {ends && (
+              <>
+                <span aria-hidden className="text-gray-300">·</span>
+                <span>{t('promo.ends', { date: ends })}</span>
+              </>
+            )}
           </p>
         </div>
         {applied ? (

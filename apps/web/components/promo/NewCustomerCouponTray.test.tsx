@@ -23,6 +23,8 @@ const STRINGS: Record<string, string> = {
   'promo.terms_first_orders': 'Valid on your first {orders} orders.',
   'promo.terms_verify': 'Delivery orders need a verified mobile number.',
   'promo.terms_limited': 'Limited time promotion.',
+  'promo.terms_ends': 'Offer ends {date}.',
+  'promo.ends': 'Offer ends {date}',
   'promo.terms_combine': 'Cannot be combined with other offers.',
   'promo.terms_more': 'Show more',
   'promo.terms_less': 'Show less',
@@ -242,6 +244,26 @@ describe('NewCustomerCouponTray', () => {
 
     expect(await screen.findByText('Applied')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
+  });
+
+  it('says when the offer ends, beside the code and in the terms', async () => {
+    mocks.featured.mockResolvedValue({ ...COUPON, valid_until: '2027-01-01T00:00:00Z' });
+    render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
+
+    // Beside the code, where it is read before the terms are opened.
+    expect(await screen.findByText('Offer ends Dec 31')).toBeVisible();
+    // And in the terms, in place of the undated "limited time" line.
+    expect(termsText()).toContain('Offer ends Dec 31.');
+    expect(termsText()).not.toContain('Limited time promotion.');
+  });
+
+  it('keeps "limited time" and states no end for an open-ended campaign', async () => {
+    mocks.featured.mockResolvedValue({ ...COUPON, valid_until: null });
+    render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
+
+    await screen.findByRole('button', { name: 'Apply' });
+    expect(screen.queryByText(/Offer ends/)).toBeNull();
+    expect(termsText()).toContain('Limited time promotion.');
   });
 
   it('stays out of the way of a coupon it has no honest wording for', async () => {

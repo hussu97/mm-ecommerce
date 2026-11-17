@@ -108,6 +108,21 @@ describe('the homepage offer node', () => {
     expect(offer).not.toHaveProperty('validThrough');
   });
 
+  it('says in words when the offer ends, in both languages', () => {
+    // The prose is what llms.txt, ai-plugin.json and the JSON-LD description
+    // publish, so the deadline has to be in it, not only in `validThrough`.
+    expect(offerSentence(COUPON)).toMatch(/\. Offer ends Dec 31\.$/);
+    expect(offerSentence(COUPON)).not.toContain('Limited-time');
+    expect(offerSentence(COUPON, 'ar')).toMatch(/ينتهي العرض في 31 ديسمبر\.$/);
+  });
+
+  it('falls back to "limited-time" rather than inventing a deadline', () => {
+    const open = { ...COUPON, valid_until: null };
+    expect(offerSentence(open)).toMatch(/Limited-time promotion\.$/);
+    expect(offerSentence(open)).not.toContain('Offer ends');
+    expect(offerSentence(open, 'ar')).toMatch(/عرض لفترة محدودة\.$/);
+  });
+
   it('publishes nothing at all when no campaign is running', () => {
     // Not an empty node, not a node with blanks in it. The absence of the
     // campaign has to be the absence of the claim.

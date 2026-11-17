@@ -1,6 +1,7 @@
 import { RSC_API_BASE } from '@/lib/api-server';
 import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import { fetchJson } from '@/lib/fetch-json';
+import { offerEndDate } from '@/lib/offer-ends';
 import type { AdvertisedPromo } from '@/lib/types';
 
 /**
@@ -84,7 +85,7 @@ export function offerSentence(
     ];
     if (cap !== null) parts.push(`خصم يصل إلى ${cap} درهم لكل طلب`);
     if (gated) parts.push('طلبات التوصيل تتطلب رقم هاتف متحقق منه');
-    return `${parts.join('، ')}. عرض لفترة محدودة.`;
+    return `${parts.join('، ')}. ${offerClosing(promo, 'ar')}`;
   }
 
   const parts = [
@@ -93,7 +94,18 @@ export function offerSentence(
   ];
   if (cap !== null) parts.push(`up to AED ${cap} off per order`);
   if (gated) parts.push('delivery orders need a verified mobile number');
-  return `${parts.join(', ')}. Limited-time promotion.`;
+  return `${parts.join(', ')}. ${offerClosing(promo, 'en')}`;
+}
+
+/**
+ * The sentence that says when the offer stops: its end date when the row has
+ * one, "limited-time" when it is open-ended. Shared by `offerSentence` and the
+ * homepage's meta description so the two cannot state different deadlines.
+ */
+export function offerClosing(promo: AdvertisedPromo, locale: 'en' | 'ar' = 'en'): string {
+  const ends = offerEndDate(promo.valid_until, locale);
+  if (locale === 'ar') return ends ? `ينتهي العرض في ${ends}.` : 'عرض لفترة محدودة.';
+  return ends ? `Offer ends ${ends}.` : 'Limited-time promotion.';
 }
 
 /** The offer as a short headline — the JSON-LD `Offer.name`. */
