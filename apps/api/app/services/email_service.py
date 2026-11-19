@@ -115,6 +115,13 @@ TRANSFER_VARIANCE_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
 #: with the pilot on) in-stock/out-of-stock emails. The switching itself and
 #: its audit trail carry on; add an address here to turn the email back on.
 AUTO_AVAILABILITY_RECIPIENTS: tuple[str, ...] = ()
+#: Per-branch recipients, keyed by `branches.reference`: each address hears
+#: only about the branches listed for it, in its own email. Sharjah (K001)
+#: since 2026-11-19, when its menu went on auto availability; Barsha stays
+#: silent at the owner's request (see above).
+AUTO_AVAILABILITY_BRANCH_RECIPIENTS: dict[str, tuple[str, ...]] = {
+    "K001": ("fahimakhtarabbasi@gmail.com",),
+}
 #: Who is told when a local-first counter sale synced with totals the server's
 #: re-price did not reproduce (the printed receipt was booked as the invoice,
 #: and the difference kept on the order). An engineering alert, not a shop one.
@@ -1470,10 +1477,32 @@ def _movement_row(movement: dict | None) -> dict | None:
     }
 
 
+def _auto_availability_audiences(
+    branches: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Each recipient with the branch sections they are owed, in input order.
+
+    An `AUTO_AVAILABILITY_RECIPIENTS` address gets every branch; a per-branch
+    address only its own. An address on both lists still gets one email."""
+    audiences: dict[str, list[dict[str, Any]]] = {}
+    for recipient in AUTO_AVAILABILITY_RECIPIENTS:
+        audiences.setdefault(recipient, list(branches))
+    for b in branches:
+        for recipient in AUTO_AVAILABILITY_BRANCH_RECIPIENTS.get(
+            b.get("branch_reference") or "", ()
+        ):
+            owed = audiences.setdefault(recipient, [])
+            if not any(o is b for o in owed):
+                owed.append(b)
+    return [(r, owed) for r, owed in audiences.items() if owed]
+
+
 async def send_auto_availability_change(*, branches: list[dict[str, Any]]) -> None:
-    """Tell the owner what the system changed in one sweep — ONE email for the
-    whole sweep, every branch and every item in it, never one per branch or per
-    item. Always English; links go to the English-only admin console.
+    """Tell people what the system changed in one sweep — ONE email per
+    recipient for the whole sweep, never one per branch or per item. A
+    recipient sees every branch they are owed (`_auto_availability_audiences`):
+    all of them, or only their own. Always English; links go to the
+    English-only admin console.
 
     Each ``branches`` entry is ``{branch_name, branch_reference, changes}``;
     each change carries ``direction`` ("OFF"/"ON"), ``kind``, ``name``,
@@ -1484,12 +1513,6 @@ async def send_auto_availability_change(*, branches: list[dict[str, Any]]) -> No
     branches = [b for b in branches if b.get("changes")]
     if not branches:
         return
-    every = [change for b in branches for change in b["changes"]]
-    offs = sum(1 for change in every if change.get("direction") == "OFF")
-    ons = len(every) - offs
-    parts = [f"{offs} off sale" if offs else "", f"{ons} back on sale" if ons else ""]
-    names = ", ".join(b["branch_name"] for b in branches)
-    subject = f"Auto availability — {names}: " + ", ".join(p for p in parts if p)
 
     def row(change: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -1514,15 +1537,24 @@ async def send_auto_availability_change(*, branches: list[dict[str, Any]]) -> No
             ],
         }
 
-    sections = [
-        {
-            "branch_name": b["branch_name"],
-            "branch_reference": b.get("branch_reference"),
-            "changes": [row(change) for change in b["changes"]],
-        }
-        for b in branches
-    ]
-    for recipient in AUTO_AVAILABILITY_RECIPIENTS:
+    for recipient, owed in _auto_availability_audiences(branches):
+        every = [change for b in owed for change in b["changes"]]
+        offs = sum(1 for change in every if change.get("direction") == "OFF")
+        ons = len(every) - offs
+        parts = [
+            f"{offs} off sale" if offs else "",
+            f"{ons} back on sale" if ons else "",
+        ]
+        names = ", ".join(b["branch_name"] for b in owed)
+        subject = f"Auto availability — {names}: " + ", ".join(p for p in parts if p)
+        sections = [
+            {
+                "branch_name": b["branch_name"],
+                "branch_reference": b.get("branch_reference"),
+                "changes": [row(change) for change in b["changes"]],
+            }
+            for b in owed
+        ]
         try:
             html = _render(
                 "auto_availability_change.html",

@@ -593,11 +593,92 @@ async def test_no_recipients_by_default(monkeypatch):
     assert sent == []
 
 
+def _change(name: str, direction: str = "OFF") -> dict:
+    return {
+        "direction": direction,
+        "kind": "Product",
+        "name": name,
+        "reason": "stock_depleted" if direction == "OFF" else "stock_recovered",
+        "items": [],
+    }
+
+
+async def test_sharjah_changes_email_the_sharjah_recipient(monkeypatch):
+    assert email_service.AUTO_AVAILABILITY_BRANCH_RECIPIENTS == {
+        "K001": ("fahimakhtarabbasi@gmail.com",)
+    }
+    sent = _stub_send(monkeypatch)
+    await email_service.send_auto_availability_change(
+        branches=[
+            {
+                "branch_name": "Sharjah Kitchen",
+                "branch_reference": "K001",
+                "changes": [_change("Tiramisu")],
+            }
+        ]
+    )
+    (message,) = sent
+    assert message["to"] == "fahimakhtarabbasi@gmail.com"
+    assert message["subject"] == "Auto availability — Sharjah Kitchen: 1 off sale"
+    assert "Tiramisu" in message["html"]
+
+
+async def test_branch_recipient_hears_only_their_branch(monkeypatch):
+    # A sweep that moved Barsha and Sharjah: the Sharjah address is told about
+    # Sharjah alone — subject, count and body — and Barsha emails nobody.
+    sent = _stub_send(monkeypatch)
+    await email_service.send_auto_availability_change(
+        branches=[
+            {
+                "branch_name": "Al Barsha",
+                "branch_reference": "B001",
+                "changes": [_change("Pistachio Kunafa"), _change("Lindor", "ON")],
+            },
+            {
+                "branch_name": "Sharjah Kitchen",
+                "branch_reference": "K001",
+                "changes": [_change("Tiramisu", "ON")],
+            },
+        ]
+    )
+    (message,) = sent
+    assert message["to"] == "fahimakhtarabbasi@gmail.com"
+    assert message["subject"] == "Auto availability — Sharjah Kitchen: 1 back on sale"
+    assert "Tiramisu" in message["html"]
+    assert "Al Barsha" not in message["html"]
+    assert "Pistachio Kunafa" not in message["html"]
+
+
+async def test_address_on_both_lists_gets_one_email(monkeypatch):
+    sent = _stub_send(monkeypatch)
+    monkeypatch.setattr(
+        email_service, "AUTO_AVAILABILITY_RECIPIENTS", ("fahimakhtarabbasi@gmail.com",)
+    )
+    await email_service.send_auto_availability_change(
+        branches=[
+            {
+                "branch_name": "Al Barsha",
+                "branch_reference": "B001",
+                "changes": [_change("Pistachio Kunafa")],
+            },
+            {
+                "branch_name": "Sharjah Kitchen",
+                "branch_reference": "K001",
+                "changes": [_change("Tiramisu")],
+            },
+        ]
+    )
+    (message,) = sent
+    assert "Al Barsha" in message["subject"] and "Sharjah Kitchen" in message["subject"]
+    assert "2 off sale" in message["subject"]
+
+
 async def test_one_email_carries_every_change_with_its_trigger(monkeypatch):
     sent = _stub_send(monkeypatch)
     monkeypatch.setattr(
         email_service, "AUTO_AVAILABILITY_RECIPIENTS", ("h_abbasi97@hotmail.com",)
     )
+    monkeypatch.setattr(email_service, "AUTO_AVAILABILITY_BRANCH_RECIPIENTS", {})
     movement = {
         "transaction_id": str(uuid.uuid4()),
         "type": "consumption_from_orders",
