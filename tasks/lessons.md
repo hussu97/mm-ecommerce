@@ -1574,3 +1574,17 @@ orders.subtotal` for every order it touched, not only the stock it drew.
   previous test's event loop was the intermittent "attached to a different loop"
   / MissingGreenlet / DBAPIError. Hunt order-dependence with `pytest-randomly`
   seeds plus `pytest-timeout` (to turn a hang into a stack trace).
+
+### [2026-11-20] A marketplace analysis of "Melting Moments" means the restaurant, not the outlet I happened to find first
+- **What happened**: asked about the Melting Moments restaurant in Sharjah on noon
+  Food and why November hadn't spiked, I ranked and diagnosed the single Sharjah
+  outlet (`MLTNGM1GBF`) against other *outlets*. The user corrected it: group
+  outlets by restaurant (`food_food.outlet.id_restaurant`) and analyse the brand.
+  At brand level the picture changed — Karama had quietly stopped trading on
+  28 Oct, which an outlet-level view of Sharjah cannot see, and the right peer
+  set is restaurants (B.Laban as one row, not eight).
+- **Rule**: for any business question about a brand on an aggregator, aggregate
+  every outlet of the restaurant (including closed/deleted ones, for history),
+  rank against restaurants, and report the per-outlet split underneath —
+  outlet openings/closures are often the answer. Only narrow to one outlet when
+  the user asks for that outlet specifically, and say so.
