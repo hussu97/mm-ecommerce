@@ -74,6 +74,9 @@ class EmployeeListItem(_ORM):
     user_id: UUID | None = None
     user_display_name: str | None = None
     has_photo: bool
+    #: A short-lived signed link to the photo for the list's avatar; absent when
+    #: there is none or it could not be signed.
+    photo_url: str | None = None
     #: The current cycle per type; a type with no document is absent.
     current_documents: dict[str, EmployeeDocumentSummary] = {}
 

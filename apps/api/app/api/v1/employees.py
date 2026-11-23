@@ -129,7 +129,9 @@ async def list_employees(
     rows = await svc.list_employees(
         db, status=None if status_filter == "all" else status_filter, search=search
     )
-    return [svc.to_list_item(e) for e in rows]
+    items = [svc.to_list_item(e) for e in rows]
+    await svc.with_photo_urls(items, rows)
+    return items
 
 
 @router.post("", response_model=EmployeeResponse, status_code=status.HTTP_201_CREATED)

@@ -135,12 +135,21 @@ export default function EmployeesPage() {
         <span className="flex min-w-0 items-center gap-3">
           <span
             className={cn(
-              'flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-display text-sm',
+              'flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full font-display text-sm',
               row.status === 'left' ? 'bg-gray-100 text-gray-400' : 'bg-primary/10 text-primary',
             )}
             aria-hidden
           >
-            {initials(row.full_name)}
+            {row.photo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element -- a short-lived signed GCS link
+              <img
+                src={row.photo_url}
+                alt=""
+                className={cn('h-full w-full object-cover', row.status === 'left' && 'grayscale')}
+              />
+            ) : (
+              initials(row.full_name)
+            )}
           </span>
           <span className="min-w-0">
             <span className="flex flex-wrap items-center gap-2">

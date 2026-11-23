@@ -15771,6 +15771,8 @@ export interface components {
             legal_entity_id: string | null;
             /** Nationality */
             nationality: string | null;
+            /** Photo Url */
+            photo_url?: string | null;
             /** Status */
             status: string;
             /** User Display Name */

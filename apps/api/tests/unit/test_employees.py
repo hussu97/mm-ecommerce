@@ -198,6 +198,38 @@ def test_other_files_trim_and_drop_blanks():
     }
 
 
+async def test_the_list_signs_each_photo_and_skips_the_rest(monkeypatch):
+    from app.core import private_documents
+    from app.schemas.employee import EmployeeListItem
+    from app.services.people import employee_service as svc
+
+    async def fake_sign(key, **_):
+        return None if key.endswith("broken.jpg") else f"https://signed/{key}"
+
+    monkeypatch.setattr(private_documents, "sign_or_none", fake_sign)
+    keys = ["employees/a/photo.jpg", None, "employees/c/broken.jpg"]
+    rows = [SimpleNamespace(photo_object_key=k) for k in keys]
+    items = [
+        EmployeeListItem(
+            id=uuid.uuid4(),
+            full_name=f"E{i}",
+            nationality=None,
+            job_title=None,
+            status="active",
+            legal_entity_id=None,
+            branch_id=None,
+            has_photo=bool(k),
+        )
+        for i, k in enumerate(keys)
+    ]
+    await svc.with_photo_urls(items, rows)
+    assert [i.photo_url for i in items] == [
+        "https://signed/employees/a/photo.jpg",
+        None,
+        None,
+    ]
+
+
 def test_issue_after_expiry_is_refused():
     with pytest.raises(ValidationError):
         EmployeeDocumentCreate(

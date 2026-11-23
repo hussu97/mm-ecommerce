@@ -15590,6 +15590,17 @@
             ],
             "title": "Nationality"
           },
+          "photo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Url"
+          },
           "status": {
             "title": "Status",
             "type": "string"

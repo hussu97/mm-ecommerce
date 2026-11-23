@@ -11,6 +11,7 @@ finance bucket under
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import date
@@ -65,6 +66,18 @@ def current_by_type(documents: list[EmployeeDocument]) -> dict[str, EmployeeDocu
         if held is None or doc.expiry_date > held.expiry_date:
             current[doc.doc_type] = doc
     return current
+
+
+async def with_photo_urls(items: list[EmployeeListItem], rows: list[Employee]) -> None:
+    """Sign each listed employee's photo (one signBlob each, concurrently).
+    A photo that cannot be signed just falls back to the initials."""
+    keyed = [
+        (item, row.photo_object_key) for item, row in zip(items, rows, strict=True)
+    ]
+    keyed = [(item, key) for item, key in keyed if key]
+    urls = await asyncio.gather(*(storage.sign_or_none(key) for _, key in keyed))
+    for (item, _), url in zip(keyed, urls, strict=True):
+        item.photo_url = url
 
 
 def to_list_item(employee: Employee) -> EmployeeListItem:
