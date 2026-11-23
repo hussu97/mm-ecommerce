@@ -1608,6 +1608,8 @@ function unlabelledName(line: string): boolean {
 
 /** "PRIVATE X 74346" (class, code, number — the number often a line below). */
 const PLATE = /\b(?:PRIVATE|COMMERCIAL|TAXI|PUBLIC|EXPORT|MOTOR\s*CYCLE|CLASSIC|TRAILER|DIPLOMATIC)\s+([A-Z]{1,2}|\d{1,2})\b[^\n\d]*\n?[^\n\d]*?\b(\d{1,6})\b/i;
+/** The plate's class and code alone ("PRIVATE X"), its number further down. */
+const PLATE_CLASS = /\b(?:PRIVATE|COMMERCIAL|TAXI|PUBLIC|EXPORT|MOTOR\s*CYCLE|CLASSIC|TRAILER|DIPLOMATIC)\s+([A-Z]{1,2}|\d{1,2})\s*$/im;
 /** A vehicle identification number: 17 characters, letters and digits, no I/O/Q. */
 const VIN = /\b(?=[A-HJ-NPR-Z0-9]*\d)(?=[A-HJ-NPR-Z0-9]*[A-HJ-NPR-Z])[A-HJ-NPR-Z0-9]{17}\b/;
 const CARD_PLACE = /Place\s*of\s*Issue|Issuing\s*Place/;
@@ -1696,7 +1698,13 @@ export function parseVehicleLicense(raw: string): DocumentFields {
   const classed = latin.match(PLATE);
   const plate =
     labelValue(latin, /(?:Traffic\s*)?Plate\s*(?:No|Number)/, /(?:[A-Z]{1,2}|\d{1,2})?\s?\d{1,6}\b/) ??
-    (classed ? `${classed[1]} ${classed[2]}` : undefined);
+    (classed ? `${classed[1]} ${classed[2]}` : undefined) ??
+    (() => {
+      // OCR's sparse pass reads the header between the class and the number.
+      const code = latin.match(PLATE_CLASS)?.[1];
+      const number = code && numberBelow(lines, PLATE_CLASS, /\d{1,6}/);
+      return number ? `${code} ${number}` : undefined;
+    })();
   const emirate = emirateIn(latin, CARD_PLACE);
   if (plate) out.document_number = plate.toUpperCase();
   if (emirate) {

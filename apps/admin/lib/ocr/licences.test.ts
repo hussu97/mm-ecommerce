@@ -148,6 +148,11 @@ describe('Wallet passes', () => {
     });
   });
 
+  it('finds the plate number a few lines under its class', () => {
+    const sparse = VL_PASS.replace('UNITED ARAB EMIRATES                PRIVATE X\nVehicle License                                                  12345', 'PRIVATE X\n\nUNITED ARAB EMIRATES\n\nVehicle License\n\n12345');
+    expect(parseVehicleLicense(sparse).document_number).toBe('X 12345');
+  });
+
   it('reads a vehicle licence pass', () => {
     const out = parseVehicleLicense(VL_PASS);
     expect(out).toMatchObject({ document_number: 'X 12345', expiry_date: '2027-02-24', warnings: [] });
