@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDocument, parseDrivingLicense, parseVehicleLicense } from './parse';
+import { parseDocument, parseDrivingLicense, parseVehicleLicense, vinCheck } from './parse';
 
 // The layouts of a Dubai driving licence and mulkiya (front + back, read as
 // one), with every identity value made up.
@@ -164,5 +164,23 @@ describe('Wallet passes', () => {
       make_model: 'Model 3',
       chassis_number: 'JTDBR32E520012345',
     });
+  });
+});
+
+describe('VIN check digit', () => {
+  it('computes ISO 3779 check characters', () => {
+    expect(vinCheck('1M8GDM9AXKP042788')).toBe('X');
+    expect(vinCheck('11111111111111111')).toBe('1');
+  });
+
+  it('puts back a check digit OCR read as a letter, only when it then checks', () => {
+    // JTDBR32E520010003 checks with 5; OCR read the 5 as S.
+    const misread = 'JTDBR32E' + 'S' + '20010003';
+    expect(parseVehicleLicense(VL_PASS.replace('JTDBR32E520012345', misread)).details.chassis_number).toBe(
+      'JTDBR32E520010003',
+    );
+    // A repair that does not check is not made: the VIN stays as read.
+    const unchecked = 'JTDBR32E' + 'G' + '20010003';
+    expect(parseVehicleLicense(VL_PASS.replace('JTDBR32E520012345', unchecked)).details.chassis_number).toBe(unchecked);
   });
 });

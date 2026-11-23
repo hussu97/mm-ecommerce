@@ -1608,6 +1608,30 @@ function unlabelledName(line: string): boolean {
 
 /** "PRIVATE X 74346" (class, code, number — the number often a line below). */
 const PLATE = /\b(?:PRIVATE|COMMERCIAL|TAXI|PUBLIC|EXPORT|MOTOR\s*CYCLE|CLASSIC|TRAILER|DIPLOMATIC)\s+([A-Z]{1,2}|\d{1,2})\b[^\n\d]*\n?[^\n\d]*?\b(\d{1,6})\b/i;
+const VIN_VALUES: Record<string, number> = Object.fromEntries(
+  [...'ABCDEFGHJKLMNPRSTUVWXYZ'].map((c, i) => [c, [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 7, 9, 2, 3, 4, 5, 6, 7, 8, 9][i]]),
+);
+const VIN_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
+
+/** ISO 3779's check character (the 9th) of a 17-character VIN. */
+export function vinCheck(vin: string): string {
+  const sum = [...vin].reduce((s, c, i) => s + (/\d/.test(c) ? +c : (VIN_VALUES[c] ?? 0)) * VIN_WEIGHTS[i], 0) % 11;
+  return sum === 10 ? 'X' : String(sum);
+}
+
+/** The 9th character is a check digit (0–9 or X), so a letter there is a
+ *  misread digit ("EKGRC" for "EK6RC"): put its look-alike back when the
+ *  VIN then checks. Not every maker fills the check digit, so a VIN that
+ *  does not check is otherwise left as read. */
+function repairVin(vin: string): string {
+  const ninth = vin[8];
+  if (/[\dX]/.test(ninth)) return vin;
+  const digit = digitsOnly(ninth);
+  if (!/\d/.test(digit)) return vin;
+  const fixed = vin.slice(0, 8) + digit + vin.slice(9);
+  return vinCheck(fixed) === digit ? fixed : vin;
+}
+
 /** The plate's class and code alone ("PRIVATE X"), its number further down. */
 const PLATE_CLASS = /\b(?:PRIVATE|COMMERCIAL|TAXI|PUBLIC|EXPORT|MOTOR\s*CYCLE|CLASSIC|TRAILER|DIPLOMATIC)\s+([A-Z]{1,2}|\d{1,2})\s*$/im;
 /** A vehicle identification number: 17 characters, letters and digits, no I/O/Q. */
@@ -1761,7 +1785,7 @@ export function parseVehicleLicense(raw: string): DocumentFields {
   if (colour) out.details.colour = titleCase(colour);
   const chassis =
     labelValue(latin, /Chassis\s*(?:No|Number)?/, /[A-HJ-NPR-Z0-9]{11,17}/) ?? latin.match(VIN)?.[0];
-  if (chassis) out.details.chassis_number = chassis.toUpperCase();
+  if (chassis) out.details.chassis_number = repairVin(chassis.toUpperCase());
   const engine = labelValue(latin, /Engine\s*(?:No|Number)/, /[A-Z0-9][A-Z0-9-]{3,20}/);
   if (engine) out.details.engine_number = engine.toUpperCase();
   return out;
