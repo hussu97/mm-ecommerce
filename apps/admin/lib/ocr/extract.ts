@@ -15,6 +15,10 @@
  * zone (passport, Emirates ID) get a third pass over the bottom of the page
  * restricted to MRZ characters.
  *
+ * A scanned passport PDF is read over its first two pages: a phone scan of the
+ * open booklet often puts the address page first and the photo page — the one
+ * with the MRZ — second.
+ *
  * A two-sided card (the Emirates ID) is read whole: a scanned PDF has both
  * pages rendered and stacked, and two photos are combined into one image
  * (`combineImages`) that is both read and stored, so the record keeps one file.
@@ -45,6 +49,11 @@ export function textFromPdfItems(items: PdfTextItem[]): string {
 const MIN_TEXT_LAYER = 40;
 /** Render scale for an image-only PDF page — ~200 dpi for an A4 page. */
 const PDF_RENDER_SCALE = 2.5;
+/** Widest a rendered PDF page gets. A phone scan (iOS "Scan Documents") has
+ *  pages several times A4's size in points, so the A4 scale would make a
+ *  ~6000×8000 canvas: past Safari's 16.7 MP canvas cap (it comes out blank)
+ *  and far slower to OCR, for no gain — the scan's own image is smaller. */
+const MAX_RENDER_WIDTH = 2000;
 /** Tesseract reads small print badly; a phone shot is upscaled to this width. */
 const MIN_OCR_WIDTH = 1800;
 const MRZ_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<';
@@ -132,9 +141,10 @@ function bottomBand(source: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 async function ocr(
-  canvas: HTMLCanvasElement,
+  pages: HTMLCanvasElement[],
   { mrz, twoSided, onProgress }: { mrz: boolean; twoSided: boolean; onProgress?: ExtractProgress },
 ): Promise<string> {
+  const canvas = pages.length === 1 ? pages[0] : stack(pages);
   const { createWorker, PSM } = await import('tesseract.js');
   onProgress?.('Loading the text reader…');
   const worker = await createWorker('eng', 1, {
@@ -158,8 +168,11 @@ async function ocr(
       });
       // A stacked two-sided card may have its back (and MRZ) on top or below,
       // so it gets the MRZ pass over the whole image; the parser finds the
-      // zone by its shape among whatever else that pass reads.
-      passes.push((await worker.recognize(twoSided ? canvas : bottomBand(canvas))).data.text);
+      // zone by its shape among whatever else that pass reads. A passport's
+      // MRZ is at the foot of whichever page is the photo page, so each
+      // page's bottom band is read.
+      const zone = twoSided ? canvas : pages.length === 1 ? bottomBand(canvas) : stack(pages.map(bottomBand));
+      passes.push((await worker.recognize(zone)).data.text);
     }
     return passes.join('\n\n');
   } finally {
@@ -193,20 +206,21 @@ export async function extractText(
         return { text, source: 'pdf-text' };
       }
       // An image-only PDF (a scan saved as PDF): render page one — and, for
-      // a two-sided card, page two under it — and OCR that.
+      // a two-sided card or a passport (whose photo page may come second),
+      // page two under it — and OCR that.
       onProgress?.('Rendering the scan…');
       const rendered: HTMLCanvasElement[] = [];
-      for (let n = 1; n <= Math.min(pdf.numPages, twoSided ? 2 : 1); n++) {
+      for (let n = 1; n <= Math.min(pdf.numPages, twoSided || mrz ? 2 : 1); n++) {
         const page = await pdf.getPage(n);
-        const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
+        const width = page.getViewport({ scale: 1 }).width;
+        const viewport = page.getViewport({ scale: Math.min(PDF_RENDER_SCALE, MAX_RENDER_WIDTH / width) });
         const canvas = canvasOf(viewport.width, viewport.height);
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('This browser cannot render PDFs');
         await page.render({ canvas, canvasContext: ctx, viewport }).promise;
         rendered.push(canvas);
       }
-      const canvas = rendered.length === 1 ? rendered[0] : stack(rendered);
-      return { text: await ocr(canvas, { mrz, twoSided, onProgress }), source: 'ocr' };
+      return { text: await ocr(rendered, { mrz, twoSided, onProgress }), source: 'ocr' };
     } finally {
       await pdf.loadingTask.destroy();
     }
@@ -216,5 +230,5 @@ export async function extractText(
   }
   onProgress?.('Preparing the image…');
   const canvas = await imageCanvas(file);
-  return { text: await ocr(canvas, { mrz, twoSided, onProgress }), source: 'ocr' };
+  return { text: await ocr([canvas], { mrz, twoSided, onProgress }), source: 'ocr' };
 }

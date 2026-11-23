@@ -608,8 +608,10 @@ export function parsePassport(raw: string, hint: PassportHint = {}): DocumentFie
   if (vizSurname && (!surname || surname.replace(/ /g, '').includes(vizSurname.replace(/ /g, '')))) {
     surname = vizSurname;
   }
-  const vizGiven = vizValue(text, /\bGiven\s*names?\b/i);
-  if (vizGiven && (!given || given.includes(vizGiven))) given = vizGiven;
+  // OCR mangles the label's script half and "Name(s)" ("APT Given Named)"),
+  // so the word "Given" alone finds it.
+  const vizGiven = vizValue(text, /\bGiven\b/i);
+  if (vizGiven && (!given || given.includes(vizGiven) || oneStrayLetter(given, vizGiven))) given = vizGiven;
   setNames(out, surname, given);
 
   // Some passports (the Philippines') print a middle name the MRZ leaves out.
@@ -649,6 +651,113 @@ export function parsePassport(raw: string, hint: PassportHint = {}): DocumentFie
     sameLineValue(text, /Place\s*of\s*Birth/i, /[A-Z][A-Z ,.-]{2,40}/) ??
     vizValue(text, /Place\W+\w{0,3}\W*birth/i);
   if (pob) out.details.place_of_birth = pob;
+  Object.assign(out.details, familyAndAddress(text));
+  return out;
+}
+
+/** True when the MRZ's reading is the printed one plus a single stray letter
+ *  ("HUSSAIN<SFAHIM" for "HUSSAIN<FAHIM": a '<' filler read as S) — the
+ *  printed name is then the better reading. */
+function oneStrayLetter(mrz: string, printed: string): boolean {
+  const a = mrz.replace(/ /g, '');
+  const b = printed.replace(/ /g, '');
+  if (a.length !== b.length + 1) return false;
+  for (let i = 0; i < a.length; i++) if (a.slice(0, i) + a.slice(i + 1) === b) return true;
+  return false;
+}
+
+// ─── Passport: parents, spouse and address ───────────────────────────────────
+// Indian passports print these on the last page (often scanned with the photo
+// page, as the two pages of one PDF). The bilingual labels come out of OCR
+// half-mangled ("Name of Fata | ngs Coandan"), so the parser anchors on the
+// words that survive, and the father's name — whose label rarely does —
+// also falls back to the name printed straight above the mother's label.
+
+const FATHER_LABEL = /Father|Guardian|Name\s*of\s*Fa/i;
+const MOTHER_LABEL = /Mother/i;
+const SPOUSE_LABEL = /Spouse|Husband|\bWife\b/i;
+const ADDRESS_LABEL = /\bAd+r?e?s+\b/i;
+
+/** The name on a line, or nothing: upper-case words only (a lower-case word
+ *  means a label or OCR noise), and OCR's '!' for a final I put right. */
+function familyName(line: string): string | undefined {
+  if (/[a-z]{3,}/.test(line)) return undefined;
+  const v = line.replace(/!/g, 'I').match(/^[A-Z][A-Z'.-]*(?: [A-Z][A-Z'.-]*)*/)?.[0];
+  if (!v) return undefined;
+  const words = v.split(' ').filter((w) => /[A-Z]{2,}/.test(w));
+  const letters = v.replace(/[^A-Z]/g, '').length;
+  return (words.length >= 2 && letters >= 5) || letters >= 6 ? v.replace(/[.-]+$/, '') : undefined;
+}
+
+/** The reading most OCR passes agree on; the first on a tie. */
+function mostCommon(values: string[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best: string | undefined;
+  for (const [v, n] of counts) if (best === undefined || n > counts.get(best)!) best = v;
+  return best;
+}
+
+/** A line that reads as part of a postal address. */
+function addressLine(line: string): boolean {
+  if (/[a-z]{3,}/.test(line) || line.replace(/[^A-Z]/g, '').length < 3) return false;
+  // The old-passport row ("R2354230 23/04/2017 DUBAI") and the file number.
+  if (/\b\d{2}[/.-]\d{2}[/.-]\d{4}\b|^[A-Z]{1,2}\d{7}\b|^[A-Z]{2}\d{10,}/.test(line)) return false;
+  const kept = line.replace(/[^A-Z0-9 ,.:/#()-]/g, '');
+  return kept.length >= line.length * 0.9;
+}
+
+export function familyAndAddress(text: string): Record<string, string> {
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const under = (label: RegExp, within: number) => {
+    const hits: string[] = [];
+    lines.forEach((line, i) => {
+      if (!label.test(line)) return;
+      for (const next of lines.slice(i + 1, i + 1 + within)) {
+        // The next label means this field was left blank.
+        if ([FATHER_LABEL, MOTHER_LABEL, SPOUSE_LABEL, ADDRESS_LABEL].some((l) => l.test(next))) break;
+        const name = familyName(next);
+        if (name) {
+          hits.push(name);
+          break;
+        }
+      }
+    });
+    return hits;
+  };
+  const out: Record<string, string> = {};
+  const father = under(FATHER_LABEL, 2);
+  if (!father.length) {
+    lines.forEach((line, i) => {
+      if (!MOTHER_LABEL.test(line) || i === 0) return;
+      const name = familyName(lines[i - 1]);
+      if (name) father.push(name);
+    });
+  }
+  const mother = under(MOTHER_LABEL, 2);
+  const spouse = under(SPOUSE_LABEL, 1);
+  const set = (key: string, values: string[]) => {
+    const v = mostCommon(values);
+    if (v) out[key] = v;
+  };
+  set('father_name', father);
+  set('mother_name', mother);
+  set('spouse_name', spouse);
+
+  const addresses: string[] = [];
+  lines.forEach((line, i) => {
+    if (!ADDRESS_LABEL.test(line)) return;
+    const parts: string[] = [];
+    for (const next of lines.slice(i + 1, i + 5)) {
+      if (!addressLine(next)) break;
+      parts.push(next);
+    }
+    if (parts.length) addresses.push(parts.join(', ').replace(/\s*,[\s,]*/g, ', ').replace(/[ ,]+$/, ''));
+  });
+  set('address', addresses);
   return out;
 }
 

@@ -89,6 +89,11 @@ EMPLOYEE_DOCUMENT_SPECS: dict[str, dict[str, Any]] = {
             "sex": "Sex",
             "place_of_birth": "Place of birth",
             "place_of_issue": "Place of issue",
+            #: Printed on the last page of an Indian passport (read from the scan).
+            "father_name": "Father's name",
+            "mother_name": "Mother's name",
+            "spouse_name": "Spouse's name",
+            "address": "Address",
         },
     },
     "visa": {

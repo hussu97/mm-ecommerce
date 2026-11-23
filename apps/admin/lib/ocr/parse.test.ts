@@ -210,6 +210,73 @@ describe('passport names through a noisy MRZ', () => {
   });
 });
 
+describe('Indian passport scanned with its last page', () => {
+  // The shape Tesseract produced for a real two-page phone scan (address page
+  // first, photo page second) with every identity value made up: half-mangled
+  // bilingual labels, '!' for a final I, and the MRZ's '<' read as S once.
+  const line2 = 'Z1234567<1IND9003152M3412318UE12345678901266';
+  const page = [
+    'ar avg of oh Ws Nas al For {logs vendo | HBR ‘ol',
+    'RAJESH SURESH KUMAR )',
+    'SITE TY Name of Mother',
+    'MEENA RAJESH TIWAR!',
+    '9fv 2 af! & F797 Name of Spouse',
+    'QT / Address',
+    'FLAT 12,SUNRISE TOWER, MG ROAD',
+    'NEAR CITY MALL,PUNE',
+    'PIN:411001 MAHARASHTRA, INDIA',
+    'FN OES wa of wd wl) 0) YW FR ON Rasapon fio with Date and Place of hae g :',
+    'K1234567 01/02/2015 DUBAI',
+    'UE123456789012',
+    'FEAT / Suemanme',
+    'KUMAR',
+    'fxr mi AAP1/ Given',
+    'RAVI SURESH',
+    '',
+    'a / SFA! NTOASREW BF RS Name of Fata | ngs Coandan',
+    'TT.',
+    'RAJESH SURESH KUMAR',
+    'SE TN Naw of Mother',
+    'MEENA RAJESH TIWARI',
+    '9f7 2 Gat @ 1 7 Name of Spouse',
+    'We J Adres:',
+    'FLAT 12 SUNRISE TOWER, MG ROAD',
+    'NEAR CITY MALL,PUNE',
+    'PIN:411001 MAHARASHTRA, INDIA',
+    'R2354230',
+    '',
+    'P<INDKUMAR<<RAVI<SSURESH<<<<<<<<<<<<<<<<<<<<<',
+    line2,
+    'P<INDKUMAR<<RAVI<SSURESH<<<<<<<<<<<<<<<<<<<<<',
+    line2,
+  ].join('\n');
+
+  it('reads the parents and the address under mangled labels', () => {
+    expect(parsePassport(page).details).toMatchObject({
+      father_name: 'RAJESH SURESH KUMAR',
+      mother_name: 'MEENA RAJESH TIWARI',
+      address: 'FLAT 12, SUNRISE TOWER, MG ROAD, NEAR CITY MALL, PUNE, PIN:411001 MAHARASHTRA, INDIA',
+    });
+  });
+
+  it('leaves a blank spouse blank rather than reading the address label', () => {
+    expect(parsePassport(page).details.spouse_name).toBeUndefined();
+  });
+
+  it('prefers the printed given names over an MRZ reading with one stray letter', () => {
+    const out = parsePassport(page);
+    expect(out.details).toMatchObject({ surname: 'KUMAR', given_names: 'RAVI SURESH' });
+    expect(out.document_number).toBe('Z1234567');
+    expect(out.details.date_of_birth).toBe('1990-03-15');
+  });
+
+  it('reads nothing for a passport without that page', () => {
+    expect(parsePassport(`P<INDKUMAR<<RAVI<SURESH<<<<<<<<<<<<<<<<<<<<<<\n${line2}`).details).not.toHaveProperty(
+      'address',
+    );
+  });
+});
+
 describe('residence visa', () => {
   it('reads the old sticker: values left of their labels, labels garbled, expiry label between the dates', () => {
     // The layout (pdf/OCR text) of a real Sharjah residence sticker; identity values made up.
