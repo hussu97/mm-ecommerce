@@ -846,6 +846,29 @@ export function parseOhc(raw: string): DocumentFields {
   return out;
 }
 
+const ARABIC_ONLY = /^[؀-ۿ\s]+$/;
+const LATIN_VALUE = /^[A-Za-z][A-Za-z0-9 .,&'()/-]{1,80}$/;
+
+/** The English values of a label-free e-visa: each Latin line that follows
+ *  an Arabic-only line, after the passport number's line. Empty when the
+ *  layout is not that one (labels present, or no passport number). */
+function labelFreePairs(text: string, passport: string | undefined): string[] {
+  // A labelled visa prints "Profession"; "Sponsor" alone is no sign, as a
+  // self-sponsored e-visa's value is "Self Sponsor".
+  if (!passport || /Profession/i.test(text)) return [];
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const start = lines.findIndex((l) => l.includes(passport));
+  if (start < 0) return [];
+  const values: string[] = [];
+  for (let i = start + 2; i < lines.length; i++) {
+    if (ARABIC_ONLY.test(lines[i - 1]) && LATIN_VALUE.test(lines[i])) values.push(lines[i].replace(/\s+/g, ' '));
+  }
+  return values;
+}
+
 export function parseVisa(raw: string): DocumentFields {
   const text = normalise(raw);
   const out = empty();
@@ -892,6 +915,24 @@ export function parseVisa(raw: string): DocumentFields {
   }
   const name = sameLineValue(text, /(?:Full\s*)?Name/i, /[A-Z][A-Z .'-]{3,80}/);
   if (name) out.person.full_name = titleCase(name);
+
+  // The ICP e-visa (a PDF with a text layer) prints its labels as images: the
+  // text is only values, each Arabic line followed by its English one — name,
+  // profession, sponsor, in that order, after the passport number. A
+  // self-sponsored (golden) visa's sponsor reads "Self Sponsor".
+  const pairs = labelFreePairs(text, passport);
+  if (pairs.length >= 3) {
+    out.person.full_name ??= titleCase(pairs[0]);
+    if (!out.details.profession) {
+      out.details.profession = titleCase(pairs[1]);
+      out.person.job_title = titleCase(pairs[1]);
+    }
+    if (!out.details.sponsor) {
+      out.details.sponsor = /^self\s*sponsor/i.test(pairs[2]) ? 'Self Sponsor' : pairs[2];
+      // Self-sponsored names no establishment to link the person to.
+      if (out.details.sponsor !== 'Self Sponsor') out.person.establishment = pairs[2];
+    }
+  }
   const nationality = sameLineValue(text, /Nationality/i, /[A-Z][A-Za-z ]{2,40}/);
   if (nationality) out.person.nationality = titleCase(nationality);
   const dob = dateNear(text, /Date\s*of\s*Birth|D\.?O\.?B/i, 40);
@@ -1506,7 +1547,69 @@ function emirateIn(latin: string, label: RegExp): string | undefined {
   return hit ? titleCase(hit[1].replace(/\s+/g, ' ')) : undefined;
 }
 
-const TRAFFIC_CODE = /T\.?\s*C\.?\s*(?:No|Number)|Traffic\s*Code\s*(?:No|Number)?/;
+const TRAFFIC_CODE = /T\.?\s*C\.?\s*(?:No|Number)|Traffic\s*(?:Code|File)\s*(?:No|Number|#)?/;
+
+// The UAE PASS / Apple Wallet passes of both cards print a row of labels with
+// their values on the row below ("EXP. DATE  ISSUE DATE  TRAFFIC FILE #" over
+// "2028-12-05  2015-11-28  12828525"), so a value is also looked for, by its
+// shape, on the line under its label.
+
+/** The first non-empty line under the first line matching *label*. */
+function lineBelow(lines: string[], label: RegExp): string | undefined {
+  const i = lines.findIndex((l) => label.test(l));
+  return i < 0 ? undefined : lines.slice(i + 1).find(Boolean);
+}
+
+/** A line under *label* — within a few, as OCR's sparse pass can read the
+ *  card header between a label and its value — that is just a number. */
+function numberBelow(lines: string[], label: RegExp, value: RegExp, within = 4): string | undefined {
+  for (let i = 0; i < lines.length; i++) {
+    if (!label.test(lines[i])) continue;
+    const hit = lines
+      .slice(i + 1)
+      .filter(Boolean)
+      .slice(0, within)
+      .map((l) => l.match(new RegExp(`^(${value.source})$`))?.[1])
+      .find(Boolean);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function cardLines(latin: string): string[] {
+  return latin.split('\n').map((l) => l.trim());
+}
+
+/** A traffic file number: 6–10 digits on its own, not part of a date. */
+function trafficFile(latin: string, lines: string[]): string | undefined {
+  const same = labelValue(latin, TRAFFIC_CODE, /\d{5,12}/);
+  if (same) return same;
+  const below = lineBelow(lines, new RegExp(TRAFFIC_CODE.source, 'i'));
+  return below?.replace(/\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}/g, ' ').match(/\b\d{6,10}\b/)?.[0];
+}
+
+const COUNTRY_NAMES = [...new Set(Object.values(COUNTRY_CODES))];
+
+/** A country name on *line* ("… Dubai India" → India). */
+function countryIn(line: string | undefined): string | undefined {
+  if (!line) return undefined;
+  return COUNTRY_NAMES.find((c) => new RegExp(`\\b${c}\\b`, 'i').test(line));
+}
+
+/** Words a card's header and labels use — never part of a holder's name. */
+const TRAFFIC_CARD_WORDS =
+  /\b(?:UNITED|ARAB|EMIRATES|DRIVING|VEHICLE|LICEN[CS]E|DATE|ISSUE|EXP|TRAFFIC|FILE|CATEGORY|NATIONALITY|PLACE|CHASSIS|MODEL|INS|PRIVATE|COMMERCIAL|TAXI|EXPORT|NO)\b/i;
+
+/** A holder's name printed without a label: a line of capitalised words that
+ *  is neither a card word nor a country. */
+function unlabelledName(line: string): boolean {
+  return /^[A-Z][A-Z'-]+(?: [A-Z][A-Z'-]+)*$/.test(line) && !TRAFFIC_CARD_WORDS.test(line) && !countryIn(line);
+}
+
+/** "PRIVATE X 74346" (class, code, number — the number often a line below). */
+const PLATE = /\b(?:PRIVATE|COMMERCIAL|TAXI|PUBLIC|EXPORT|MOTOR\s*CYCLE|CLASSIC|TRAILER|DIPLOMATIC)\s+([A-Z]{1,2}|\d{1,2})\b[^\n\d]*\n?[^\n\d]*?\b(\d{1,6})\b/i;
+/** A vehicle identification number: 17 characters, letters and digits, no I/O/Q. */
+const VIN = /\b(?=[A-HJ-NPR-Z0-9]*\d)(?=[A-HJ-NPR-Z0-9]*[A-HJ-NPR-Z])[A-HJ-NPR-Z0-9]{17}\b/;
 const CARD_PLACE = /Place\s*of\s*Issue|Issuing\s*Place/;
 /** "Exp. Date" — but not the mulkiya's "Ins. Exp." beside it. */
 const CARD_EXPIRY = /(?<!Ins\.?\s{0,2})(?:Expiry\s*Date|Exp\.?\s*Date|Date\s*of\s*Expiry|Valid\s*Until)/i;
@@ -1539,16 +1642,22 @@ export function parseDrivingLicense(raw: string): DocumentFields {
   const latin = text.replace(/[؀-ۿ]+/g, ' ').replace(/[ \t]+/g, ' ');
   const out = empty();
 
-  out.document_number = labelValue(latin, /Licen[cs]e\s*(?:No|Number)/, /\d{4,12}/);
-  const tc = labelValue(latin, TRAFFIC_CODE, /\d{5,12}/);
+  const lines = cardLines(latin);
+  out.document_number =
+    labelValue(latin, /Licen[cs]e\s*(?:No|Number)/, /\d{4,12}/) ??
+    numberBelow(lines, /Licen[cs]e\s*(?:No|Number)/i, /\d{5,9}/);
+  const tc = trafficFile(latin, lines);
   if (tc) out.details.traffic_code_number = tc;
 
-  const name = afterLabel(latin, /\b(?:Name|NAME)/, PRINTED_NAME);
+  const name =
+    afterLabel(latin, /\b(?:Name|NAME)/, PRINTED_NAME) ?? lines.find(unlabelledName);
   if (name) {
     out.details.name = titleCase(name);
     out.person.full_name = titleCase(name);
   }
-  const nationality = afterLabel(latin, /\b(?:Nationality|NATIONALITY)/, /[A-Z][A-Za-z ]{2,40}/);
+  const nationality =
+    afterLabel(latin, /\b(?:Nationality|NATIONALITY)/, /[A-Z][A-Za-z ]{2,40}/)?.replace(/^(?:Place|PLACE)\b.*/, '') ||
+    countryIn(lineBelow(lines, /Nationality/i));
   if (nationality) {
     out.details.nationality = titleCase(nationality);
     out.person.nationality = titleCase(nationality);
@@ -1570,7 +1679,9 @@ export function parseDrivingLicense(raw: string): DocumentFields {
     out.details.place_of_issue = emirate;
     out.issuing_authority = trafficAuthority(emirate);
   }
-  const classes = VEHICLE_CLASSES.filter(([re]) => re.test(latin)).map(([, label]) => label);
+  const classes = VEHICLE_CLASSES.filter(([re]) => re.test(latin)).map(([re, label]) =>
+    label === 'Light vehicle' && new RegExp(`${re.source}\\s*automatic`, 'i').test(latin) ? 'Light vehicle (automatic)' : label,
+  );
   if (classes.length) out.details.vehicle_classes = classes.join(', ');
   return out;
 }
@@ -1581,18 +1692,38 @@ export function parseVehicleLicense(raw: string): DocumentFields {
   const out = empty();
 
   // "Traffic Plate No. 12345" with its code ("A", "3") when printed alongside.
-  const plate = labelValue(latin, /(?:Traffic\s*)?Plate\s*(?:No|Number)/, /(?:[A-Z]{1,2}|\d{1,2})?\s?\d{1,6}\b/);
+  const lines = cardLines(latin);
+  const classed = latin.match(PLATE);
+  const plate =
+    labelValue(latin, /(?:Traffic\s*)?Plate\s*(?:No|Number)/, /(?:[A-Z]{1,2}|\d{1,2})?\s?\d{1,6}\b/) ??
+    (classed ? `${classed[1]} ${classed[2]}` : undefined);
   const emirate = emirateIn(latin, CARD_PLACE);
   if (plate) out.document_number = plate.toUpperCase();
   if (emirate) {
     out.details.place_of_issue = emirate;
     out.issuing_authority = trafficAuthority(emirate);
   }
-  const tc = labelValue(latin, TRAFFIC_CODE, /\d{5,12}/);
+  const tc = trafficFile(latin, lines);
   if (tc) out.details.traffic_code_number = tc;
 
-  const owner = afterLabel(latin, /\b(?:Owner|OWNER)(?:'s)?(?:\s*Name)?/, /[A-Z][A-Za-z0-9&.,'() -]{2,80}/);
-  if (owner) out.details.owner = owner.replace(/\s+(?:Nationality|NATIONALITY)\b.*$/, '');
+  // The pass prints the owner unlabelled, over one or two lines, under the
+  // owner's country.
+  const owner =
+    afterLabel(latin, /\b(?:Owner|OWNER)(?:'s)?(?:\s*Name)?/, /[A-Z][A-Za-z0-9&.,'() -]{2,80}/)?.replace(
+      /\s+(?:Nationality|NATIONALITY)\b.*$/,
+      '',
+    ) ??
+    (() => {
+      const start = lines.findIndex(unlabelledName);
+      if (start < 0) return undefined;
+      const run: string[] = [];
+      for (const l of lines.slice(start)) {
+        if (!unlabelledName(l)) break;
+        run.push(l);
+      }
+      return titleCase(run.join(' '));
+    })();
+  if (owner) out.details.owner = owner;
 
   const insExpiry = dateRightAfter(latin, /Ins(?:urance)?\.?\s*Exp(?:iry)?\.?(?:\s*Date)?/i);
   const dates = cardDates(latin, /Reg(?:istration)?\.?\s*Date|Issue\s*Date|Date\s*of\s*Issue/i, [insExpiry]);
@@ -1608,15 +1739,20 @@ export function parseVehicleLicense(raw: string): DocumentFields {
   const insurer = afterLabel(latin, /\b(?:Insurance\s*Company|INSURANCE\s*COMPANY|Insurer|INSURER|Ins\.?\s*Co\.?)/, /[A-Z][A-Za-z&.' -]{2,60}/);
   if (insurer) out.details.insurer = insurer;
 
-  const year = labelValue(latin, /Model(?:\s*Year)?|Year\s*of\s*Manufacture/, /(?:19|20)\d{2}\b/);
+  // "2024/MODEL 3" — the pass's year and model under MODEL.
+  const yearModel = lineBelow(lines, /\bModel\b/i)?.match(/\b((?:19|20)\d{2})\s*\/\s*([A-Za-z0-9][A-Za-z0-9 .-]{0,40}?)\s*$/);
+  const year = labelValue(latin, /Model(?:\s*Year)?|Year\s*of\s*Manufacture/, /(?:19|20)\d{2}\b/) ?? yearModel?.[1];
   if (year) out.details.model_year = year;
-  const make = afterLabel(latin, /\b(?:Make|MAKE|Vehicle\s*Make|Brand|BRAND)/, /[A-Z][A-Za-z0-9 .-]{1,40}/);
+  const make =
+    afterLabel(latin, /\b(?:Make|MAKE|Vehicle\s*Make|Brand|BRAND)/, /[A-Z][A-Za-z0-9 .-]{1,40}/) ??
+    (yearModel ? titleCase(yearModel[2]) : undefined);
   if (make) out.details.make_model = make;
   const type = afterLabel(latin, /\b(?:Veh\.?\s*Type|Vehicle\s*Type|VEH\.?\s*TYPE|VEHICLE\s*TYPE)/, /[A-Z][A-Za-z .-]{2,30}/);
   if (type) out.details.vehicle_type = titleCase(type);
   const colour = afterLabel(latin, /\b(?:Colou?r|COLOU?R)/, /[A-Z][A-Za-z ]{2,20}/);
   if (colour) out.details.colour = titleCase(colour);
-  const chassis = labelValue(latin, /Chassis\s*(?:No|Number)?/, /[A-HJ-NPR-Z0-9]{11,17}/);
+  const chassis =
+    labelValue(latin, /Chassis\s*(?:No|Number)?/, /[A-HJ-NPR-Z0-9]{11,17}/) ?? latin.match(VIN)?.[0];
   if (chassis) out.details.chassis_number = chassis.toUpperCase();
   const engine = labelValue(latin, /Engine\s*(?:No|Number)/, /[A-Z0-9][A-Z0-9-]{3,20}/);
   if (engine) out.details.engine_number = engine.toUpperCase();

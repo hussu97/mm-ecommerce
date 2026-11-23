@@ -277,6 +277,46 @@ describe('Indian passport scanned with its last page', () => {
   });
 });
 
+describe('ICP e-visa without printed labels', () => {
+  // pdf.js text of a real e-visa (values only; the labels are images), with
+  // every identity value made up.
+  const evisa = [
+    'ﺍﻟﻬﻮﻳﺔ   ﺭﻗﻢ',
+    '784199012345671',
+    'ﺩﺑﻲ',
+    'Dubai   201/2023/1234567',
+    'K1234567',
+    'ﻛﻮﻣﺎﺭ   ﺭﺍﻓﻲ',
+    'RAVI KUMAR',
+    'ﺍﻧﺘﺎﺝ   ﻣﺪﻳﺮ',
+    'PRODUCTION MANAGER',
+    'ﻧﻔﺴﻪ   ﺍﻟﻜﻔﻴﻞ',
+    'Self Sponsor',
+    '2033/02/15   2023/02/16',
+  ].join('\n');
+
+  it('takes the name, profession and sponsor from the value pairs', () => {
+    const out = parseVisa(evisa);
+    expect(out.document_number).toBe('201/2023/1234567');
+    expect(out.details).toMatchObject({
+      uid_number: '784199012345671',
+      passport_number: 'K1234567',
+      profession: 'Production Manager',
+      sponsor: 'Self Sponsor',
+    });
+    expect(out.person).toMatchObject({ full_name: 'Ravi Kumar', job_title: 'Production Manager' });
+    // Self-sponsored: no establishment to match to a legal entity.
+    expect(out.person.establishment).toBeUndefined();
+    expect([out.issue_date, out.expiry_date]).toEqual(['2023-02-16', '2033-02-15']);
+  });
+
+  it('offers an employer sponsor as the establishment', () => {
+    const out = parseVisa(evisa.replace('ﻧﻔﺴﻪ   ﺍﻟﻜﻔﻴﻞ', 'ﺍﻟﺤﻠﻮﻳﺎﺕ').replace('Self Sponsor', 'FATEMA CAKE SWEETS'));
+    expect(out.details.sponsor).toBe('FATEMA CAKE SWEETS');
+    expect(out.person.establishment).toBe('FATEMA CAKE SWEETS');
+  });
+});
+
 describe('residence visa', () => {
   it('reads the old sticker: values left of their labels, labels garbled, expiry label between the dates', () => {
     // The layout (pdf/OCR text) of a real Sharjah residence sticker; identity values made up.

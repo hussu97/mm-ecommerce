@@ -46,7 +46,7 @@ describe('driving licence', () => {
       date_of_birth: '1990-03-15',
       traffic_code_number: '50123456',
       place_of_issue: 'Dubai',
-      vehicle_classes: 'Light vehicle, Motorcycle',
+      vehicle_classes: 'Light vehicle (automatic), Motorcycle',
     });
   });
 
@@ -97,5 +97,67 @@ describe('vehicle licence (mulkiya)', () => {
     const out = parseVehicleLicense(MULKIYA.replace('Traffic Plate No. A 12345', 'Traffic Plate No.'));
     expect(out.document_number).toBeUndefined();
     expect(out.warnings).toContain('No plate number found — enter it: it tells this vehicle apart.');
+  });
+});
+
+// Tesseract's block + sparse passes over the UAE PASS / Apple Wallet pass of
+// each card (labels in a row, values on the row below), values made up.
+const DL_PASS = `UNITED ARAB EMIRATES               LICE ols
+Driving License                                              12 345 67
+RAVI SURESH KUMAR
+EXP. DATE       ISSUE DATE     TRAFFIC FILE #
+2030-04-09 2020-04-10 50123456
+CATEGORY           PLACE OF ISSUE NATIONALITY
+Light Vehicle Automatic (A) Dubai          India
+
+LICENSE NO.
+
+UNITED ARAB EMIRATES
+
+Driving License
+
+1234567
+
+RAVI SURESH KUMAR`;
+
+const VL_PASS = `UNITED ARAB EMIRATES                PRIVATE X
+Vehicle License                                                  12345
+INDIA
+RAVI SURESH
+KUMAR
+EXP. DATE   TRAFFIC FILE # CHASSIS #
+24/02/2027 50123456       JTDBR32E520012345
+INS. EXP DATE PLACE OF ISSUE MODEL
+-                    DUBAI              2024/MODEL 3`;
+
+describe('Wallet passes', () => {
+  it('reads a driving licence pass', () => {
+    const out = parseDrivingLicense(DL_PASS);
+    expect(out).toMatchObject({
+      document_number: '1234567',
+      issue_date: '2020-04-10',
+      expiry_date: '2030-04-09',
+      issuing_authority: 'RTA Dubai',
+    });
+    expect(out.details).toEqual({
+      name: 'Ravi Suresh Kumar',
+      nationality: 'India',
+      traffic_code_number: '50123456',
+      place_of_issue: 'Dubai',
+      vehicle_classes: 'Light vehicle (automatic)',
+    });
+  });
+
+  it('reads a vehicle licence pass', () => {
+    const out = parseVehicleLicense(VL_PASS);
+    expect(out).toMatchObject({ document_number: 'X 12345', expiry_date: '2027-02-24', warnings: [] });
+    expect(out.details).toEqual({
+      place_of_issue: 'Dubai',
+      traffic_code_number: '50123456',
+      owner: 'Ravi Suresh Kumar',
+      model_year: '2024',
+      make_model: 'Model 3',
+      chassis_number: 'JTDBR32E520012345',
+    });
   });
 });
