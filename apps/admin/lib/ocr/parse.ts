@@ -945,7 +945,9 @@ export type Td1 = {
 function findTd1All(text: string): Array<[string, string, string]> {
   const lines = text
     .split('\n')
-    .map(mrzLine)
+    // A photo's margin comes out as a stray letter or two ahead of the zone
+    // ("FR    ABBASI<<HUSSAIN…"), which would join the surname.
+    .map((l) => mrzLine(l.trim().replace(/^\S{1,2}\s+(?=\S{10,})/, '')))
     .filter((l) => l.length > 0);
   const triples: Array<[string, string, string]> = [];
   for (let i = 0; i < lines.length - 2; i++) {
@@ -1022,6 +1024,38 @@ const EID_BIRTH = /Date\s*of\s*Birth|D\.?O\.?B/i;
 /** Two to six capitalised words — a printed name, not OCR's Latin noise. */
 const PRINTED_NAME = /[A-Z][A-Za-z'-]+(?:[ ][A-Z][A-Za-z'-]+){1,5}/;
 
+/** Levenshtein distance, for comparing two readings of a short word. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** The same name, word for word, with at most two letters misread per word. */
+function sameNameMisread(printed: string, mrz: string): boolean {
+  const p = printed.toUpperCase().split(/\s+/);
+  const m = mrz.toUpperCase().split(/\s+/);
+  return p.length === m.length && p.every((w, i) => w !== m[i] ? editDistance(w, m[i]) <= 2 && m[i].length >= 4 : true);
+}
+
+/** A date a whole card term (1, 2, 3, 5 or 10 years, less a day) before
+ *  *expiry* — the issue date when its label was lost. */
+function termBefore(dates: string[], expiry: string | undefined, exclude: Array<string | undefined>): string | undefined {
+  if (!expiry) return undefined;
+  const end = Date.parse(expiry);
+  return dates.find((d) => {
+    if (exclude.includes(d) || Date.parse(d) >= end) return false;
+    const years = (end - Date.parse(d)) / (365.25 * 86_400_000);
+    return [1, 2, 3, 5, 10].some((t) => Math.abs(years - t) < 0.02);
+  });
+}
+
 export function parseEmiratesId(raw: string): DocumentFields {
   const text = normalise(raw);
   const latin = text.replace(/[؀-ۿ]+/g, ' ').replace(/[ \t]+/g, ' ');
@@ -1056,6 +1090,9 @@ export function parseEmiratesId(raw: string): DocumentFields {
     out.warnings.push('Expiry date guessed as the latest date on the card — check it.');
   }
   if (printedIssue && out.expiry_date && printedIssue < out.expiry_date) out.issue_date = printedIssue;
+  // The label lost to OCR: a date on the card a whole term (1, 2, 3, 5 or 10
+  // years) less a day before the expiry is the issue date.
+  out.issue_date ??= termBefore(findDates(latin), out.expiry_date, [dob, printedDob, mrz?.birth]);
 
   // Warn only where a value that failed its check digit is the one filled in.
   // A failed MRZ field with a printed reading to fall back on is the check
@@ -1082,13 +1119,24 @@ export function parseEmiratesId(raw: string): DocumentFields {
     afterLabel(latin, /\b(?:Nationality|NATIONALITY)/, /[A-Z][A-Za-z ]{2,40}/) ?? mrz?.nationality ?? arabicNationality(text);
   const printedName = afterLabel(latin, /\b(?:Name|NAME)/, PRINTED_NAME);
   const mrzName = [mrz?.given, mrz?.surname].filter(Boolean).join(' ');
-  const name = printedName ? titleCase(printedName) : mrzName ? titleCase(mrzName) : undefined;
+  // The printed name wins (the MRZ truncates long names and has no check
+  // digit on them) — unless it is the MRZ's name with a letter or two
+  // misread in each word ("Ahier Abbesi" for AKHTER ABBASI): the MRZ's
+  // OCR-B font reads better than the card's.
+  const name = printedName
+    ? titleCase(mrzName && sameNameMisread(printedName, mrzName) ? mrzName : printedName)
+    : mrzName
+      ? titleCase(mrzName)
+      : undefined;
   if (!printedName && mrzName && mrz?.noisy) {
     out.warnings.push('The name in the machine-readable zone was hard to read — check it against the card.');
   }
-  const occupation = afterLabel(latin, /\b(?:Occupation|OCCUPATION|Profession|PROFESSION)/, /[A-Z][A-Za-z /&-]{2,60}/);
+  // Trailing lower-case words are OCR noise beside the value ("Manager oR").
+  const occupation = afterLabel(latin, /\b(?:Occupation|OCCUPATION|Profession|PROFESSION)/, /[A-Z][A-Za-z /&-]{2,60}/)
+    ?.replace(/(?: [a-z][A-Za-z]{0,2})+$/, '');
   const employer = afterLabel(latin, /\b(?:Employer|EMPLOYER)(?:\s*Name)?/, /[A-Z][A-Za-z0-9 &.,'()-]{2,80}/);
-  const place = afterLabel(latin, /\b(?:Issuing\s*Place|ISSUING\s*PLACE|Place\s*of\s*Issue)/, /[A-Z][A-Za-z ]{2,30}/);
+  const place = afterLabel(latin, /\b(?:[Ii]ssuing\s*Place|ISSUING\s*PLACE|Place\s*of\s*Issue)/, /[A-Z][A-Za-z ]{2,30}/)
+    ?.replace(/(?: [a-z][A-Za-z]{0,2})+$/, '');
 
   if (name) out.details.name = name;
   if (nationality) out.details.nationality = titleCase(nationality);

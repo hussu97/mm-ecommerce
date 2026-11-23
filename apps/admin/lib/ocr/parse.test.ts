@@ -446,6 +446,47 @@ Issuing Place: Dubai مكان الإصدار
 Card Number / رقم البطاقة 123456789
 ${EID_MRZ}`;
 
+describe('Emirates ID photographed on a cloth (black-and-white pass)', () => {
+  // The shape Tesseract produced for a real phone photo of both sides, read
+  // through `binarise`, with every identity value made up: margin noise ahead
+  // of the MRZ lines, labels lost or lower-cased, the printed name misread.
+  const photo = [
+    'Loy TER ow [7 fi] Occupation: Preduction Manager oR',
+    '4 ILARE1234567897784199012345671 :',
+    'a 9001158M2803102PHL<<<<<<K<<L<E ~',
+    'FR CRUZ<<JUAN<SANTOS<<<<<<<<<<<<<',
+    'issuing Place: Dubai oR',
+    '784-1990-1234567-1',
+    'Name: Juen Sentos Crux',
+    '15/01/1990',
+    '11/03/2026',
+    'Sesirs/ hs Expiry',
+  ].join('\n');
+
+  it('drops margin noise ahead of the zone instead of gluing it to the surname', () => {
+    expect(parseTd1(photo)).toMatchObject({ surname: 'CRUZ', given: 'JUAN SANTOS', cardOk: true, birthOk: true });
+  });
+
+  it('takes the MRZ name over a printed one with letters misread', () => {
+    expect(parseEmiratesId(photo).details.name).toBe('Juan Santos Cruz');
+  });
+
+  it('keeps a printed name that differs from the MRZ by more than a misread', () => {
+    const out = parseEmiratesId(photo.replace('Juen Sentos Crux', 'Juan Miguel Santos Cruz'));
+    expect(out.details.name).toBe('Juan Miguel Santos Cruz');
+  });
+
+  it('finds the issue date a whole term before the expiry when its label is lost', () => {
+    const out = parseEmiratesId(photo);
+    expect(out.expiry_date).toBe('2028-03-10');
+    expect(out.issue_date).toBe('2026-03-11');
+  });
+
+  it('reads a lower-cased label and drops trailing noise', () => {
+    expect(parseEmiratesId(photo).details).toMatchObject({ place_of_issue: 'Dubai', occupation: 'Preduction Manager' });
+  });
+});
+
 describe('Emirates ID', () => {
   it('reads both sides, with the MRZ check digits agreeing', () => {
     const out = parseEmiratesId(`${EID_FRONT}\n\n${EID_BACK}`);

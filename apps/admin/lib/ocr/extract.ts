@@ -13,7 +13,9 @@
  * sparse text (finds values floating away from their label, like a card's
  * expiry date) — and the parsers read both. Documents with a machine-readable
  * zone (passport, Emirates ID) get a third pass over the bottom of the page
- * restricted to MRZ characters.
+ * restricted to MRZ characters. When that pass finds no zone — a phone photo
+ * of a card on a patterned background — the passes run again over a
+ * black-and-white copy (`binarise`), which is what reads those.
  *
  * A scanned passport PDF is read over its first two pages: a phone scan of the
  * open booklet often puts the address page first and the photo page — the one
@@ -23,6 +25,8 @@
  * pages rendered and stacked, and two photos are combined into one image
  * (`combineImages`) that is both read and stored, so the record keeps one file.
  */
+
+import { binarise, looksLikeMrz } from './binarise';
 
 export type ExtractProgress = (stage: string, fraction?: number) => void;
 
@@ -132,6 +136,18 @@ export async function combineImages(files: File[], name: string): Promise<File> 
   }
 }
 
+/** A black-and-white copy of *source* for OCR (see `binarise`). */
+function binarised(source: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = source.getContext('2d');
+  const out = canvasOf(source.width, source.height);
+  const outCtx = out.getContext('2d');
+  if (!ctx || !outCtx) return source;
+  const image = ctx.getImageData(0, 0, source.width, source.height);
+  image.data.set(binarise(image.data, source.width, source.height));
+  outCtx.putImageData(image, 0, 0);
+  return out;
+}
+
 /** The bottom third of a page, where a passport's MRZ sits. */
 function bottomBand(source: HTMLCanvasElement): HTMLCanvasElement {
   const top = Math.round(source.height * 0.62);
@@ -144,7 +160,6 @@ async function ocr(
   pages: HTMLCanvasElement[],
   { mrz, twoSided, onProgress }: { mrz: boolean; twoSided: boolean; onProgress?: ExtractProgress },
 ): Promise<string> {
-  const canvas = pages.length === 1 ? pages[0] : stack(pages);
   const { createWorker, PSM } = await import('tesseract.js');
   onProgress?.('Loading the text reader…');
   const worker = await createWorker('eng', 1, {
@@ -154,14 +169,17 @@ async function ocr(
   });
   try {
     const passes: string[] = [];
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-      preserve_interword_spaces: '1',
-    });
-    passes.push((await worker.recognize(canvas)).data.text);
-    await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
-    passes.push((await worker.recognize(canvas)).data.text);
-    if (mrz) {
+    const read = async (pageSet: HTMLCanvasElement[]) => {
+      const image = pageSet.length === 1 ? pageSet[0] : stack(pageSet);
+      await worker.setParameters({
+        tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+        preserve_interword_spaces: '1',
+        tessedit_char_whitelist: '',
+      });
+      passes.push((await worker.recognize(image)).data.text);
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+      passes.push((await worker.recognize(image)).data.text);
+      if (!mrz) return '';
       await worker.setParameters({
         tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
         tessedit_char_whitelist: MRZ_CHARS,
@@ -171,8 +189,19 @@ async function ocr(
       // zone by its shape among whatever else that pass reads. A passport's
       // MRZ is at the foot of whichever page is the photo page, so each
       // page's bottom band is read.
-      const zone = twoSided ? canvas : pages.length === 1 ? bottomBand(canvas) : stack(pages.map(bottomBand));
-      passes.push((await worker.recognize(zone)).data.text);
+      const zone = twoSided ? image : pageSet.length === 1 ? bottomBand(image) : stack(pageSet.map(bottomBand));
+      const text = (await worker.recognize(zone)).data.text;
+      passes.push(text);
+      return text;
+    };
+    const zone = await read(pages);
+    // No zone in a document that has one: most often a photo whose background
+    // and tint drown the print. Read a black-and-white copy as well — in
+    // addition, not instead, as it loses the faint print of a low-resolution
+    // scan that the colour passes read.
+    if (mrz && !looksLikeMrz(zone)) {
+      onProgress?.('Reading it again in black and white…');
+      await read(pages.map(binarised));
     }
     return passes.join('\n\n');
   } finally {
