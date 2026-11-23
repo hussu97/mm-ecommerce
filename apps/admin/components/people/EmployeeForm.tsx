@@ -19,7 +19,9 @@ type Draft = {
   job_title: string;
   personal_number: string;
   phone: string;
+  /** A legal entity's id, `OTHER_SPONSOR`, or '' for none. */
   legal_entity_id: string;
+  sponsor_name: string;
   branch_id: string;
   user_id: string;
   joined_on: string;
@@ -27,6 +29,10 @@ type Draft = {
   status: 'active' | 'left';
   notes: string;
 };
+
+/** The sponsor select's choice for a sponsor that is not one of our legal
+ *  entities (someone else's employee, kept here for their papers). */
+const OTHER_SPONSOR = 'other';
 
 function draftFrom(e: Employee | null): Draft {
   return {
@@ -38,7 +44,8 @@ function draftFrom(e: Employee | null): Draft {
     job_title: e?.job_title ?? '',
     personal_number: e?.personal_number ?? '',
     phone: e?.phone ?? '',
-    legal_entity_id: e?.legal_entity_id ?? '',
+    legal_entity_id: e?.legal_entity_id ?? (e?.sponsor_name ? OTHER_SPONSOR : ''),
+    sponsor_name: e?.sponsor_name ?? '',
     branch_id: e?.branch_id ?? '',
     user_id: e?.user_id ?? '',
     joined_on: e?.joined_on ?? '',
@@ -89,7 +96,8 @@ export function EmployeeForm({
       job_title: blank(draft.job_title),
       personal_number: blank(draft.personal_number),
       phone: blank(draft.phone),
-      legal_entity_id: draft.legal_entity_id || null,
+      legal_entity_id: draft.legal_entity_id === OTHER_SPONSOR ? null : draft.legal_entity_id || null,
+      sponsor_name: draft.legal_entity_id === OTHER_SPONSOR ? blank(draft.sponsor_name) : null,
       branch_id: draft.branch_id || null,
       user_id: draft.user_id || null,
       joined_on: draft.joined_on || null,
@@ -151,12 +159,23 @@ export function EmployeeForm({
           />
           <Input label="Phone" value={draft.phone} onChange={(e) => set('phone', e.target.value)} />
           <Select
-            label="Sponsor (legal entity)"
+            label="Sponsor"
             value={draft.legal_entity_id}
             onChange={(e) => set('legal_entity_id', e.target.value)}
             placeholder="—"
-            options={entities.map((e) => ({ value: e.id, label: e.legal_name }))}
+            options={[
+              ...entities.map((e) => ({ value: e.id, label: e.legal_name })),
+              { value: OTHER_SPONSOR, label: 'Another company…' },
+            ]}
           />
+          {draft.legal_entity_id === OTHER_SPONSOR && (
+            <Input
+              label="Sponsor's name"
+              value={draft.sponsor_name}
+              onChange={(e) => set('sponsor_name', e.target.value)}
+              placeholder="As on the visa"
+            />
+          )}
           <Select
             label="Branch"
             value={draft.branch_id}

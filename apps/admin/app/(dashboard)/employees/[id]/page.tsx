@@ -425,7 +425,9 @@ export default function EmployeePage() {
                   </a>
                 </Field>
               )}
-              {entity && <Field label="Sponsor">{entity.legal_name}</Field>}
+              {(entity || employee.sponsor_name) && (
+                <Field label="Sponsor">{entity?.legal_name ?? employee.sponsor_name}</Field>
+              )}
               {branch && <Field label="Branch">{branch.name}</Field>}
               {account && <Field label="Till / console account">{account}</Field>}
               {employee.joined_on && <Field label="Joined">{formatDate(employee.joined_on)}</Field>}

@@ -155,9 +155,21 @@ async def _check_user(
         raise ConflictError(f"That account is already linked to {other}")
 
 
+def _one_sponsor(employee: Employee, data: dict) -> None:
+    """Our legal entity or an outside sponsor's name, never both: the one
+    being set clears the other (the entity wins if a request sends both)."""
+    name = (employee.sponsor_name or "").strip() or None
+    employee.sponsor_name = name
+    if data.get("legal_entity_id"):
+        employee.sponsor_name = None
+    elif name and "sponsor_name" in data:
+        employee.legal_entity_id = None
+
+
 async def create_employee(db: AsyncSession, data: dict) -> Employee:
     await _check_user(db, data.get("user_id"), employee_id=None)
     employee = Employee(**data)
+    _one_sponsor(employee, data)
     db.add(employee)
     await db.flush()
     await db.refresh(employee, ["documents", "files", "user"])
@@ -172,6 +184,7 @@ async def update_employee(db: AsyncSession, employee: Employee, data: dict) -> E
         if value is None and field in {"full_name", "status"}:
             continue
         setattr(employee, field, value)
+    _one_sponsor(employee, data)
     await db.flush()
     await db.refresh(employee, ["user"])
     return employee

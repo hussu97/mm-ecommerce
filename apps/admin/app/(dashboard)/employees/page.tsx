@@ -157,7 +157,7 @@ export default function EmployeesPage() {
               {row.status === 'left' && <Badge>Left</Badge>}
             </span>
             <span className="block truncate text-xs font-normal text-gray-500">
-              {[row.job_title, entityName(row.legal_entity_id), branchName(row.branch_id)]
+              {[row.job_title, entityName(row.legal_entity_id) ?? row.sponsor_name, branchName(row.branch_id)]
                 .filter(Boolean)
                 .join(' · ') || 'No job title yet'}
             </span>

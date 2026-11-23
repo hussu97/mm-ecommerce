@@ -230,6 +230,37 @@ async def test_the_list_signs_each_photo_and_skips_the_rest(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize(
+    ("held", "sent", "entity", "name"),
+    [
+        # Picking one of ours clears an outside name, and vice versa.
+        ({"sponsor_name": "Other Co"}, {"legal_entity_id": "E"}, "E", None),
+        (
+            {"legal_entity_id": "E"},
+            {"legal_entity_id": None, "sponsor_name": "Other Co"},
+            None,
+            "Other Co",
+        ),
+        ({"legal_entity_id": "E"}, {"sponsor_name": " Other Co "}, None, "Other Co"),
+        # Both sent: the legal entity wins. A blank name is no name.
+        ({}, {"legal_entity_id": "E", "sponsor_name": "Other Co"}, "E", None),
+        ({"legal_entity_id": "E"}, {"sponsor_name": "  "}, "E", None),
+        # An unrelated edit leaves the sponsor as it was.
+        ({"sponsor_name": "Other Co"}, {"job_title": "Baker"}, None, "Other Co"),
+    ],
+)
+def test_one_sponsor_at_a_time(held, sent, entity, name):
+    from app.services.people import employee_service as svc
+
+    employee = SimpleNamespace(
+        **{"legal_entity_id": None, "sponsor_name": None, **held}
+    )
+    for field, value in sent.items():
+        setattr(employee, field, value)
+    svc._one_sponsor(employee, sent)
+    assert (employee.legal_entity_id, employee.sponsor_name) == (entity, name)
+
+
 def test_issue_after_expiry_is_refused():
     with pytest.raises(ValidationError):
         EmployeeDocumentCreate(

@@ -14917,6 +14917,18 @@
             ],
             "title": "Phone"
           },
+          "sponsor_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sponsor Name"
+          },
           "status": {
             "default": "active",
             "enum": [
@@ -15601,6 +15613,17 @@
             ],
             "title": "Photo Url"
           },
+          "sponsor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sponsor Name"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -15814,6 +15837,17 @@
               }
             ],
             "title": "Phone"
+          },
+          "sponsor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sponsor Name"
           },
           "status": {
             "title": "Status",
@@ -16043,6 +16077,18 @@
               }
             ],
             "title": "Phone"
+          },
+          "sponsor_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sponsor Name"
           },
           "status": {
             "anyOf": [

@@ -185,6 +185,10 @@ class Employee(Base, UUIDMixin, TimestampMixin):
         CheckConstraint(
             "gender IS NULL OR gender IN ('M', 'F')", name="ck_employees_gender"
         ),
+        CheckConstraint(
+            "legal_entity_id IS NULL OR sponsor_name IS NULL",
+            name="ck_employees_one_sponsor",
+        ),
         Index("ix_employees_status", "status"),
         Index("ix_employees_legal_entity", "legal_entity_id"),
         Index("ix_employees_branch", "branch_id"),
@@ -207,6 +211,9 @@ class Employee(Base, UUIDMixin, TimestampMixin):
         ForeignKey("legal_entities.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: A sponsor that is not one of our legal entities (someone sponsored by
+    #: another company, kept here for their papers). At most one of the two.
+    sponsor_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     branch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("branches.id", ondelete="SET NULL"),

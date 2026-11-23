@@ -36,6 +36,8 @@ class _EmployeeFields(BaseModel):
     personal_number: str | None = Field(None, max_length=30)
     phone: str | None = Field(None, max_length=30)
     legal_entity_id: UUID | None = None
+    #: A sponsor outside our legal entities; setting one clears the other.
+    sponsor_name: str | None = Field(None, max_length=200)
     branch_id: UUID | None = None
     #: The person's console / till account (a staff user), if any.
     user_id: UUID | None = None
@@ -70,6 +72,7 @@ class EmployeeListItem(_ORM):
     job_title: str | None
     status: str
     legal_entity_id: UUID | None
+    sponsor_name: str | None = None
     branch_id: UUID | None
     user_id: UUID | None = None
     user_display_name: str | None = None
@@ -123,6 +126,7 @@ class EmployeeResponse(_ORM):
     personal_number: str | None
     phone: str | None
     legal_entity_id: UUID | None
+    sponsor_name: str | None = None
     branch_id: UUID | None
     user_id: UUID | None = None
     user_email: str | None = None

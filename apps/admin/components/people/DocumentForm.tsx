@@ -75,6 +75,7 @@ const PROFILE_LABELS: Record<keyof EmployeeUpdate, string> = {
   job_title: 'Job title',
   personal_number: 'Personal number',
   legal_entity_id: 'Sponsor',
+  sponsor_name: 'Sponsor',
 } as Record<keyof EmployeeUpdate, string>;
 
 /** Match a printed establishment ("FATEMA CAKE SWEETS") to a legal entity. */
@@ -106,8 +107,13 @@ export function profileFill(
   if (person.gender && empty(employee.gender)) fill.gender = person.gender;
   if (person.job_title && empty(employee.job_title)) fill.job_title = person.job_title;
   if (person.personal_number && empty(employee.personal_number)) fill.personal_number = person.personal_number;
+  // The printed establishment: one of our legal entities when it matches one,
+  // otherwise another company's name (someone sponsored elsewhere).
   const entity = matchLegalEntity(person.establishment, entities);
-  if (entity && empty(employee.legal_entity_id)) fill.legal_entity_id = entity.id;
+  if (person.establishment && empty(employee.legal_entity_id) && empty(employee.sponsor_name)) {
+    if (entity) fill.legal_entity_id = entity.id;
+    else fill.sponsor_name = person.establishment;
+  }
   return fill;
 }
 

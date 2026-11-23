@@ -15540,6 +15540,8 @@ export interface components {
             personal_number?: string | null;
             /** Phone */
             phone?: string | null;
+            /** Sponsor Name */
+            sponsor_name?: string | null;
             /**
              * Status
              * @default active
@@ -15773,6 +15775,8 @@ export interface components {
             nationality: string | null;
             /** Photo Url */
             photo_url?: string | null;
+            /** Sponsor Name */
+            sponsor_name?: string | null;
             /** Status */
             status: string;
             /** User Display Name */
@@ -15830,6 +15834,8 @@ export interface components {
             personal_number: string | null;
             /** Phone */
             phone: string | null;
+            /** Sponsor Name */
+            sponsor_name?: string | null;
             /** Status */
             status: string;
             /**
@@ -15872,6 +15878,8 @@ export interface components {
             personal_number?: string | null;
             /** Phone */
             phone?: string | null;
+            /** Sponsor Name */
+            sponsor_name?: string | null;
             /** Status */
             status?: ("active" | "left") | null;
             /** User Id */
