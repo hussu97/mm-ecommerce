@@ -99,7 +99,13 @@ export default function EmployeesPage() {
   }, []);
 
   const withPaper: Row[] = useMemo(
-    () => rows.map((r) => ({ ...r, paper: summarisePaperwork(r.current_documents ?? {}, specs) })),
+    () =>
+      rows.map((r) => {
+        const current = r.current_documents ?? {};
+        // A driving or vehicle licence is listed only for those who hold one.
+        const held = specs.filter((s) => !s.optional || current[s.doc_type]);
+        return { ...r, paper: summarisePaperwork(current, held) };
+      }),
     [rows, specs],
   );
   const counts = useMemo(

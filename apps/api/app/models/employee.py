@@ -32,6 +32,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
 EMPLOYEE_STATUSES: tuple[str, ...] = ("active", "left")
 
 #: The document types, in the order the console shows them. Mirrored by the
-#: CHECK in migration `328_employee_insurance_wps` (the latest to widen
+#: CHECK in migration `332_employee_driving_vehicle` (the latest to widen
 #: `325_employees`'s).
 EMPLOYEE_DOCUMENT_TYPES: tuple[str, ...] = (
     "passport",
@@ -55,7 +56,27 @@ EMPLOYEE_DOCUMENT_TYPES: tuple[str, ...] = (
     "ohc",
     "medical_insurance",
     "wps_card",
+    "driving_license",
+    "vehicle_license",
 )
+
+#: Types a person can hold several of at once — one vehicle licence (mulkiya)
+#: per vehicle. Each number (the plate) is its own series of renewals: its own
+#: current cycle, history and expiry warning. Every other type is one series.
+PER_NUMBER_TYPES: tuple[str, ...] = ("vehicle_license",)
+
+#: Types not everyone holds: absent is not a gap in someone's paperwork.
+OPTIONAL_TYPES: tuple[str, ...] = ("driving_license", "vehicle_license")
+
+#: SQL for a document number as a series key — upper-case letters and digits
+#: only, so "Dubai A 12345" and "DUBAI A12345" are one plate. `number_series`
+#: is the same in Python; migration 332's unique index spells it out too.
+NUMBER_SERIES_SQL = "upper(regexp_replace(document_number, '[^A-Za-z0-9]', '', 'g'))"
+
+
+def number_series(number: str | None) -> str:
+    return "".join(c for c in (number or "").upper() if c.isascii() and c.isalnum())
+
 
 #: The types whose lapse the expiry warning tracks. A passport is renewed long
 #: before it matters (the visa cannot outlive it), so the owner left it out.
@@ -69,6 +90,8 @@ EXPIRY_TRACKED_TYPES: tuple[str, ...] = (
     "ohc",
     "medical_insurance",
     "wps_card",
+    "driving_license",
+    "vehicle_license",
 )
 
 #: Per type: the label, what its number is called, what `issuing_authority` is
@@ -166,6 +189,39 @@ EMPLOYEE_DOCUMENT_SPECS: dict[str, dict[str, Any]] = {
             "employee_code": "Employee / personal code",
             "account_number": "Account / IBAN",
             "routing_code": "Agent routing code",
+        },
+    },
+    "driving_license": {
+        "label": "Driving licence",
+        "number_label": "Licence number",
+        "authority_label": "Licensing authority",
+        "details": {
+            "name": "Name as printed",
+            "nationality": "Nationality",
+            "date_of_birth": "Date of birth",
+            "traffic_code_number": "Traffic code number",
+            "vehicle_classes": "Permitted vehicles",
+            "place_of_issue": "Place of issue",
+        },
+    },
+    #: The vehicle registration card (mulkiya). One series per plate.
+    "vehicle_license": {
+        "label": "Vehicle licence",
+        "number_label": "Plate number",
+        "authority_label": "Licensing authority",
+        "details": {
+            "owner": "Owner",
+            "traffic_code_number": "Traffic code number",
+            "make_model": "Make / model",
+            "vehicle_type": "Vehicle type",
+            "model_year": "Model year",
+            "colour": "Colour",
+            "chassis_number": "Chassis number",
+            "engine_number": "Engine number",
+            "insurer": "Insurer",
+            "insurance_policy": "Insurance policy number",
+            "insurance_expiry": "Insurance expiry",
+            "place_of_issue": "Place of issue",
         },
     },
 }
@@ -276,11 +332,27 @@ class EmployeeDocument(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "employee_documents"
     __table_args__ = (
         _in_list("doc_type", EMPLOYEE_DOCUMENT_TYPES, "ck_employee_documents_doc_type"),
-        UniqueConstraint(
+        # One cycle per (type, expiry) — per (plate, expiry) for a vehicle
+        # licence, of which a person may hold several.
+        Index(
+            "uq_employee_documents_cycle",
             "employee_id",
             "doc_type",
             "expiry_date",
-            name="uq_employee_documents_cycle",
+            unique=True,
+            postgresql_where=text("doc_type <> 'vehicle_license'"),
+        ),
+        Index(
+            "uq_employee_documents_vehicle_cycle",
+            "employee_id",
+            text(NUMBER_SERIES_SQL),
+            "expiry_date",
+            unique=True,
+            postgresql_where=text("doc_type = 'vehicle_license'"),
+        ),
+        CheckConstraint(
+            "doc_type <> 'vehicle_license' OR coalesce(document_number, '') <> ''",
+            name="ck_employee_documents_vehicle_plate",
         ),
         CheckConstraint(
             "issue_date IS NULL OR issue_date <= expiry_date",

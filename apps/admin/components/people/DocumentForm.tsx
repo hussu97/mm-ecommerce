@@ -38,7 +38,12 @@ const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
 /** Document types with a machine-readable zone worth an extra OCR pass. */
 const MRZ_TYPES: ReadonlySet<EmployeeDocType> = new Set(['passport', 'emirates_id']);
 /** Two-sided cards: two photos are combined, a scanned PDF's page 2 is read. */
-const TWO_SIDED_TYPES: ReadonlySet<EmployeeDocType> = new Set(['emirates_id', 'medical_insurance']);
+const TWO_SIDED_TYPES: ReadonlySet<EmployeeDocType> = new Set([
+  'emirates_id',
+  'medical_insurance',
+  'driving_license',
+  'vehicle_license',
+]);
 
 function errorText(err: unknown): string {
   return err instanceof ApiError ? err.message : 'network error';
@@ -54,10 +59,10 @@ type Draft = {
   notes: string;
 };
 
-function draftFrom(doc: EmployeeDocument | null, type: EmployeeDocType): Draft {
+function draftFrom(doc: EmployeeDocument | null, type: EmployeeDocType, number?: string): Draft {
   return {
     doc_type: (doc?.doc_type as EmployeeDocType) ?? type,
-    document_number: doc?.document_number ?? '',
+    document_number: doc?.document_number ?? number ?? '',
     issue_date: doc?.issue_date ?? '',
     expiry_date: doc?.expiry_date ?? '',
     issuing_authority: doc?.issuing_authority ?? '',
@@ -123,6 +128,7 @@ export function DocumentForm({
   entities,
   document,
   initialType,
+  initialNumber,
   onClose,
   onSaved,
 }: {
@@ -132,11 +138,13 @@ export function DocumentForm({
   /** Editing this cycle; omit to add a new one. */
   document?: EmployeeDocument | null;
   initialType: EmployeeDocType;
+  /** A renewal of one of several (a vehicle licence): its plate. */
+  initialNumber?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const editing = Boolean(document);
-  const [draft, setDraft] = useState<Draft>(() => draftFrom(document ?? null, initialType));
+  const [draft, setDraft] = useState<Draft>(() => draftFrom(document ?? null, initialType, initialNumber));
   const [file, setFile] = useState<File | null>(null);
   const [reading, setReading] = useState<string | null>(null);
   const [scan, setScan] = useState<{ fields: DocumentFields; source: string } | null>(null);
@@ -190,7 +198,9 @@ export function DocumentForm({
       setScan({ fields, source: source === 'pdf-text' ? 'the PDF’s text' : 'the scan (OCR)' });
       setDraft((d) => ({
         ...d,
-        document_number: fields.document_number ?? d.document_number,
+        // Renewing one of several (a vehicle licence): its plate stays as
+        // entered, so the renewal joins that vehicle's history.
+        document_number: (initialNumber ? undefined : fields.document_number) ?? d.document_number,
         issue_date: fields.issue_date ?? d.issue_date,
         expiry_date: fields.expiry_date ?? d.expiry_date,
         issuing_authority: fields.issuing_authority ?? d.issuing_authority,

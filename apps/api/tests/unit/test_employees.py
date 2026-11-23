@@ -48,6 +48,7 @@ DOC_TYPES_MIGRATIONS = [
     MIGRATION,
     VERSIONS / "327_employee_emirates_id.py",
     VERSIONS / "328_employee_insurance_wps.py",
+    VERSIONS / "332_employee_driving_vehicle.py",
 ]
 
 
@@ -118,6 +119,8 @@ def test_every_type_has_a_spec_and_tracked_types_exclude_the_passport():
         "ohc",
         "medical_insurance",
         "wps_card",
+        "driving_license",
+        "vehicle_license",
     }
 
 
@@ -259,6 +262,53 @@ def test_one_sponsor_at_a_time(held, sent, entity, name):
         setattr(employee, field, value)
     svc._one_sponsor(employee, sent)
     assert (employee.legal_entity_id, employee.sponsor_name) == (entity, name)
+
+
+def test_each_plate_is_its_own_run_of_vehicle_licences():
+    from app.services.people import employee_service as svc
+
+    def doc(doc_type, number, expiry):
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            employee_id="E",
+            doc_type=doc_type,
+            document_number=number,
+            expiry_date=date.fromisoformat(expiry),
+        )
+
+    car_old = doc("vehicle_license", "Dubai A 12345", "2025-05-01")
+    car_new = doc("vehicle_license", "DUBAI A12345", "2026-05-01")
+    van = doc("vehicle_license", "Sharjah 3 999", "2026-01-15")
+    dl_old = doc("driving_license", "111", "2024-01-01")
+    dl_new = doc("driving_license", "222", "2034-01-01")
+    current = svc.current_by_type([car_old, car_new, van, dl_old, dl_new])
+    # The plate is matched letters-and-digits only; licence renumbering does
+    # not split a driving licence's history.
+    assert current == {
+        "vehicle_license:DUBAIA12345": car_new,
+        "vehicle_license:SHARJAH3999": van,
+        "driving_license": dl_new,
+    }
+    assert svc.series_key(car_old) == svc.series_key(car_new)
+    assert svc.document_key(car_new, ".jpg").endswith(
+        "/vehicle_license/DUBAIA12345-2026-05-01.jpg"
+    )
+    assert svc.document_key(dl_new, ".jpg").endswith("/driving_license/2034-01-01.jpg")
+
+
+@pytest.mark.parametrize("number", [None, "", " - "])
+def test_a_vehicle_licence_needs_its_plate(number):
+    from app.services.people import employee_service as svc
+
+    with pytest.raises(Exception, match="plate number"):
+        svc._check_number("vehicle_license", number)
+
+
+async def test_document_types_flag_multiple_and_optional():
+    specs = {s.doc_type: s for s in await employees.document_types(_=None)}
+    assert specs["vehicle_license"].multiple and specs["vehicle_license"].optional
+    assert specs["driving_license"].optional and not specs["driving_license"].multiple
+    assert not specs["passport"].multiple and not specs["passport"].optional
 
 
 def test_issue_after_expiry_is_refused():
@@ -422,6 +472,94 @@ async def test_versions_and_the_expiry_warning(monkeypatch):
             await db.execute(delete(Employee).where(Employee.id.in_(ids)))
             if entity_id:
                 await db.execute(delete(LegalEntity).where(LegalEntity.id == entity_id))
+            await db.commit()
+        await engine.dispose()
+
+
+@db_required
+async def test_vehicle_licences_run_per_plate():
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.exceptions import BadRequestError, ConflictError
+    from app.models import Employee
+    from app.services.people import expiry_service
+
+    engine = create_async_engine(DATABASE_URL)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    today = date(2026, 11, 10)
+    ids: list[uuid.UUID] = []
+    try:
+        async with Session() as db:
+            owner = await employee_service.create_employee(
+                db, {"full_name": f"Driver {tag}", "status": "active"}
+            )
+            ids.append(owner.id)
+
+            def mulkiya(plate, days):
+                return {
+                    "doc_type": "vehicle_license",
+                    "document_number": plate,
+                    "expiry_date": today + timedelta(days=days),
+                    "details": {},
+                }
+
+            # Two vehicles, both lapsing the same day: two runs, not a clash.
+            await employee_service.create_document(db, owner, mulkiya("Dubai A 1", 4))
+            van = await employee_service.create_document(
+                db, owner, mulkiya("Sharjah 3 999", 4)
+            )
+            # The first car's earlier year is its history.
+            await employee_service.create_document(
+                db, owner, mulkiya("Dubai A 1", -361)
+            )
+            # The same plate, however spaced, the same day is the same cycle.
+            with pytest.raises(ConflictError):
+                await employee_service.create_document(
+                    db, owner, mulkiya("DUBAI A1", 4)
+                )
+            with pytest.raises(BadRequestError):
+                await employee_service.create_document(db, owner, mulkiya("", 30))
+            # Renumbering the van onto the car's plate would clash too.
+            with pytest.raises(ConflictError):
+                await employee_service.update_document(
+                    db, owner, van, {"document_number": "dubai-a-1"}
+                )
+            await employee_service.create_document(
+                db,
+                owner,
+                {
+                    "doc_type": "driving_license",
+                    "document_number": "12345",
+                    "expiry_date": today + timedelta(days=9),
+                    "details": {"vehicle_classes": "Light vehicle"},
+                },
+            )
+            await db.commit()
+
+        async with Session() as db:
+            result = await expiry_service.expiring_documents(db, today=today)
+            mine = sorted(
+                (i.doc_type, i.document_number, i.days_left)
+                for i in result.items
+                if tag in i.owner_name
+            )
+            assert mine == [
+                ("driving_license", "12345", 9),
+                ("vehicle_license", "Dubai A 1", 4),
+                ("vehicle_license", "Sharjah 3 999", 4),
+            ]
+            full = await employee_service.get_employee(db, owner.id)
+            current = [
+                d.document_number
+                for d in employee_service.to_response(full).documents
+                if d.doc_type == "vehicle_license" and d.is_current
+            ]
+            assert sorted(current) == ["Dubai A 1", "Sharjah 3 999"]
+    finally:
+        async with Session() as db:
+            await db.execute(delete(Employee).where(Employee.id.in_(ids)))
             await db.commit()
         await engine.dispose()
 

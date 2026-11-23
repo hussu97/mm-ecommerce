@@ -21,6 +21,8 @@ export type OcrDocType =
   | 'ohc'
   | 'medical_insurance'
   | 'wps_card'
+  | 'driving_license'
+  | 'vehicle_license'
   | 'trade_license';
 
 /** What a scan can tell us about the person it belongs to. */
@@ -1472,5 +1474,151 @@ export function parseDocument(
       return parseMedicalInsurance(text);
     case 'wps_card':
       return parseWpsCard(text, hint);
+    case 'driving_license':
+      return parseDrivingLicense(text);
+    case 'vehicle_license':
+      return parseVehicleLicense(text);
   }
+}
+
+// ─── UAE driving licence and vehicle licence (mulkiya) ───────────────────────
+// Both are traffic-department cards with English labels beside the Arabic:
+// "License No.", "Traffic Code No.", "Exp. Date", "Place of Issue". Labels are
+// matched case-insensitively here (`labelValue`), values by their shape.
+
+const EMIRATE_WORD = /\b(Abu\s*Dhabi|Dubai|Sharjah|Ajman|Umm\s*Al\s*Quwain|Ras\s*Al\s*Khaimah|Fujairah)\b/i;
+
+/** Who issues a licence in each emirate: the RTA in Dubai, the police elsewhere. */
+function trafficAuthority(emirate: string): string {
+  return emirate === 'Dubai' ? 'RTA Dubai' : `${emirate} Police`;
+}
+
+/** The value after a label on the same line ("Exp. Date: …"), the label
+ *  case-insensitive and the value by its own pattern. */
+function labelValue(text: string, label: RegExp, value: RegExp): string | undefined {
+  const re = new RegExp(`(?:${label.source})[ \\t]*[:.#-]?[ \\t]*(${value.source})`, 'i');
+  return clean(text.match(re)?.[1]);
+}
+
+function emirateIn(latin: string, label: RegExp): string | undefined {
+  const near = labelValue(latin, label, /[A-Za-z][A-Za-z ]{2,30}/);
+  const hit = (near && near.match(EMIRATE_WORD)) ?? latin.match(EMIRATE_WORD);
+  return hit ? titleCase(hit[1].replace(/\s+/g, ' ')) : undefined;
+}
+
+const TRAFFIC_CODE = /T\.?\s*C\.?\s*(?:No|Number)|Traffic\s*Code\s*(?:No|Number)?/;
+const CARD_PLACE = /Place\s*of\s*Issue|Issuing\s*Place/;
+/** "Exp. Date" — but not the mulkiya's "Ins. Exp." beside it. */
+const CARD_EXPIRY = /(?<!Ins\.?\s{0,2})(?:Expiry\s*Date|Exp\.?\s*Date|Date\s*of\s*Expiry|Valid\s*Until)/i;
+
+function cardDates(latin: string, issueLabel: RegExp, exclude: Array<string | undefined>) {
+  const labelled = issueAndExpiry(latin, issueLabel, CARD_EXPIRY, { exclude });
+  const expiry = dateRightAfter(latin, CARD_EXPIRY) ?? labelled.expiry;
+  const issue = dateRightAfter(latin, issueLabel) ?? labelled.issue;
+  return {
+    expiry,
+    issue: issue && expiry && issue < expiry ? issue : undefined,
+    guessed: labelled.guessed && expiry === labelled.expiry && !dateRightAfter(latin, CARD_EXPIRY),
+  };
+}
+
+/** The classes a licence permits, in the card's words. */
+const VEHICLE_CLASSES: Array<[RegExp, string]> = [
+  [/light\s*vehicle/i, 'Light vehicle'],
+  [/heavy\s*vehicle|heavy\s*truck/i, 'Heavy vehicle'],
+  [/light\s*bus/i, 'Light bus'],
+  [/heavy\s*bus/i, 'Heavy bus'],
+  [/motor\s*cycle|motorbike/i, 'Motorcycle'],
+  [/fork\s*lift/i, 'Forklift'],
+  [/shovel|machinery/i, 'Machinery'],
+  [/tractor/i, 'Tractor'],
+];
+
+export function parseDrivingLicense(raw: string): DocumentFields {
+  const text = normalise(raw);
+  const latin = text.replace(/[؀-ۿ]+/g, ' ').replace(/[ \t]+/g, ' ');
+  const out = empty();
+
+  out.document_number = labelValue(latin, /Licen[cs]e\s*(?:No|Number)/, /\d{4,12}/);
+  const tc = labelValue(latin, TRAFFIC_CODE, /\d{5,12}/);
+  if (tc) out.details.traffic_code_number = tc;
+
+  const name = afterLabel(latin, /\b(?:Name|NAME)/, PRINTED_NAME);
+  if (name) {
+    out.details.name = titleCase(name);
+    out.person.full_name = titleCase(name);
+  }
+  const nationality = afterLabel(latin, /\b(?:Nationality|NATIONALITY)/, /[A-Z][A-Za-z ]{2,40}/);
+  if (nationality) {
+    out.details.nationality = titleCase(nationality);
+    out.person.nationality = titleCase(nationality);
+  }
+  const dob = dateRightAfter(latin, BIRTH) ?? dateNear(latin, BIRTH, 40);
+  if (dob) {
+    out.details.date_of_birth = dob;
+    out.person.date_of_birth = dob;
+  }
+
+  const dates = cardDates(latin, /Issue\s*Date|Date\s*of\s*Issue|Issued\s*on/i, [dob]);
+  out.expiry_date = dates.expiry;
+  out.issue_date = dates.issue;
+  if (!out.expiry_date) out.warnings.push('No expiry date found — enter it from the licence.');
+  else if (dates.guessed) out.warnings.push('Expiry date guessed as the latest date on the licence — check it.');
+
+  const emirate = emirateIn(latin, CARD_PLACE);
+  if (emirate) {
+    out.details.place_of_issue = emirate;
+    out.issuing_authority = trafficAuthority(emirate);
+  }
+  const classes = VEHICLE_CLASSES.filter(([re]) => re.test(latin)).map(([, label]) => label);
+  if (classes.length) out.details.vehicle_classes = classes.join(', ');
+  return out;
+}
+
+export function parseVehicleLicense(raw: string): DocumentFields {
+  const text = normalise(raw);
+  const latin = text.replace(/[؀-ۿ]+/g, ' ').replace(/[ \t]+/g, ' ');
+  const out = empty();
+
+  // "Traffic Plate No. 12345" with its code ("A", "3") when printed alongside.
+  const plate = labelValue(latin, /(?:Traffic\s*)?Plate\s*(?:No|Number)/, /(?:[A-Z]{1,2}|\d{1,2})?\s?\d{1,6}\b/);
+  const emirate = emirateIn(latin, CARD_PLACE);
+  if (plate) out.document_number = plate.toUpperCase();
+  if (emirate) {
+    out.details.place_of_issue = emirate;
+    out.issuing_authority = trafficAuthority(emirate);
+  }
+  const tc = labelValue(latin, TRAFFIC_CODE, /\d{5,12}/);
+  if (tc) out.details.traffic_code_number = tc;
+
+  const owner = afterLabel(latin, /\b(?:Owner|OWNER)(?:'s)?(?:\s*Name)?/, /[A-Z][A-Za-z0-9&.,'() -]{2,80}/);
+  if (owner) out.details.owner = owner.replace(/\s+(?:Nationality|NATIONALITY)\b.*$/, '');
+
+  const insExpiry = dateRightAfter(latin, /Ins(?:urance)?\.?\s*Exp(?:iry)?\.?(?:\s*Date)?/i);
+  const dates = cardDates(latin, /Reg(?:istration)?\.?\s*Date|Issue\s*Date|Date\s*of\s*Issue/i, [insExpiry]);
+  out.expiry_date = dates.expiry;
+  out.issue_date = dates.issue;
+  if (!out.expiry_date) out.warnings.push('No expiry date found — enter it from the card.');
+  else if (dates.guessed) out.warnings.push('Expiry date guessed as the latest date on the card — check it.');
+  if (!out.document_number) out.warnings.push('No plate number found — enter it: it tells this vehicle apart.');
+
+  if (insExpiry) out.details.insurance_expiry = insExpiry;
+  const policy = labelValue(latin, /Policy\s*(?:No|Number)/, /[A-Z0-9][A-Z0-9/-]{3,30}/);
+  if (policy) out.details.insurance_policy = policy;
+  const insurer = afterLabel(latin, /\b(?:Insurance\s*Company|INSURANCE\s*COMPANY|Insurer|INSURER|Ins\.?\s*Co\.?)/, /[A-Z][A-Za-z&.' -]{2,60}/);
+  if (insurer) out.details.insurer = insurer;
+
+  const year = labelValue(latin, /Model(?:\s*Year)?|Year\s*of\s*Manufacture/, /(?:19|20)\d{2}\b/);
+  if (year) out.details.model_year = year;
+  const make = afterLabel(latin, /\b(?:Make|MAKE|Vehicle\s*Make|Brand|BRAND)/, /[A-Z][A-Za-z0-9 .-]{1,40}/);
+  if (make) out.details.make_model = make;
+  const type = afterLabel(latin, /\b(?:Veh\.?\s*Type|Vehicle\s*Type|VEH\.?\s*TYPE|VEHICLE\s*TYPE)/, /[A-Z][A-Za-z .-]{2,30}/);
+  if (type) out.details.vehicle_type = titleCase(type);
+  const colour = afterLabel(latin, /\b(?:Colou?r|COLOU?R)/, /[A-Z][A-Za-z ]{2,20}/);
+  if (colour) out.details.colour = titleCase(colour);
+  const chassis = labelValue(latin, /Chassis\s*(?:No|Number)?/, /[A-HJ-NPR-Z0-9]{11,17}/);
+  if (chassis) out.details.chassis_number = chassis.toUpperCase();
+  const engine = labelValue(latin, /Engine\s*(?:No|Number)/, /[A-Z0-9][A-Z0-9-]{3,20}/);
+  if (engine) out.details.engine_number = engine.toUpperCase();
+  return out;
 }

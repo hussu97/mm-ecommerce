@@ -75,6 +75,18 @@ function tenure(since: string): string | null {
   return parts.filter(Boolean).join(' ') || 'less than a month';
 }
 
+/** Which run of renewals a document is in — its type, or for a type held
+ *  several at once (a vehicle licence) type and plate, letters and digits
+ *  only, as the API groups them. */
+function seriesKey(
+  doc: { doc_type: string; document_number?: string | null },
+  multiple: ReadonlySet<string>,
+): string {
+  return multiple.has(doc.doc_type)
+    ? `${doc.doc_type}:${(doc.document_number ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')}`
+    : doc.doc_type;
+}
+
 export default function EmployeePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -93,6 +105,8 @@ export default function EmployeePage() {
   const [form, setForm] = useState<{
     type: EmployeeDocType;
     doc?: EmployeeDocument;
+    /** Renewing one of several (a vehicle licence): its plate. */
+    number?: string;
   } | null>(null);
   const [fileForm, setFileForm] = useState<{ file?: EmployeeFile } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -255,10 +269,35 @@ export default function EmployeePage() {
 
   const entity = entities.find((e) => e.id === employee.legal_entity_id);
   const branch = branches.find((b) => b.id === employee.branch_id);
-  const states: TypeState[] = specs.map((spec) => ({
-    spec,
-    current: employee.documents.find((d) => d.doc_type === spec.doc_type && d.is_current),
-  }));
+  const multiple = new Set(specs.filter((s) => s.multiple).map((s) => s.doc_type));
+  // One tile per type; a type held several at once (a vehicle licence per
+  // plate) gets one per number on file plus one to add another.
+  const states: TypeState[] = specs.flatMap((spec): TypeState[] => {
+    if (!spec.multiple) {
+      return [
+        {
+          spec,
+          optional: spec.optional,
+          current: employee.documents.find((d) => d.doc_type === spec.doc_type && d.is_current),
+        },
+      ];
+    }
+    const held = employee.documents.filter((d) => d.doc_type === spec.doc_type && d.is_current);
+    return [
+      ...held.map((d) => ({
+        spec,
+        current: d,
+        key: seriesKey(d, multiple),
+        label: `${spec.label} · ${d.document_number}`,
+      })),
+      {
+        spec,
+        optional: true,
+        key: `${spec.doc_type}:new`,
+        label: held.length ? `Another ${spec.label.toLowerCase()}` : spec.label,
+      },
+    ];
+  });
   const viewDoc = (doc: EmployeeDocument, label: string) =>
     preview(`${employee.full_name} — ${label}`, () => employeesApi.documentFileUrl(employee.id, doc.id));
   const since = employee.joined_on ? tenure(employee.joined_on) : null;
@@ -362,24 +401,31 @@ export default function EmployeePage() {
             <PaperworkSummary
               states={states}
               onOpen={openCard}
-              onAdd={(docType) => setForm({ type: docType as EmployeeDocType })}
+              onAdd={(key) => setForm({ type: key.split(':')[0] as EmployeeDocType })}
             />
           )}
 
           <div className="grid items-start gap-4 xl:grid-cols-2">
             {states
               .filter((s) => s.current)
-              .map(({ spec, current }) => (
+              .map(({ spec, current, key = spec.doc_type, label = spec.label }) => (
                 <DocumentCard
-                  key={spec.doc_type}
+                  key={key}
                   spec={spec}
+                  title={label}
+                  anchor={`doc-${key}`}
                   current={current!}
-                  history={employee.documents.filter((d) => d.doc_type === spec.doc_type && !d.is_current)}
-                  highlighted={highlight === spec.doc_type}
-                  onView={(doc) => viewDoc(doc, spec.label)}
+                  history={employee.documents.filter((d) => seriesKey(d, multiple) === key && !d.is_current)}
+                  highlighted={highlight === key}
+                  onView={(doc) => viewDoc(doc, label)}
                   onEdit={(doc) => setForm({ type: spec.doc_type as EmployeeDocType, doc })}
-                  onDelete={(doc) => void removeDocument(doc, spec.label)}
-                  onRenew={() => setForm({ type: spec.doc_type as EmployeeDocType })}
+                  onDelete={(doc) => void removeDocument(doc, label)}
+                  onRenew={() =>
+                    setForm({
+                      type: spec.doc_type as EmployeeDocType,
+                      number: spec.multiple ? (current!.document_number ?? undefined) : undefined,
+                    })
+                  }
                   onCopy={(text) => void copy(text)}
                 />
               ))}
@@ -486,6 +532,7 @@ export default function EmployeePage() {
           entities={entities}
           document={form.doc ?? null}
           initialType={form.type}
+          initialNumber={form.number}
           onClose={() => setForm(null)}
           onSaved={() => {
             setForm(null);

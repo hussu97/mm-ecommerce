@@ -24,6 +24,8 @@ const spec: EmployeeDocumentTypeSpec = {
   number_label: 'ID number',
   authority_label: 'Issuing authority',
   expiry_tracked: true,
+  multiple: false,
+  optional: false,
   details: { card_number: 'Card number', occupation: 'Occupation' },
 };
 
@@ -228,5 +230,23 @@ describe('summarisePaperwork (the list page)', () => {
   it('makes initials from the first and last names', () => {
     expect(initials('Adar Layling Tapsin')).toBe('AT');
     expect(initials('  Priya ')).toBe('P');
+  });
+});
+
+describe('optional document types', () => {
+  it('does not count a missing optional type as needing attention', () => {
+    const driving = { ...spec, doc_type: 'driving_license', label: 'Driving licence', optional: true };
+    render(
+      <PaperworkSummary
+        states={[
+          { spec, current: doc('2027-06-01') },
+          { spec: driving, optional: true },
+        ]}
+        onOpen={() => {}}
+        onAdd={() => {}}
+      />,
+    );
+    expect(screen.getByText('Everything is on file and valid')).toBeTruthy();
+    expect(screen.getByTestId('status-driving_license').textContent).toContain('+ Add');
   });
 });

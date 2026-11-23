@@ -215,6 +215,10 @@ class EmployeeDocumentTypeSpec(BaseModel):
     authority_label: str = "Issuing authority"
     #: Raises the expiry warning when it lapses.
     expiry_tracked: bool
+    #: Held several at once, one per number (a vehicle licence per plate).
+    multiple: bool = False
+    #: Not everyone holds one: absent is not a gap.
+    optional: bool = False
     #: key → label of the type-specific fields.
     details: dict[str, str]
 

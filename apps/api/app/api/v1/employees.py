@@ -23,6 +23,8 @@ from app.models.employee import (
     EMPLOYEE_DOCUMENT_SPECS,
     EMPLOYEE_DOCUMENT_TYPES,
     EXPIRY_TRACKED_TYPES,
+    OPTIONAL_TYPES,
+    PER_NUMBER_TYPES,
     Employee,
 )
 from app.models.user import User
@@ -99,6 +101,8 @@ async def document_types(_: User = Depends(require_superadmin())):
                 "authority_label", "Issuing authority"
             ),
             expiry_tracked=t in EXPIRY_TRACKED_TYPES,
+            multiple=t in PER_NUMBER_TYPES,
+            optional=t in OPTIONAL_TYPES,
             details=EMPLOYEE_DOCUMENT_SPECS[t]["details"],
         )
         for t in EMPLOYEE_DOCUMENT_TYPES

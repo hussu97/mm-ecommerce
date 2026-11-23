@@ -22,13 +22,15 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import case, literal, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
 from app.models.employee import (
     EMPLOYEE_DOCUMENT_SPECS,
     EXPIRY_TRACKED_TYPES,
+    NUMBER_SERIES_SQL,
+    PER_NUMBER_TYPES,
     Employee,
     EmployeeDocument,
 )
@@ -58,8 +60,16 @@ async def expiring_documents(
     cutoff = today + timedelta(days=within_days)
     items: list[ExpiringDocument] = []
 
-    # The current cycle per (employee, type): DISTINCT ON keeps the first row of
-    # each group in ORDER BY, i.e. the one expiring last.
+    # The current cycle per (employee, type) — per plate for a vehicle licence:
+    # DISTINCT ON keeps the first row of each group in ORDER BY, i.e. the one
+    # expiring last.
+    series = case(
+        (
+            EmployeeDocument.doc_type.in_(PER_NUMBER_TYPES),
+            literal_column(NUMBER_SERIES_SQL),
+        ),
+        else_=literal(""),
+    )
     current = (
         select(
             EmployeeDocument.employee_id,
@@ -72,10 +82,11 @@ async def expiring_documents(
             Employee.status == "active",
             EmployeeDocument.doc_type.in_(EXPIRY_TRACKED_TYPES),
         )
-        .distinct(EmployeeDocument.employee_id, EmployeeDocument.doc_type)
+        .distinct(EmployeeDocument.employee_id, EmployeeDocument.doc_type, series)
         .order_by(
             EmployeeDocument.employee_id,
             EmployeeDocument.doc_type,
+            series,
             EmployeeDocument.expiry_date.desc(),
         )
         .subquery()

@@ -15564,7 +15564,7 @@ export interface components {
              * Doc Type
              * @enum {string}
              */
-            doc_type: "passport" | "visa" | "emirates_id" | "labour_card" | "ohc" | "medical_insurance" | "wps_card";
+            doc_type: "passport" | "visa" | "emirates_id" | "labour_card" | "ohc" | "medical_insurance" | "wps_card" | "driving_license" | "vehicle_license";
             /** Document Number */
             document_number?: string | null;
             /**
@@ -15667,8 +15667,18 @@ export interface components {
             expiry_tracked: boolean;
             /** Label */
             label: string;
+            /**
+             * Multiple
+             * @default false
+             */
+            multiple: boolean;
             /** Number Label */
             number_label: string;
+            /**
+             * Optional
+             * @default false
+             */
+            optional: boolean;
         };
         /**
          * EmployeeDocumentUpdate

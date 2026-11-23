@@ -16,7 +16,7 @@ import re
 import uuid
 from datetime import date
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import private_documents as storage
@@ -24,9 +24,12 @@ from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.search import contains
 from app.models.employee import (
     EMPLOYEE_DOCUMENT_SPECS,
+    NUMBER_SERIES_SQL,
+    PER_NUMBER_TYPES,
     Employee,
     EmployeeDocument,
     EmployeeFile,
+    number_series,
 )
 from app.models.user import User
 from app.schemas.employee import (
@@ -44,10 +47,20 @@ def photo_key(employee: Employee, ext: str) -> str:
 
 
 def document_key(row: EmployeeDocument, ext: str) -> str:
-    """One object per cycle — (type, expiry) is unique per employee."""
-    return (
-        f"employees/{row.employee_id}/{row.doc_type}/{row.expiry_date.isoformat()}{ext}"
-    )
+    """One object per cycle — (type, expiry) is unique per employee, and
+    (plate, expiry) per vehicle licence, so a plate joins its key."""
+    cycle = row.expiry_date.isoformat()
+    if row.doc_type in PER_NUMBER_TYPES:
+        cycle = f"{number_series(row.document_number)}-{cycle}"
+    return f"employees/{row.employee_id}/{row.doc_type}/{cycle}{ext}"
+
+
+def series_key(doc: EmployeeDocument) -> str:
+    """Which run of renewals a document belongs to: its type, or for a type
+    held several at once (a vehicle licence per plate) type and number."""
+    if doc.doc_type in PER_NUMBER_TYPES:
+        return f"{doc.doc_type}:{number_series(doc.document_number)}"
+    return doc.doc_type
 
 
 def file_key(row: EmployeeFile, ext: str) -> str:
@@ -59,12 +72,14 @@ def file_key(row: EmployeeFile, ext: str) -> str:
 
 
 def current_by_type(documents: list[EmployeeDocument]) -> dict[str, EmployeeDocument]:
-    """The cycle expiring last for each type."""
+    """The cycle expiring last in each series (`series_key`): per type, and
+    per plate for vehicle licences."""
     current: dict[str, EmployeeDocument] = {}
     for doc in documents:
-        held = current.get(doc.doc_type)
+        key = series_key(doc)
+        held = current.get(key)
         if held is None or doc.expiry_date > held.expiry_date:
-            current[doc.doc_type] = doc
+            current[key] = doc
     return current
 
 
@@ -82,9 +97,15 @@ async def with_photo_urls(items: list[EmployeeListItem], rows: list[Employee]) -
 
 def to_list_item(employee: Employee) -> EmployeeListItem:
     item = EmployeeListItem.model_validate(employee)
+    # One summary per type for the list's chips: of several vehicles, the
+    # current licence expiring first is the one that needs attention.
+    by_type: dict[str, EmployeeDocument] = {}
+    for doc in current_by_type(employee.documents).values():
+        held = by_type.get(doc.doc_type)
+        if held is None or doc.expiry_date < held.expiry_date:
+            by_type[doc.doc_type] = doc
     item.current_documents = {
-        t: EmployeeDocumentSummary.model_validate(d)
-        for t, d in current_by_type(employee.documents).items()
+        t: EmployeeDocumentSummary.model_validate(d) for t, d in by_type.items()
     }
     return item
 
@@ -93,7 +114,7 @@ def to_document_response(
     row: EmployeeDocument, current: dict[str, EmployeeDocument]
 ) -> EmployeeDocumentResponse:
     payload = EmployeeDocumentResponse.model_validate(row)
-    held = current.get(row.doc_type)
+    held = current.get(series_key(row))
     payload.is_current = held is not None and held.id == row.id
     return payload
 
@@ -247,7 +268,10 @@ _CARD_NUMBER = re.compile(r"(?:\d[ -]?){13,19}")
 
 def _check_number(doc_type: str, number: str | None) -> None:
     """A WPS salary card is a payment card: keep its last four digits, never
-    the whole number (the scan, in the private bucket, is the full record)."""
+    the whole number (the scan, in the private bucket, is the full record).
+    A vehicle licence is told apart from the owner's others by its plate."""
+    if doc_type in PER_NUMBER_TYPES and not number_series(number):
+        raise BadRequestError("Enter the plate number — it tells this vehicle apart")
     if doc_type == "wps_card" and number and _CARD_NUMBER.search(number):
         raise BadRequestError(
             "Enter only the last 4 digits of the salary card number, not the whole number"
@@ -267,6 +291,7 @@ async def _cycle_taken(
     doc_type: str,
     expiry: date,
     *,
+    number: str | None,
     except_id: uuid.UUID | None,
 ) -> bool:
     stmt = select(EmployeeDocument.id).where(
@@ -274,6 +299,8 @@ async def _cycle_taken(
         EmployeeDocument.doc_type == doc_type,
         EmployeeDocument.expiry_date == expiry,
     )
+    if doc_type in PER_NUMBER_TYPES:
+        stmt = stmt.where(literal_column(NUMBER_SERIES_SQL) == number_series(number))
     if except_id is not None:
         stmt = stmt.where(EmployeeDocument.id != except_id)
     return (await db.execute(stmt)).first() is not None
@@ -281,6 +308,10 @@ async def _cycle_taken(
 
 def _duplicate(doc_type: str) -> ConflictError:
     label = EMPLOYEE_DOCUMENT_SPECS[doc_type]["label"].lower()
+    if doc_type in PER_NUMBER_TYPES:
+        return ConflictError(
+            f"This employee already has a {label} for that plate expiring that day"
+        )
     return ConflictError(f"This employee already has a {label} expiring that day")
 
 
@@ -298,7 +329,12 @@ async def create_document(
 ) -> EmployeeDocument:
     _check_number(data["doc_type"], data.get("document_number"))
     if await _cycle_taken(
-        db, employee.id, data["doc_type"], data["expiry_date"], except_id=None
+        db,
+        employee.id,
+        data["doc_type"],
+        data["expiry_date"],
+        number=data.get("document_number"),
+        except_id=None,
     ):
         raise _duplicate(data["doc_type"])
     row = EmployeeDocument(employee_id=employee.id, **data)
@@ -316,8 +352,18 @@ async def update_document(
     merged_expiry = data.get("expiry_date") or row.expiry_date
     if merged_issue is not None and merged_issue > merged_expiry:
         raise BadRequestError("The issue date must be on or before the expiry date")
-    if merged_expiry != row.expiry_date and await _cycle_taken(
-        db, employee.id, row.doc_type, merged_expiry, except_id=row.id
+    merged_number = data.get("document_number", row.document_number)
+    moved = merged_expiry != row.expiry_date or (
+        row.doc_type in PER_NUMBER_TYPES
+        and number_series(merged_number) != number_series(row.document_number)
+    )
+    if moved and await _cycle_taken(
+        db,
+        employee.id,
+        row.doc_type,
+        merged_expiry,
+        number=merged_number,
+        except_id=row.id,
     ):
         raise _duplicate(row.doc_type)
     if data.get("details") is not None:

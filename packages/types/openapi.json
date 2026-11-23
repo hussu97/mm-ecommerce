@@ -14982,7 +14982,9 @@
               "labour_card",
               "ohc",
               "medical_insurance",
-              "wps_card"
+              "wps_card",
+              "driving_license",
+              "vehicle_license"
             ],
             "title": "Doc Type",
             "type": "string"
@@ -15234,9 +15236,19 @@
             "title": "Label",
             "type": "string"
           },
+          "multiple": {
+            "default": false,
+            "title": "Multiple",
+            "type": "boolean"
+          },
           "number_label": {
             "title": "Number Label",
             "type": "string"
+          },
+          "optional": {
+            "default": false,
+            "title": "Optional",
+            "type": "boolean"
           }
         },
         "required": [
