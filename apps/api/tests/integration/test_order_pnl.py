@@ -750,6 +750,81 @@ async def test_misc_categories_list_the_biggest_cost_first(engine, world):
         await db.rollback()
 
 
+async def test_misc_category_kept_off_the_pnl_never_shows(engine, world):
+    """The VAT payment is filed as a misc PO line, but the P&L already holds that
+    VAT — so a category marked ``pnl_excluded`` is left out entirely: no row, no
+    cost at any level, and PC4 is what it would be without the line."""
+    from datetime import date
+
+    from app.models.inventory import (
+        PurchaseOrder,
+        PurchaseOrderMiscCategory,
+        PurchaseOrderMiscItem,
+        Supplier,
+    )
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    tag = uuid.uuid4().hex[:8]
+    async with Session() as db:
+        category = PurchaseOrderMiscCategory(name=f"VAT {tag}", admin_only=True)
+        supplier = Supplier(
+            name=f"pnl-vat {tag}",
+            allows_misc_items=True,
+            misc_pnl_branch_ids=[world["branch"]],
+        )
+        db.add_all([category, supplier])
+        await db.flush()
+
+        async def build():
+            return await pnl_report.build(
+                db,
+                date_from=DAY,
+                date_to=DAY,
+                branch_ids=[world["branch"]],
+                include_gated_misc=True,
+            )
+
+        baseline = await build()
+        po = PurchaseOrder(
+            reference=f"PO-VAT-{tag}",
+            status="closed",
+            supplier_id=supplier.id,
+            branch_id=world["branch"],
+            legal_entity_id=world["entities"][0],
+            business_date=DAY,
+        )
+        db.add(po)
+        await db.flush()
+        db.add(
+            PurchaseOrderMiscItem(
+                purchase_order_id=po.id,
+                name="VAT return Q4",
+                quantity=D("1"),
+                storage_unit="month",
+                entered_total=D("500.00"),
+                vat_amount=D("0.00"),
+                net_total=D("500.00"),
+                unit_cost=D("500.00"),
+                category_id=category.id,
+                period_from=date.fromisoformat(DAY),
+                period_to=date.fromisoformat(DAY),
+            )
+        )
+        await db.flush()
+
+        counted = await build()
+        assert [r for r in counted.misc if r.category_id == category.id]
+        assert counted.total.pc4 == baseline.total.pc4 - D("500.00")
+
+        category.pnl_excluded = True
+        await db.flush()
+        excluded = await build()
+        assert not [r for r in excluded.misc if r.category_id == category.id]
+        assert excluded.total.pc4 == baseline.total.pc4
+        assert excluded.total.misc_pc4 == baseline.total.misc_pc4
+        await db.rollback()
+
+
 async def test_period_charges_book_the_monthly_fees_with_their_vat(engine, world):
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:

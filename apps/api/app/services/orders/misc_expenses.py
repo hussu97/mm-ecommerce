@@ -40,7 +40,10 @@ show unsplit — the same PC4 as before any of this was configured.
 
 Which lines count: those on a **received** PO (``partially_received`` or
 ``closed`` — the set the VAT reclaim reads), so a planned or voided order is
-never a cost.
+never a cost. A category marked ``pnl_excluded`` never counts: the
+VAT category's lines are the quarterly VAT payment, which the P&L already holds
+(net sales exclude output VAT; input VAT is credited back), so showing the
+payment as a cost would count it twice.
 
 The amount is the **gross, VAT included** — what the invoice says, so a row
 matches the PO a person can open. The input VAT the buying entity reclaims on it
@@ -244,6 +247,7 @@ async def misc_lines(
         .outerjoin(LegalEntity, LegalEntity.id == PurchaseOrder.legal_entity_id)
         .where(
             PurchaseOrder.status.in_(RECEIVED_STATUSES),
+            category.pnl_excluded.is_(False),
             line.period_from <= hi,
             line.period_to >= lo,
         )

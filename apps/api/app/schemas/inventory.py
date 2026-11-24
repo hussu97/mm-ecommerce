@@ -588,6 +588,8 @@ class PurchaseOrderMiscCategoryCreate(BaseModel):
     #: level (null = PC4) and the sales channels that carry them (empty = all).
     pnl_level: MiscPnlLevelLiteral | None = None
     pnl_channels: list[str] = Field(default_factory=list)
+    #: True keeps its lines off the P&L altogether (e.g. the VAT payment).
+    pnl_excluded: bool = False
 
 
 class PurchaseOrderMiscCategoryUpdate(BaseModel):
@@ -597,6 +599,7 @@ class PurchaseOrderMiscCategoryUpdate(BaseModel):
     #: An explicit null puts it back at PC4.
     pnl_level: MiscPnlLevelLiteral | None = None
     pnl_channels: list[str] | None = None
+    pnl_excluded: bool | None = None
 
 
 class PurchaseOrderMiscCategoryResponse(ORMModel):
@@ -606,6 +609,7 @@ class PurchaseOrderMiscCategoryResponse(ORMModel):
     is_active: bool
     pnl_level: MiscPnlLevelLiteral | None = None
     pnl_channels: list[str] = []
+    pnl_excluded: bool = False
     deleted_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

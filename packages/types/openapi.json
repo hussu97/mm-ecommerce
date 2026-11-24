@@ -35936,6 +35936,11 @@
             "title": "Pnl Channels",
             "type": "array"
           },
+          "pnl_excluded": {
+            "default": false,
+            "title": "Pnl Excluded",
+            "type": "boolean"
+          },
           "pnl_level": {
             "anyOf": [
               {
@@ -36003,6 +36008,11 @@
             },
             "title": "Pnl Channels",
             "type": "array"
+          },
+          "pnl_excluded": {
+            "default": false,
+            "title": "Pnl Excluded",
+            "type": "boolean"
           },
           "pnl_level": {
             "anyOf": [
@@ -36088,6 +36098,17 @@
               }
             ],
             "title": "Pnl Channels"
+          },
+          "pnl_excluded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Excluded"
           },
           "pnl_level": {
             "anyOf": [

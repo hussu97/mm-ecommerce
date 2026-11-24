@@ -20,7 +20,8 @@ import {
  *
  * The P&L placement says where a line's cost lands: above which profit level,
  * split over the chosen channels by their GMV. A supplier's own placement, when
- * it has one, wins over the category's.
+ * it has one, wins over the category's. "Keep off the P&L" drops the category
+ * from the report altogether (the VAT payment, already counted there).
  */
 export default function MiscCategoriesPage() {
   const { user } = useAuth();
@@ -55,6 +56,13 @@ export default function MiscCategoriesPage() {
       options: PNL_CHANNEL_OPTIONS,
       helper: 'The cost is split across these channels in proportion to their GMV.',
     },
+    {
+      name: 'pnl_excluded',
+      label: 'Keep off the P&L',
+      type: 'checkbox',
+      helper:
+        'Lines stay on the PO but never show on the profit & loss — e.g. the VAT payment, which the P&L already accounts for.',
+    },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ];
   return (
@@ -66,7 +74,7 @@ export default function MiscCategoriesPage() {
       update={(id, d) => inventoryApi.updateMiscCategory(id, d)}
       remove={(id) => inventoryApi.removeMiscCategory(id)}
       searchKeys={['name']}
-      defaults={{ is_active: true, admin_only: false, pnl_level: '', pnl_channels: [] }}
+      defaults={{ is_active: true, admin_only: false, pnl_level: '', pnl_channels: [], pnl_excluded: false }}
       emptyMessage="No categories yet."
       columns={[
         { header: 'Name', priority: 'primary', render: (c) => <span className="font-medium">{c.name}</span> },
@@ -78,11 +86,14 @@ export default function MiscCategoriesPage() {
         {
           header: 'P&L placement',
           className: 'whitespace-normal',
-          render: (c) => (
-            <span className={c.pnl_level || c.pnl_channels.length ? 'text-gray-700' : 'text-gray-400'}>
-              {pnlPlacementLabel(c.pnl_level, c.pnl_channels)}
-            </span>
-          ),
+          render: (c) =>
+            c.pnl_excluded ? (
+              <Badge variant="neutral">Not on P&amp;L</Badge>
+            ) : (
+              <span className={c.pnl_level || c.pnl_channels.length ? 'text-gray-700' : 'text-gray-400'}>
+                {pnlPlacementLabel(c.pnl_level, c.pnl_channels)}
+              </span>
+            ),
         },
         { header: 'Status', render: (c) => <StatusBadge active={c.is_active && !c.deleted_at} /> },
       ]}

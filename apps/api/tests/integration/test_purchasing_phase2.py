@@ -1155,6 +1155,67 @@ async def test_the_console_create_route_honours_the_restricted_permission(engine
         await db.rollback()
 
 
+async def test_a_category_can_be_kept_off_the_pnl_and_put_back(engine, env):
+    """`pnl_excluded` saves on create, clears on update, and only an excluded
+    category's lines drop out of `misc_lines` — the VAT payment's category."""
+    from app.schemas.inventory import (
+        PurchaseOrderMiscCategoryCreate,
+        PurchaseOrderMiscCategoryUpdate,
+    )
+
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        owner = await db.get(User, user_id)
+        owner.is_admin = True
+        category = await po_misc_service.create_category(
+            db,
+            owner,
+            PurchaseOrderMiscCategoryCreate(
+                name=f"{MARKER} VAT", admin_only=True, pnl_excluded=True
+            ),
+        )
+        assert category.pnl_excluded is True
+        supplier = await supplier_service.create_supplier(
+            db,
+            SupplierCreate(
+                name=f"{MARKER} FTA", is_vat_deductible=False, allows_misc_items=True
+            ),
+        )
+        await _misc_po(
+            db,
+            supplier,
+            branch_id,
+            user_id,
+            status=PurchaseOrderStatusEnum.CLOSED.value,
+            lines=[
+                PurchaseOrderMiscLineInput(
+                    name="VAT return",
+                    quantity=D("1"),
+                    storage_unit="month",
+                    entered_total=D("800"),
+                    category_id=category.id,
+                    period_from=date(2026, 3, 1),
+                    period_to=date(2026, 3, 31),
+                )
+            ],
+            allow_gated=True,
+        )
+
+        async def ours():
+            lines = await misc_lines(db, "2026-03-01", "2026-03-31", include_gated=True)
+            return [m for m in lines if m.category_id == category.id]
+
+        assert await ours() == []
+        await po_misc_service.update_category(
+            db, owner, category.id, PurchaseOrderMiscCategoryUpdate(pnl_excluded=False)
+        )
+        assert category.pnl_excluded is False
+        (line,) = await ours()
+        assert line.gross == D("800")
+        await db.rollback()
+
+
 async def test_po_list_filters_by_supplier_and_misc_category(engine, env):
     """The PO list/export filter: a misc category keeps whole POs with a line in
     it, combines with the supplier filter, and never matches an admin-only line

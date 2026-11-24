@@ -351,6 +351,7 @@ async def create_category(
         is_active=data.is_active,
         pnl_level=data.pnl_level,
         pnl_channels=clean_pnl_channels(data.pnl_channels),
+        pnl_excluded=data.pnl_excluded,
     )
     db.add(category)
     await db.flush()

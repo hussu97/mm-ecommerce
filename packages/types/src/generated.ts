@@ -22572,6 +22572,11 @@ export interface components {
             name: string;
             /** Pnl Channels */
             pnl_channels?: string[];
+            /**
+             * Pnl Excluded
+             * @default false
+             */
+            pnl_excluded: boolean;
             /** Pnl Level */
             pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
         };
@@ -22600,6 +22605,11 @@ export interface components {
              * @default []
              */
             pnl_channels: string[];
+            /**
+             * Pnl Excluded
+             * @default false
+             */
+            pnl_excluded: boolean;
             /** Pnl Level */
             pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
             /**
@@ -22618,6 +22628,8 @@ export interface components {
             name?: string | null;
             /** Pnl Channels */
             pnl_channels?: string[] | null;
+            /** Pnl Excluded */
+            pnl_excluded?: boolean | null;
             /** Pnl Level */
             pnl_level?: ("pc1" | "pc2" | "pc3" | "pc4") | null;
         };

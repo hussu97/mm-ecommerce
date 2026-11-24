@@ -1174,6 +1174,12 @@ class PurchaseOrderMiscCategory(Base, UUIDMixin, TimestampMixin):
     pnl_channels: Mapped[list[str]] = mapped_column(
         ARRAY(String(40)), nullable=False, default=list, server_default="{}"
     )
+    #: Kept off the P&L entirely (still on the PO and its totals). The VAT
+    #: category: its lines are the quarterly VAT payment, which the P&L has
+    #: already accounted for through net sales and the input-VAT credit.
+    pnl_excluded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     def __repr__(self) -> str:
         return f"<PurchaseOrderMiscCategory {self.name}>"
